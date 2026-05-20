@@ -1,0 +1,103 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+.main-container {
+  padding: 15px 24px;
+  background-color: #fff;
+  height: 100%;
+  overflow: auto;
+}
+
+/* 滚动条滑块默认：带白色蒙版效果（半透明主题色） */
+.main-container::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.main-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.main-container::-webkit-scrollbar-thumb {
+  background: rgba(22, 119, 255, 0.3);
+  border-radius: 4px;
+}
+
+/* 滚动条滑块悬停：去除蒙版，恢复纯主题色 */
+.main-container::-webkit-scrollbar-thumb:hover {
+  background: #1677ff;
+}
+
+.ant-table {
+  scrollbar-width: auto!important;
+  scrollbar-color: auto!important;
+}
+
+/* Ant Design 5.x 表格容器：必须重置 scrollbar-* 属性才能使用 ::-webkit-scrollbar
+   注意：横向滚动条在 .ant-table-content，纵向在 .ant-table-body */
+.ant-table-container,
+.ant-table-content,
+.ant-table-body {
+  scrollbar-width: auto !important;
+  scrollbar-color: auto !important;
+}
+
+/* 表格横向+纵向滚动条（scroll.x / scroll.y 触发） */
+.ant-table-container::-webkit-scrollbar,
+.ant-table-content::-webkit-scrollbar,
+.ant-table-body::-webkit-scrollbar {
+  width: 8px !important;
+  height: 8px !important;
+}
+
+.ant-table-container::-webkit-scrollbar-track,
+.ant-table-content::-webkit-scrollbar-track,
+.ant-table-body::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+.ant-table-container::-webkit-scrollbar-thumb,
+.ant-table-content::-webkit-scrollbar-thumb,
+.ant-table-body::-webkit-scrollbar-thumb {
+  background: rgba(22, 119, 255, 0.3) !important;
+  border-radius: 4px !important;
+}
+
+.ant-table-container::-webkit-scrollbar-thumb:hover,
+.ant-table-content::-webkit-scrollbar-thumb:hover,
+.ant-table-body::-webkit-scrollbar-thumb:hover {
+  background: #1677ff !important;
+}
+
+/* 滚动条滑块默认：带白色蒙版效果（半透明主题色） */
+.custom-scroll::-webkit-scrollbar {
+  width: 8px!important;
+  height: 8px!important;
+}
+
+.custom-scroll::-webkit-scrollbar-track {
+  background: transparent!important;
+}
+
+.custom-scroll::-webkit-scrollbar-thumb {
+  background: rgba(22, 119, 255, 0.3)!important;
+  border-radius: 4px!important;
+}
+
+/* 滚动条滑块悬停：去除蒙版，恢复纯主题色 */
+.custom-scroll::-webkit-scrollbar-thumb:hover {
+  background: #1677ff !important;
+}
+
+/* 首页表格：列标题禁止换行（兼容中英文） */
+.compact-table .ant-table-thead > tr > th {
+  white-space: nowrap !important;
+}
