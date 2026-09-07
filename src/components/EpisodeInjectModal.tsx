@@ -36,10 +36,11 @@ import {
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
-import * as XLSX from 'xlsx'
 import { useI18n } from '../i18n/useI18n'
+import { FORM_MAX_LENGTH } from '../constants/form'
+import { useFormRules } from '../hooks/useFormRules'
 import { useAuthStore } from '../stores/authStore'
-import { createContent, deleteContent, getContentChildren, batchImportContents } from '../api/contents'
+import { createContent, deleteContent, getContentChildren, batchImportContents, downloadImportTemplate, parseExcelFile } from '../api/contents'
 import { getAuthUsers } from '../api/dataAuth'
 import { getEpisodeHistory } from '../api/episodeHistory'
 import type { EpisodeHistoryItem } from '../api/episodeHistory'
@@ -67,6 +68,7 @@ export default function EpisodeInjectModal({
   readOnly = false,
 }: Props) {
   const { t } = useI18n()
+  const formRules = useFormRules()
   const navigate = useNavigate()
   const { user: currentUser } = useAuthStore()
   const [form] = Form.useForm()
@@ -104,7 +106,7 @@ export default function EpisodeInjectModal({
     try {
       const users = await getAuthUsers()
       const options = users.map((u: UserSimpleItem) => ({
-        label: u.display_name ? `${u.display_name}（${u.username}）` : u.username,
+        label: u.display_name ? `${u.display_name}(${u.username})` : u.username,
         value: u.id,
       }))
       setUserOptions(options)
@@ -210,53 +212,41 @@ export default function EpisodeInjectModal({
     setSubmitting(true)
     try {
       const file = fileList[0].originFileObj || fileList[0]
-      const data = await file.arrayBuffer()
-      const workbook = XLSX.read(data, { type: 'array' })
-      const sheetName = workbook.SheetNames[0]
-      const worksheet = workbook.Sheets[sheetName]
-      const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as unknown[][]
-
-      // 跳过表头，从第二行开始
-      const dataRows = rows.slice(1)
-
+      
+      // 调用后端解析 Excel
+      const parseResult = await parseExcelFile('EPISODE', file)
+      
       // 校验数据
       const errors: string[] = []
       const validRows: Array<{ title: string; sequence: number; assignee_id?: number }> = []
 
-      for (let i = 0; i < dataRows.length; i++) {
-        const row = dataRows[i]
-        const rowNum = i + 2 // Excel 行号（从 1 开始，加上表头）
-
-        if (!row || !row[0]) continue // 跳过空行
-
-        const title = String(row[0]).trim()
-        const sequence = row[1] ? Number(row[1]) : null
-        const assignee = row[2] ? String(row[2]).trim() : undefined
+      for (const item of parseResult.items) {
+        const rowNum = item.row
 
         // 校验必填字段
-        if (!title) {
+        if (!item.title) {
           errors.push(t('content.episode.importErrorDetail', { row: rowNum, error: 'Episode Name is required' }))
           continue
         }
 
-        if (!sequence || sequence < 1) {
+        if (!item.sequence || item.sequence < 1) {
           errors.push(t('content.episode.importErrorDetail', { row: rowNum, error: 'Sequence must be a positive number' }))
           continue
         }
 
         // 查找负责人 ID
         let assigneeId: number | undefined
-        if (assignee) {
-          const foundUser = userOptions.find(u => u.label.includes(assignee) || String(u.value) === assignee)
+        if (item.assignee) {
+          const foundUser = userOptions.find(u => u.label.includes(item.assignee!) || String(u.value) === item.assignee)
           if (foundUser) {
             assigneeId = foundUser.value
           } else {
-            errors.push(t('content.episode.importErrorDetail', { row: rowNum, error: `Assignee "${assignee}" not found` }))
+            errors.push(t('content.episode.importErrorDetail', { row: rowNum, error: `Assignee "${item.assignee}" not found` }))
             continue
           }
         }
 
-        validRows.push({ title, sequence, assignee_id: assigneeId })
+        validRows.push({ title: item.title, sequence: item.sequence, assignee_id: assigneeId })
       }
 
       // 如果有错误，显示错误信息
@@ -309,7 +299,7 @@ export default function EpisodeInjectModal({
           content: (
             <div>
               <div>{t('content.episode.importTotal', { total: validRows.length })}，{t('content.episode.importSuccess_count', { success: result.success_count })}，{t('content.episode.importFailed_count', { failed: result.failed_count })}</div>
-              <p style={{ color: '#999', marginTop: 8 }}>所有操作在同一个事务中，失败已整体回滚</p>
+              <p style={{ color: '#999', marginTop: 8 }}>{t('common.msg.txRollbackHint')}</p>
               {failedErrors.length > 0 && (
                 <ul style={{ maxHeight: 200, overflow: 'auto', margin: '8px 0', paddingLeft: 20 }}>
                   {failedErrors.slice(0, 10).map((err, idx) => (
@@ -333,31 +323,14 @@ export default function EpisodeInjectModal({
   }
 
   // 下载模板
-  const handleDownloadTemplate = () => {
-    const headers = [
-      t('content.episode.templateHeader1'),
-      t('content.episode.templateHeader2'),
-      t('content.episode.templateHeader3'),
-    ]
-
-    // 示例数据
-    const exampleData = [
-      ['Episode 1', 1, 'admin'],
-      ['Episode 2', 2, 'admin'],
-    ]
-
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...exampleData])
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Episodes')
-
-    // 设置列宽
-    ws['!cols'] = [
-      { wch: 30 }, // Episode Name
-      { wch: 15 }, // Sequence
-      { wch: 20 }, // Assignee
-    ]
-
-    XLSX.writeFile(wb, t('content.episode.templateFileName'))
+  const handleDownloadTemplate = async () => {
+    try {
+      await downloadImportTemplate('EPISODE', t('content.episode.templateFileName'))
+    } catch (err) {
+      if (!isHandledError(err)) {
+        message.error(t('common.downloadFailed'))
+      }
+    }
   }
 
   // History 表格列定义
@@ -420,22 +393,22 @@ export default function EpisodeInjectModal({
     },
     {
       title: t('content.col.startDateTime'),
-      dataIndex: 'begin_time',
-      key: 'begin_time',
+      dataIndex: 'task_start_time',
+      key: 'task_start_time',
       width: 160,
-      render: (v?: string) => v ?? '—',
+      render: (v?: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '—',
     },
     {
       title: t('content.col.endDateTime'),
-      dataIndex: 'end_time',
-      key: 'end_time',
+      dataIndex: 'task_end_time',
+      key: 'task_end_time',
       width: 160,
-      render: (v?: string) => v ?? '—',
+      render: (v?: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '—',
     },
     {
       title: t('content.col.assigned'),
-      dataIndex: 'assigned',
-      key: 'assigned',
+      dataIndex: 'assignee_name',
+      key: 'assignee_name',
       width: 120,
       render: (v?: string) => v ?? '—',
     },
@@ -505,7 +478,7 @@ export default function EpisodeInjectModal({
             columns={columns}
             dataSource={items}
             scroll={{ x: 900 }}
-            pagination={{ pageSize: 10, showQuickJumper: true, position: ['bottomCenter'] }}
+            pagination={{ pageSize: 10, showQuickJumper: true , placement: ['bottomCenter'] }}
             locale={{ emptyText: t('content.episode.noData') }}
             size="small"
           />
@@ -668,7 +641,7 @@ export default function EpisodeInjectModal({
                   columns={columns}
                   dataSource={items}
                   scroll={{ x: 900 }}
-                  pagination={{ pageSize: 10, showQuickJumper: true, position: ['bottomCenter'] }}
+                  pagination={{ pageSize: 10, showQuickJumper: true , placement: ['bottomCenter'] }}
                   locale={{ emptyText: t('content.episode.noData') }}
                   size="small"
                 />
@@ -691,6 +664,7 @@ export default function EpisodeInjectModal({
                         <Form.Item
                           name="content_name"
                           label={t('content.col.contentName')}
+                          rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}
                         >
                           <Input placeholder={t('common.placeholder.enter')} />
                         </Form.Item>
@@ -714,6 +688,7 @@ export default function EpisodeInjectModal({
                         <Form.Item
                           name="processed_by"
                           label={t('content.col.processedBy')}
+                          rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}
                         >
                           <Input placeholder={t('common.placeholder.enter')} />
                         </Form.Item>
@@ -742,7 +717,7 @@ export default function EpisodeInjectModal({
                   columns={historyColumns}
                   dataSource={historyItems}
                   scroll={{ x: 700 }}
-                  pagination={{ pageSize: 10, showQuickJumper: true, position: ['bottomCenter'] }}
+                  pagination={{ pageSize: 10, showQuickJumper: true , placement: ['bottomCenter'] }}
                   locale={{ emptyText: t('content.episode.noHistory') }}
                   size="small"
                 />

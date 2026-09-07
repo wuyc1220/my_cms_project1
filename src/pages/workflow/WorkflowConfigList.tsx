@@ -10,6 +10,7 @@
  * - 批量发布、版本历史、复制新版本
  */
 
+import dayjs from 'dayjs'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -61,7 +62,7 @@ import { useFormRules } from '../../hooks/useFormRules'
 import { isHandledError } from '../../api'
 import { FORM_MAX_LENGTH } from '../../constants/form'
 
-const { Title } = Typography
+
 
 interface SearchValues {
   process_code?: string
@@ -71,12 +72,15 @@ interface SearchValues {
 }
 
 const BELONGING_OPTIONS = [
-  { label: 'PROGRAM', value: 'PROGRAM' },
+  { label: 'MOVIE', value: 'MOVIE' },
+  { label: 'EPISODE', value: 'EPISODE' },
   { label: 'SEASON', value: 'SEASON' },
+  { label: 'SEASON_SERIES', value: 'SEASON_SERIES' },
   { label: 'SERIES', value: 'SERIES' },
   { label: 'CHANNEL', value: 'CHANNEL' },
   { label: 'SCHEDULE', value: 'SCHEDULE' },
-  { label: 'ARCHIVED', value: 'ARCHIVED' },
+  { label: 'ARCHIVED_MOVIE', value: 'ARCHIVED_MOVIE' },
+  { label: 'ARCHIVED_EPISODE', value: 'ARCHIVED_EPISODE' },
 ]
 
 const STATUS_OPTIONS = [
@@ -86,12 +90,17 @@ const STATUS_OPTIONS = [
 ]
 
 const BELONGING_I18N_MAP: Record<string, MessageKey> = {
-  PROGRAM: 'workflow.belonging.PROGRAM',
+  MOVIE: 'workflow.belonging.MOVIE',
+  EPISODE: 'workflow.belonging.EPISODE',
   SEASON: 'workflow.belonging.SEASON',
+  SEASON_SERIES: 'workflow.belonging.SEASON_SERIES',
   SERIES: 'workflow.belonging.SERIES',
   CHANNEL: 'workflow.belonging.CHANNEL',
   SCHEDULE: 'workflow.belonging.SCHEDULE',
-  ARCHIVED: 'workflow.belonging.ARCHIVED',
+  ARCHIVED_MOVIE: 'workflow.belonging.ARCHIVED_MOVIE',
+  ARCHIVED_EPISODE: 'workflow.belonging.ARCHIVED_EPISODE',
+  // 保留 PROGRAM 兼容旧数据
+  PROGRAM: 'workflow.belonging.PROGRAM',
 }
 
 export default function WorkflowConfigList() {
@@ -433,12 +442,16 @@ export default function WorkflowConfigList() {
       sortOrder: sortField === 'belonging' ? sortOrder : null,
       render: (val: string) => {
         const labelMap: Record<string, string> = {
+          MOVIE: t('workflow.belonging.MOVIE'),
+          EPISODE: t('workflow.belonging.EPISODE'),
           PROGRAM: t('workflow.belonging.PROGRAM'),
           SEASON: t('workflow.belonging.SEASON'),
+          SEASON_SERIES: t('workflow.belonging.SEASON_SERIES'),
           SERIES: t('workflow.belonging.SERIES'),
           CHANNEL: t('workflow.belonging.CHANNEL'),
           SCHEDULE: t('workflow.belonging.SCHEDULE'),
-          ARCHIVED: t('workflow.belonging.ARCHIVED'),
+          ARCHIVED_MOVIE: t('workflow.belonging.ARCHIVED_MOVIE'),
+          ARCHIVED_EPISODE: t('workflow.belonging.ARCHIVED_EPISODE'),
         }
         return <Tag color="blue">{labelMap[val] || val}</Tag>
       },
@@ -480,7 +493,7 @@ export default function WorkflowConfigList() {
       width: 180,
       sorter: true,
       sortOrder: sortField === 'updated_at' ? sortOrder : null,
-      render: (val: string) => (val ? new Date(val).toLocaleString() : '-'),
+      render: (val: string) => (val ? dayjs(val).format('YYYY-MM-DD HH:mm:ss') : '-'),
     },
     {
       title: t('workflow.action'),
@@ -573,11 +586,7 @@ export default function WorkflowConfigList() {
         loading={loading}
       />
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={4} style={{ margin: 0 }}>
-          {t('menu.workflow.processConfig')}
-        </Title>
-        <Space>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16, gap: 8 }}>
           <Popconfirm
             title={t('workflow.confirmPublish')}
             okText={t('common.confirm')}
@@ -592,7 +601,6 @@ export default function WorkflowConfigList() {
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalOpen(true)}>
             {t('workflow.btn.new')}
           </Button>
-        </Space>
       </div>
 
       <Table
@@ -712,10 +720,10 @@ export default function WorkflowConfigList() {
                     )}
                   </div>
                   <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
-                    {t('workflow.createTime')}: {v.created_at ? new Date(v.created_at).toLocaleString() : '-'}
+                    {t('workflow.createTime')}: {v.created_at ? dayjs(v.created_at).format('YYYY-MM-DD HH:mm:ss') : '-'}
                   </div>
                   <div style={{ fontSize: 12, color: '#999' }}>
-                    {t('workflow.updateTime')}: {v.updated_at ? new Date(v.updated_at).toLocaleString() : '-'}
+                    {t('workflow.updateTime')}: {v.updated_at ? dayjs(v.updated_at).format('YYYY-MM-DD HH:mm:ss') : '-'}
                   </div>
                   <div style={{ marginTop: 8 }}>
                     <Button

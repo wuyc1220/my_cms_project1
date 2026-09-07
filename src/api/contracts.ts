@@ -45,19 +45,26 @@ export const getContractAttachments = (contractId: number) =>
 export const deleteContractAttachment = (contractId: number, attachmentId: number) =>
   api.delete(`/contracts/${contractId}/attachments/${attachmentId}`).then((r) => r.data)
 
-export const uploadContractAttachment = (contractId: number, formData: FormData) =>
+/**
+ * 注册合同附件记录（文件已通过通用上传接口上传）
+ * @param contractId 合同ID
+ * @param file_path 通用上传接口返回的 file_path(相对路径)
+ * @param file_name 文件名
+ * @param file_size 文件大小
+ * @param storage_url 通用上传接口返回的 storage_url(加密全路径)
+ */
+export const registerContractAttachment = (
+  contractId: number,
+  file_path: string,
+  file_name: string,
+  file_size: number,
+  storage_url: string,
+) =>
   api
-    .post<ContractAttachmentItem>(`/contracts/${contractId}/attachments`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+    .post<ContractAttachmentItem>(`/contracts/${contractId}/attachments/register`, null, {
+      params: { file_path, file_name, file_size, storage_url },
     })
     .then((r) => r.data)
-
-export const downloadContractAttachment = (contractId: number, attachmentId: number) =>
-  api
-    .get(`/contracts/${contractId}/attachments/${attachmentId}/download`, {
-      responseType: 'blob',
-    })
-    .then((r) => r.data as Blob)
 
 export const getContractHistory = (contractId: number, limit = 100) =>
   api

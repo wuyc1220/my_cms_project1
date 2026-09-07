@@ -16,11 +16,7 @@ import {
   message,
   Button,
   Spin,
-  DatePicker,
-  TimePicker,
-  InputNumber,
 } from 'antd'
-import dayjs from 'dayjs'
 import {
   createPackage,
   getPackageFieldValues,
@@ -35,6 +31,8 @@ import { useI18n } from '../i18n/useI18n'
 import { useFormRules } from '../hooks/useFormRules'
 import { FORM_MAX_LENGTH } from '../constants/form'
 import TrimInput from './TrimInput'
+import CustomFieldControl from './CustomFieldControl'
+import { formatApiValue, getCustomFieldPlaceholder, getFieldOptionLabel, validateCustomFields as validateCustomFieldsUtil, clearFieldError } from '../utils/customField'
 import type {
   PackageListItem,
   PackageCreatePayload,
@@ -42,32 +40,6 @@ import type {
 } from '../types/package'
 import type { CustomFieldListItem, EntityFieldValueItem, EntityI18nItem } from '../types/basic'
 import type { LanguageOption } from '../types/i18n'
-
-// ─── 辅助函数 ─────────────────────────────────────────────────────────
-
-const isMultiSelectField = (ft: string) => ft === 'DropList_multiple'
-const isSelectField = (ft: string) => ft === 'DropList' || ft === 'DropList_multiple'
-const isLongTextField = (ft: string) => ft === 'LongText'
-const isNumberField = (ft: string) => ft === 'Integer' || ft === 'Decimal'
-const isDateField = (ft: string) => ft === 'Date'
-const isTimeField = (ft: string) => ft === 'Time'
-const isDateTimeField = (ft: string) => ft === 'Date+Time'
-
-/** 按优先语言取候选项显示名称，兜底顺序：preferredLanguage → default → 首个值 → code */
-const getFieldOptionLabel = (
-  field: CustomFieldListItem,
-  optionCode: string,
-  preferredLanguage?: string,
-) => {
-  const option = field.options.find((item) => item.code === optionCode)
-  if (!option) return optionCode
-  return (
-    option.names[preferredLanguage ?? ''] ??
-    option.names['default'] ??
-    Object.values(option.names)[0] ??
-    option.code
-  )
-}
 
 // ─── 类型 ─────────────────────────────────────────────────────────────
 
@@ -104,7 +76,7 @@ export default function PackageCreateModal({
   onClose,
   onSuccess,
 }: PackageCreateModalProps) {
-  const { t, language } = useI18n()
+  const { t } = useI18n()
   const formRules = useFormRules()
   const [form] = Form.useForm<MainFormValues>()
 
@@ -120,7 +92,7 @@ export default function PackageCreateModal({
   const [dataLoading, setDataLoading] = useState(false)
   const [activeLang, setActiveLang] = useState('')
   const [activeTab, setActiveTab] = useState('main')
-  const [customFieldErrors, setCustomFieldErrors] = useState<Record<number, string>>({})
+  const [customFieldErrors, setCustomFieldErrors] = useState<Record<number, Record<string, string>>>({})
   const [isReady, setIsReady] = useState(false)
 
   // 使用 ref 存储最新的自定义字段和语言选项，避免 loadEditData 的闭包问题
@@ -155,11 +127,6 @@ export default function PackageCreateModal({
     [customFieldItems],
   )
 
-  // 动态 placeholder 辅助函数
-  const inputPlaceholder = (name: string) => language === 'cn' ? `请输入${name}` : `Enter ${name}`
-  const selectPlaceholder = (name: string) => language === 'cn' ? `请选择${name}` : `Select ${name}`
-
-  // 重置状态
   const resetState = useCallback(() => {
     setFieldValues({})
     const nextI18n: I18nValueMap = {}
@@ -206,6 +173,25 @@ export default function PackageCreateModal({
         const field = currentCustomFields.find(f => f.field_code === item.field_name && f.multi_language)
         if (field && item.language === currentDefaultLang && item.value) {
           nextFieldValues[field.id] = item.value
+        }
+      })
+
+      // 兜底回填：multi_language 开关切换后，存量值可能仍留在另一张表中，双向回退保证回显不丢
+      currentCustomFields.forEach((field) => {
+        const mainValue = nextFieldValues[field.id] ?? ''
+        if (field.multi_language) {
+          // 多语言字段：i18n 默认语言无值时，回退取非多语言时期的存量值
+          const mlValue = nextI18n[currentDefaultLang]?.[field.field_code] ?? ''
+          if (!mlValue && mainValue) {
+            nextI18n[currentDefaultLang] = { ...(nextI18n[currentDefaultLang] ?? {}), [field.field_code]: mainValue }
+          }
+        } else if (!mainValue) {
+          // 非多语言字段：主值无值时，回退取多语言时期的存量值（默认语言优先，其次按语言顺序）
+          const langOrder = languageOptionsRef.current.map((l) => l.code)
+          const fallbackLang = langOrder.find((lang) => (nextI18n[lang]?.[field.field_code] ?? '').trim() !== '')
+          if (fallbackLang) {
+            nextFieldValues[field.id] = nextI18n[fallbackLang][field.field_code]
+          }
         }
       })
 
@@ -282,14 +268,7 @@ export default function PackageCreateModal({
 
   const updateFieldValue = (fieldId: number, value: string) => {
     setFieldValues((prev) => ({ ...prev, [fieldId]: value }))
-    setCustomFieldErrors((prev) => {
-      if (prev[fieldId]) {
-        const next = { ...prev }
-        delete next[fieldId]
-        return next
-      }
-      return prev
-    })
+    setCustomFieldErrors((prev) => clearFieldError(prev, fieldId, '_main'))
   }
 
   const updateI18nValue = (lang: string, fieldName: string, value: string) => {
@@ -299,14 +278,7 @@ export default function PackageCreateModal({
     }))
     const field = customFieldItems.find((f) => f.field_code === fieldName && f.multi_language)
     if (field) {
-      setCustomFieldErrors((prev) => {
-        if (prev[field.id]) {
-          const next = { ...prev }
-          delete next[field.id]
-          return next
-        }
-        return prev
-      })
+      setCustomFieldErrors((prev) => clearFieldError(prev, field.id, lang))
     }
   }
 
@@ -314,41 +286,28 @@ export default function PackageCreateModal({
     setI18nValues((prev) => ({ ...prev, [lang]: {} }))
   }
 
-  const validateCustomFields = () => {
-    const errors: Record<number, string> = {}
-    for (const field of customFieldItems) {
-      if (!field.mandatory) continue
-      if (field.multi_language) {
-        const hasValue = Object.values(i18nValues).some((langMap) => (langMap[field.field_code] ?? '').trim())
-        if (!hasValue) {
-          errors[field.id] = language === 'cn' ? `请填写${field.field_name}` : `Please fill in ${field.field_name}`
-        }
-      } else {
-        if (!(fieldValues[field.id] ?? '').trim()) {
-          errors[field.id] = language === 'cn' ? `请填写${field.field_name}` : `Please fill in ${field.field_name}`
-        }
-      }
-    }
-    setCustomFieldErrors(errors)
-    return Object.keys(errors).length === 0
-  }
-
   const handleSubmit = async () => {
     const mainFieldNames = ['name', 'package_type', 'platforms']
+
+    const doValidateCustomFields = () => {
+      const errors = validateCustomFieldsUtil(customFieldItems, fieldValues, i18nValues, t, defaultLang)
+      setCustomFieldErrors(errors)
+      return Object.values(errors).every((langErrors) => Object.keys(langErrors).length === 0)
+    }
 
     const validateCurrentTab = () => {
       if (activeTab === 'main') {
         return form.validateFields(mainFieldNames).then(() => true, () => false)
       }
       if (activeTab === 'custom') {
-        return Promise.resolve(validateCustomFields())
+        return Promise.resolve(doValidateCustomFields())
       }
       return Promise.resolve(true)
     }
 
     const validateOtherTab = () => {
       if (activeTab === 'main') {
-        if (!validateCustomFields()) return Promise.resolve('custom')
+        if (!doValidateCustomFields()) return Promise.resolve('custom')
         return Promise.resolve(null)
       }
       if (activeTab === 'custom') {
@@ -396,13 +355,12 @@ export default function PackageCreateModal({
         void message.success(t('package.msg.created'), 3)
       }
 
-      // 保存非多语言自定义字段
       await savePackageFieldValues(pkgId, {
         values: customFieldItems
           .filter((f) => !f.multi_language)
           .map((f) => ({
             custom_field_id: f.id,
-            value: fieldValues[f.id] ?? '',
+            value: formatApiValue(f.field_type, fieldValues[f.id]),
           })),
       })
 
@@ -427,206 +385,6 @@ export default function PackageCreateModal({
     } finally {
       setSubmitting(false)
     }
-  }
-
-  const renderCustomFieldInput = (field: CustomFieldListItem, inMultiLanguage = false, langCode?: string) => {
-    if (inMultiLanguage) {
-      const targetLang = langCode ?? activeLang
-      const value = i18nValues[targetLang]?.[field.field_code] ?? ''
-      if (isSelectField(field.field_type)) {
-        if (isMultiSelectField(field.field_type)) {
-          const selected = value ? value.split(',').filter(Boolean) : []
-          return (
-            <Select
-              showSearch optionFilterProp="label"
-              mode="multiple"
-              allowClear
-              value={selected}
-              placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-              options={field.options.map((item) => ({
-                label: item.names[targetLang] ?? item.names.default ?? Object.values(item.names)[0] ?? item.code,
-                value: item.code,
-              }))}
-              onChange={(vals) => updateI18nValue(targetLang, field.field_code, vals.join(','))}
-              style={{ width: '100%' }}
-            />
-          )
-        }
-        return (
-          <Select
-            showSearch optionFilterProp="label"
-            allowClear
-            value={value || undefined}
-            placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-            options={field.options.map((item) => ({
-              label: item.names[targetLang] ?? item.names.default ?? Object.values(item.names)[0] ?? item.code,
-              value: item.code,
-            }))}
-            onChange={(val) => updateI18nValue(targetLang, field.field_code, val ?? '')}
-            style={{ width: '100%' }}
-          />
-        )
-      }
-      if (isLongTextField(field.field_type)) {
-        return (
-          <TrimInput.TextArea
-            rows={3}
-            value={value}
-            placeholder={field.tip ?? inputPlaceholder(field.field_name)}
-            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateI18nValue(targetLang, field.field_code, e.target.value)}
-          />
-        )
-      }
-      if (isNumberField(field.field_type)) {
-        return (
-          <InputNumber
-            style={{ width: '100%' }}
-            value={value === '' ? undefined : Number(value)}
-            placeholder={field.tip ?? inputPlaceholder(field.field_name)}
-            onChange={(val) => updateI18nValue(targetLang, field.field_code, val == null ? '' : String(val))}
-          />
-        )
-      }
-      if (isDateField(field.field_type)) {
-        return (
-          <DatePicker
-            style={{ width: '100%' }}
-            value={value ? dayjs(value) : undefined}
-            placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-            onChange={(_, dateString) => updateI18nValue(targetLang, field.field_code, typeof dateString === 'string' ? dateString : '')}
-          />
-        )
-      }
-      if (isTimeField(field.field_type)) {
-        return (
-          <TimePicker
-            style={{ width: '100%' }}
-            value={value ? dayjs(value, 'HH:mm:ss') : undefined}
-            placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-            onChange={(_, timeString) => updateI18nValue(targetLang, field.field_code, typeof timeString === 'string' ? timeString : '')}
-          />
-        )
-      }
-      if (isDateTimeField(field.field_type)) {
-        return (
-          <DatePicker
-            showTime
-            style={{ width: '100%' }}
-            format="YYYY-MM-DD HH:mm:ss"
-            value={value ? dayjs(value) : undefined}
-            placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-            onChange={(_, dateString) => updateI18nValue(targetLang, field.field_code, typeof dateString === 'string' ? dateString : '')}
-          />
-        )
-      }
-      return (
-        <TrimInput
-          value={value}
-          placeholder={field.tip ?? inputPlaceholder(field.field_name)}
-          onChange={(e) => updateI18nValue(targetLang, field.field_code, e.target.value)}
-        />
-      )
-    }
-
-    const value = fieldValues[field.id] ?? ''
-    if (isSelectField(field.field_type)) {
-      const preferredLang = field.multi_language
-        ? (languageOptions[0]?.code ?? undefined)
-        : undefined
-      if (isMultiSelectField(field.field_type)) {
-        const selected = value ? value.split(',').filter(Boolean) : []
-        return (
-          <Select
-            showSearch
-            optionFilterProp="label"
-            mode="multiple"
-            allowClear
-            value={selected}
-            placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-            options={field.options.map((o) => ({
-              label: getFieldOptionLabel(field, o.code, preferredLang),
-              value: o.code,
-            }))}
-            onChange={(vals) => updateFieldValue(field.id, vals.join(','))}
-            style={{ width: '100%' }}
-          />
-        )
-      }
-      return (
-        <Select
-          showSearch
-          optionFilterProp="label"
-          allowClear
-          value={value || undefined}
-          placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-          options={field.options.map((o) => ({
-            label: getFieldOptionLabel(field, o.code, preferredLang),
-            value: o.code,
-          }))}
-          onChange={(val) => updateFieldValue(field.id, val ?? '')}
-          style={{ width: '100%' }}
-        />
-      )
-    }
-    if (isLongTextField(field.field_type)) {
-      return (
-        <TrimInput.TextArea
-          rows={3}
-          value={value}
-          placeholder={field.tip ?? inputPlaceholder(field.field_name)}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateFieldValue(field.id, e.target.value)}
-        />
-      )
-    }
-    if (isNumberField(field.field_type)) {
-      return (
-        <InputNumber
-          style={{ width: '100%' }}
-          value={value === '' ? undefined : Number(value)}
-          placeholder={field.tip ?? inputPlaceholder(field.field_name)}
-          onChange={(val) => updateFieldValue(field.id, val == null ? '' : String(val))}
-        />
-      )
-    }
-    if (isDateField(field.field_type)) {
-      return (
-        <DatePicker
-          style={{ width: '100%' }}
-          value={value ? dayjs(value) : undefined}
-          placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-          onChange={(_, dateString) => updateFieldValue(field.id, typeof dateString === 'string' ? dateString : '')}
-        />
-      )
-    }
-    if (isTimeField(field.field_type)) {
-      return (
-        <TimePicker
-          style={{ width: '100%' }}
-          value={value ? dayjs(value, 'HH:mm:ss') : undefined}
-          placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-          onChange={(_, timeString) => updateFieldValue(field.id, typeof timeString === 'string' ? timeString : '')}
-        />
-      )
-    }
-    if (isDateTimeField(field.field_type)) {
-      return (
-        <DatePicker
-          showTime
-          style={{ width: '100%' }}
-          format="YYYY-MM-DD HH:mm:ss"
-          value={value ? dayjs(value) : undefined}
-          placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-          onChange={(_, dateString) => updateFieldValue(field.id, typeof dateString === 'string' ? dateString : '')}
-        />
-      )
-    }
-    return (
-      <TrimInput
-        value={value}
-        placeholder={field.tip ?? inputPlaceholder(field.field_name)}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateFieldValue(field.id, e.target.value)}
-      />
-    )
   }
 
   // 构建 Tabs 项
@@ -703,38 +461,53 @@ export default function PackageCreateModal({
           <Spin size="large" />
         </div>
       ) : (
-        <Row gutter={16}>
-          {customFieldItems.length === 0 ? (
-            <Col span={24}>
-              <div style={{ color: '#999', padding: '16px 0' }}>
-                {t('package.noCustomFields')}
-              </div>
-            </Col>
-          ) : (
-            customFieldItems.map((field) => (
-              <Col key={field.id} span={12}>
-                <Form.Item
-                  label={field.field_name}
-                  required={field.mandatory}
-                  tooltip={field.tip ?? undefined}
-                  validateStatus={customFieldErrors[field.id] ? 'error' : ''}
-                  help={customFieldErrors[field.id] || ''}
-                  rules={
-                    !isSelectField(field.field_type) &&
-                    !isNumberField(field.field_type) &&
-                    !isDateField(field.field_type) &&
-                    !isTimeField(field.field_type) &&
-                    !isDateTimeField(field.field_type)
-                      ? [formRules.maxLength(isLongTextField(field.field_type) ? FORM_MAX_LENGTH.TEXT_AREA : FORM_MAX_LENGTH.INPUT)]
-                      : undefined
-                  }
-                >
-                  {renderCustomFieldInput(field, field.multi_language, field.multi_language ? defaultLang : undefined)}
-                </Form.Item>
+        <Form layout="vertical">
+          <Row gutter={16}>
+            {customFieldItems.length === 0 ? (
+              <Col span={24}>
+                <div style={{ color: '#999', padding: '16px 0' }}>
+                  {t('package.noCustomFields')}
+                </div>
               </Col>
-            ))
-          )}
-        </Row>
+            ) : (
+              customFieldItems.map((field) => {
+                const isML = field.multi_language
+                const preferredLang = isML ? (languageOptions[0]?.code ?? undefined) : undefined
+                const errorKey = isML ? defaultLang : '_main'
+                const langOrder = languageOptions.map((l) => l.code)
+                const value = isML
+                  ? (i18nValues[defaultLang]?.[field.field_code] ?? '')
+                  : (fieldValues[field.id] ?? '')
+                const handleChange = isML
+                  ? (val: unknown) => updateI18nValue(defaultLang, field.field_code, formatApiValue(field.field_type, val))
+                  : (val: unknown) => updateFieldValue(field.id, formatApiValue(field.field_type, val))
+
+                return (
+                  <Col key={field.id} span={12}>
+                    <Form.Item
+                      label={field.field_name}
+                      required={field.mandatory}
+                      tooltip={field.tip ?? undefined}
+                      validateStatus={customFieldErrors[field.id]?.[errorKey] ? 'error' : ''}
+                      help={customFieldErrors[field.id]?.[errorKey] || ''}
+                    >
+                      <CustomFieldControl
+                        fieldType={field.field_type}
+                        options={field.options.map((o) => ({
+                          value: o.code,
+                          label: getFieldOptionLabel(field, o.code, preferredLang, langOrder),
+                        }))}
+                        placeholder={getCustomFieldPlaceholder(field, t)}
+                        value={value}
+                        onChange={handleChange}
+                      />
+                    </Form.Item>
+                  </Col>
+                )
+              })
+            )}
+          </Row>
+        </Form>
       ),
     },
   ]
@@ -784,29 +557,36 @@ export default function PackageCreateModal({
             <div style={{ marginBottom: 16, fontWeight: 500 }}>
               {t('cast.modal.currentLanguage')}{otherLanguageOptions.find((item) => item.code === activeLang)?.name ?? activeLang}
             </div>
-            <Row gutter={16}>
-              {multiLanguageFields.map((field) => (
-                <Col span={12} key={field.id}>
-                  <Form.Item
-                    label={field.field_name}
-                    tooltip={field.tip ?? undefined}
-                    validateStatus={customFieldErrors[field.id] ? 'error' : ''}
-                    help={customFieldErrors[field.id] || ''}
-                    rules={
-                      !isSelectField(field.field_type) &&
-                      !isNumberField(field.field_type) &&
-                      !isDateField(field.field_type) &&
-                      !isTimeField(field.field_type) &&
-                      !isDateTimeField(field.field_type)
-                        ? [formRules.maxLength(isLongTextField(field.field_type) ? FORM_MAX_LENGTH.TEXT_AREA : FORM_MAX_LENGTH.INPUT)]
-                        : undefined
-                    }
-                  >
-                    {renderCustomFieldInput(field, true)}
-                  </Form.Item>
-                </Col>
-              ))}
-            </Row>
+            <Form layout="vertical">
+              <Row gutter={16}>
+                {multiLanguageFields.map((field) => {
+                  const value = i18nValues[activeLang]?.[field.field_code] ?? ''
+                  const handleChange = (val: unknown) => updateI18nValue(activeLang, field.field_code, formatApiValue(field.field_type, val))
+
+                  return (
+                    <Col span={12} key={field.id}>
+                      <Form.Item
+                        label={field.field_name}
+                        tooltip={field.tip ?? undefined}
+                        validateStatus={customFieldErrors[field.id]?.[activeLang] ? 'error' : ''}
+                        help={customFieldErrors[field.id]?.[activeLang] || ''}
+                      >
+                        <CustomFieldControl
+                          fieldType={field.field_type}
+                          options={field.options.map((o) => ({
+                            value: o.code,
+                            label: o.names[activeLang] ?? o.names[defaultLang] ?? Object.values(o.names)[0] ?? o.code,
+                          }))}
+                          placeholder={getCustomFieldPlaceholder(field, t)}
+                          value={value}
+                          onChange={handleChange}
+                        />
+                      </Form.Item>
+                    </Col>
+                  )
+                })}
+              </Row>
+            </Form>
           </Col>
         </Row>
       ),

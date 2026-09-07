@@ -58,3 +58,15 @@ export const getAuthUsers = async (): Promise<UserSimpleItem[]> => {
   const response = await request.get<UserSimpleItem[]>('/data-authorization/users')
   return response.data
 }
+
+// 检查用户是否有内容的数据权限
+export interface ContentAuthPermissionResponse {
+  has_permission: boolean
+  content_id: number
+  user_id: number
+}
+
+export const checkContentAuthPermission = async (contentId: number): Promise<ContentAuthPermissionResponse> => {
+  const response = await request.get<ContentAuthPermissionResponse>(`/data-authorization/check-permission/${contentId}`)
+  return response.data
+}

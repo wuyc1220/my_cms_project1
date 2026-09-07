@@ -62,11 +62,13 @@ export interface ProcessedHistoryItem {
   id: number
   processed_at?: string
   processed_by?: string
+  processed_by_display_name?: string
   processed_type?: string
   entity_type?: string
   details?: string
   previous_value?: string
   updated_value?: string
+  updated_value_json?: string
 }
 
 export interface ProviderHistoryItem {
@@ -164,9 +166,11 @@ export interface ContractAttachmentItem {
   contract_id: number
   file_name: string
   file_path: string
+  relative_path?: string
   file_size?: number
   uploaded_by?: number
   created_at?: string
+  url?: string
 }
 
 // ─── License ───────────────────────────────────────────────────────────

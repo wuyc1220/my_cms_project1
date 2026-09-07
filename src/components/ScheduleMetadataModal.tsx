@@ -1,3 +1,7 @@
+/**
+*  已弃用
+* */
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AutoComplete,
@@ -191,15 +195,15 @@ export default function ScheduleMetadataModal({
         })
         setI18nValues(nextI18n)
 
-        // ✅ 从主表获取 genre_id、custom_tag_ids、begin_time、end_time
-        const contentGenreId = contentDetail?.content?.genre_id ?? undefined
+        // ✅ 从主表获取 genre_ids、custom_tag_ids、begin_time、end_time
+        const contentGenreIds = contentDetail?.content?.genre_ids ?? undefined
         const contentCustomTagIds = contentDetail?.content?.custom_tag_ids ?? []
         const contentBeginTime = contentDetail?.content?.begin_time ?? undefined
         const contentEndTime = contentDetail?.content?.end_time ?? undefined
 
         form.setFieldsValue({
           program_name: meta?.name ?? scheduleName,
-          genre_id: contentGenreId,
+          genre_ids: contentGenreIds,
           custom_tag_ids: contentCustomTagIds,
           begin_time: contentBeginTime ? dayjs(contentBeginTime) : undefined,
           end_time: contentEndTime ? dayjs(contentEndTime) : undefined,
@@ -258,10 +262,10 @@ export default function ScheduleMetadataModal({
       const values = await form.validateFields()
       setSaving(true)
 
-      // ✅ 分离 custom_tag_ids、genre_id、begin_time、end_time，不保存到元数据表
-      const { custom_tag_ids, genre_id, begin_time, end_time, ...metadataValues } = values
+      // ✅ 分离 custom_tag_ids、genre_ids、begin_time、end_time，不保存到元数据表
+      const { custom_tag_ids, genre_ids, begin_time, end_time, ...metadataValues } = values
 
-      const payload = {
+      const payload: Record<string, unknown> = {
         name: metadataValues.program_name,
         status_flag: metadataValues.status_flag,
         description: metadataValues.description || undefined,
@@ -292,6 +296,15 @@ export default function ScheduleMetadataModal({
         sections_info: metadataValues.sections_info?.length ? metadataValues.sections_info : undefined,
       }
 
+      // ✅ 清空语义保障：antd 清空 Select 等控件后表单值为 undefined，JSON 序列化会丢弃该 key，
+      // 后端 model_dump(exclude_unset=True) 会视为“未提交”而跳过更新，导致清空不生效；
+      // 仅对 DB 已返回（已回填）的字段将 undefined 转 null，使“清空”语义生效；
+      // 未回填的字段保持“省略 = 不变更”，避免误清空
+      const loadedData = (metadata ?? {}) as Record<string, unknown>
+      for (const key of Object.keys(payload)) {
+        if (payload[key] === undefined && key in loadedData) payload[key] = null
+      }
+
       if (metadata) {
         await updateScheduleMetadata(scheduleId, payload as ScheduleMetadataUpdate)
       } else {
@@ -301,9 +314,9 @@ export default function ScheduleMetadataModal({
         } as ScheduleMetadataCreate)
       }
 
-      // ✅ 更新主表的 genre_id、custom_tag_ids、begin_time、end_time
+      // ✅ 更新主表的 genre_ids、custom_tag_ids、begin_time、end_time
       await updateContent(scheduleId, {
-        genre_id: genre_id,
+        genre_ids: genre_ids,
         custom_tag_ids: custom_tag_ids?.length ? custom_tag_ids : undefined,
         begin_time: begin_time ? begin_time.toISOString() : undefined,
         end_time: end_time ? end_time.toISOString() : undefined,
@@ -345,19 +358,21 @@ export default function ScheduleMetadataModal({
       setSeriesSearchOptions([])
       return
     }
-    void getContents({ page: 1, page_size: 20, title: keyword.trim(), content_types: ['SERIES'] })
+    // 按 series_type 锁定类型：1=普通连续剧 SERIES，2=分季单季 SEASON_SERIES，避免选错层级
+    const seriesTypes = seriesType === 2 ? ['SEASON_SERIES'] : ['SERIES']
+    void getContents({ page: 1, page_size: 1000, title: keyword.trim(), content_types: seriesTypes })
       .then((res) => {
         setSeriesSearchOptions(res.items.map((item) => ({ value: item.title, label: `${item.title} (ID:${item.id})`, id: item.id })))
       })
       .catch(() => setSeriesSearchOptions([]))
-  }, [])
+  }, [seriesType])
 
   const searchShow = useCallback((keyword: string) => {
     if (!keyword || keyword.trim().length < 1) {
       setShowSearchOptions([])
       return
     }
-    void getContents({ page: 1, page_size: 20, title: keyword.trim(), content_types: ['SEASON'] })
+    void getContents({ page: 1, page_size: 1000, title: keyword.trim(), content_types: ['SEASON'] })
       .then((res) => {
         setShowSearchOptions(res.items.map((item) => ({ value: item.title, label: `${item.title} (ID:${item.id})`, id: item.id })))
       })
@@ -390,7 +405,7 @@ export default function ScheduleMetadataModal({
   const defaultLang = languageOptions[0]?.code ?? ''
   const watchedProgramName = Form.useWatch('program_name', form)
   const watchedDescription = Form.useWatch('description', form)
-  const watchedGenreId = Form.useWatch('genre_id', form)
+  const watchedGenreIds = Form.useWatch('genre_ids', form)
   const watchedSeriesName = Form.useWatch('series_name', form)
   const watchedShowName = Form.useWatch('show_name', form)
 
@@ -408,8 +423,8 @@ export default function ScheduleMetadataModal({
         langValues['description'] = String(watchedDescription)
         changed = true
       }
-      if (watchedGenreId !== undefined && watchedGenreId !== null) {
-        langValues['genre'] = String(watchedGenreId)
+      if (watchedGenreIds !== undefined && watchedGenreIds !== null) {
+        langValues['genre_ids'] = Array.isArray(watchedGenreIds) ? watchedGenreIds.join(',') : String(watchedGenreIds)
         changed = true
       }
       if (watchedSeriesName !== undefined && watchedSeriesName !== null) {
@@ -423,7 +438,7 @@ export default function ScheduleMetadataModal({
       if (!changed) return prev
       return { ...prev, [defaultLang]: langValues }
     })
-  }, [watchedProgramName, watchedDescription, watchedGenreId, watchedSeriesName, watchedShowName, defaultLang, loading])
+  }, [watchedProgramName, watchedDescription, watchedGenreIds, watchedSeriesName, watchedShowName, defaultLang, loading])
 
   /* ── 自定义字段输入渲染 ─────────────────────────────────────────────────── */
   const renderCustomFieldInput = useCallback(
@@ -584,11 +599,11 @@ export default function ScheduleMetadataModal({
           <Row gutter={16}>
             <Col span={8}>
               <Form.Item
-                name="genre_id"
+                name="genre_ids"
                 label={t('content.metadata.genre')}
                 rules={[{ required: true, message: t('content.metadata.required') }]}
               >
-                <Select allowClear placeholder="Please select" showSearch optionFilterProp="label" options={genres.map((g) => ({ label: g.name, value: g.id }))} />
+                <Select mode="multiple" allowClear placeholder="Please select" showSearch optionFilterProp="label" options={genres.map((g) => ({ label: g.name, value: g.id }))} />
               </Form.Item>
             </Col>
             <Col span={8}>
@@ -677,7 +692,7 @@ export default function ScheduleMetadataModal({
               <>
                 <Col span={6}>
                   <Form.Item name="package_ids" label={t('content.metadata.packageId')} rules={[{ required: true, message: t('content.metadata.required') }]}>
-                    <Select showSearch optionFilterProp="label" mode="multiple" allowClear placeholder="Please select" options={packages.map((p) => ({ label: p.name, value: p.id }))} />
+                    <Select showSearch optionFilterProp="label" mode="multiple" allowClear maxTagCount="responsive" placeholder="Please select" options={packages.map((p) => ({ label: p.name, value: p.id }))} />
                   </Form.Item>
                 </Col>
                 <Col span={6}>
@@ -742,7 +757,7 @@ export default function ScheduleMetadataModal({
                       }
                       form.setFieldsValue({ series_id: '' })
                     }}
-                    placeholder="请输入或搜索"
+                    placeholder={t('common.placeholder.enterOrSearch')}
                   />
                 </Form.Item>
               </Col>
@@ -781,7 +796,7 @@ export default function ScheduleMetadataModal({
                       }
                       form.setFieldsValue({ show_id: '' })
                     }}
-                    placeholder="请输入或搜索"
+                    placeholder={t('common.placeholder.enterOrSearch')}
                   />
                 </Form.Item>
               </Col>
@@ -958,7 +973,7 @@ export default function ScheduleMetadataModal({
       title={t('content.metadata.title.schedule')}
       width={960}
       onCancel={onClose}
-      destroyOnClose
+      destroyOnHidden
       footer={
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Button onClick={onClose} disabled={saving}>

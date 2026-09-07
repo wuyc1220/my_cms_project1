@@ -24,6 +24,7 @@ import { getPackage, getPackageContents, getPackageFieldValues, getPackageI18n, 
 import { getCustomFields } from '../../api/customFields'
 import { getDictTree } from '../../api/dicts'
 import { getMultiLanguageOptions } from '../../api/i18n'
+import { getFieldOptionLabel } from '../../utils/customField'
 import TrimInput from '../../components/TrimInput'
 import type { PackageListItem, ContentSimpleItem } from '../../types/package'
 import type { CustomFieldListItem, EntityFieldValueItem, EntityI18nItem } from '../../types/basic'
@@ -38,16 +39,12 @@ import { PAGINATION_CONFIG } from '../../constants/pagination'
 
 // 根据自定义字段类型，将存储的 code 值转换为可读的 label
 // 对于下拉框/多选下拉框，按逗号分隔 code，逐一查找对应 option 名称
-function resolveFieldDisplayValue(field: CustomFieldListItem, rawValue: string, preferredLanguage?: string): string {
+function resolveFieldDisplayValue(field: CustomFieldListItem, rawValue: string, preferredLanguage?: string, languageOrder?: string[]): string {
   if (!rawValue) return ''
   const isSelect = field.field_type === 'DropList' || field.field_type === 'DropList_multiple'
   if (!isSelect) return rawValue
   const codes = rawValue.split(',').filter(Boolean)
-  const labels = codes.map((code) => {
-    const opt = field.options.find((o) => o.code === code)
-    if (!opt) return code
-    return opt.names[preferredLanguage ?? ''] ?? opt.names.default ?? Object.values(opt.names)[0] ?? code
-  })
+  const labels = codes.map((code) => getFieldOptionLabel(field, code, preferredLanguage, languageOrder))
   return labels.join(', ')
 }
 
@@ -135,7 +132,12 @@ export default function PackageDetail() {
     try {
       await removeContentFromPackage(packageId, contentId)
       void message.success(t('package.detail.msg.removed'), 3)
-      void loadContents()
+      // 当前页只剩这一条且不是首页时，删除后当前页会变空，回退一页；否则留在当前页刷新
+      if (contents.length === 1 && contentPage > 1) {
+        setContentPage(contentPage - 1)
+      } else {
+        void loadContents()
+      }
     } catch (err) {
       // 错误已在拦截器中处理
     }
@@ -155,6 +157,8 @@ export default function PackageDetail() {
   const defaultLangCode = useMemo(() => {
     return languageOptions[0]?.code ?? ''
   }, [languageOptions])
+
+  const languageOrder = useMemo(() => languageOptions.map((l) => l.code), [languageOptions])
 
   const langCodeToName = useMemo(() => {
     const map: Record<string, string> = {}
@@ -200,9 +204,26 @@ export default function PackageDetail() {
       dataIndex: 'status',
       key: 'status',
       width: 120,
-      render: (val: string) => (
-        <Tag color={val === 'Published' ? 'success' : 'default'}>{val}</Tag>
-      ),
+      render: (val: string) => {
+        // 将首字母大写状态值（如 Published、InProgress）转为 content.status.* 的 camelCase key
+        const statusI18nKey = val ? val.charAt(0).toLowerCase() + val.slice(1) : 'none'
+        const tagColor: Record<string, string> = {
+          published: 'success',
+          publishing: 'processing',
+          inProgress: 'processing',
+          readyForPublish: 'warning',
+          publishFailed: 'error',
+          noActiveLicense: 'warning',
+          waitingForMaterials: 'warning',
+          closed: 'default',
+          none: 'default',
+        }
+        return (
+          <Tag color={tagColor[statusI18nKey] ?? 'default'}>
+            {t(`content.status.${statusI18nKey}` as any)}
+          </Tag>
+        )
+      },
     },
     {
       title: t('package.detail.license'),
@@ -228,7 +249,9 @@ export default function PackageDetail() {
             cancelText={t('common.cancel')}
             onConfirm={() => void handleRemoveContent(row.id)}
           >
-            <Button type="link" size="small" danger icon={<DeleteOutlined />} />
+            <Tooltip title={t('common.remove')}>
+              <Button type="link" size="small" danger icon={<DeleteOutlined />} />
+            </Tooltip>
           </Popconfirm>
         ) : null,
     },
@@ -305,15 +328,25 @@ export default function PackageDetail() {
             <Form layout="vertical">
               <Row gutter={24}>
                 {customFields.map((field) => {
-                  // 多语言字段从 i18nValueMap 中获取 defaultLang 下的值
-                  const rawValue = field.multi_language
-                    ? (i18nValueMap[defaultLangCode]?.[field.field_code] ?? '')
-                    : (fieldValues[field.id] ?? '')
+                  // 兜底回退：multi_language 开关切换后，存量值可能仍留在另一张表中
+                  const mainValue = fieldValues[field.id] ?? ''
+                  const mlValue = i18nValueMap[defaultLangCode]?.[field.field_code] ?? ''
+                  let rawValue: string
+                  if (field.multi_language) {
+                    // 多语言字段取默认语言的 i18n 值，无值时回退取非多语言时期的存量值
+                    rawValue = mlValue || mainValue
+                  } else if (mainValue) {
+                    rawValue = mainValue
+                  } else {
+                    // 非多语言字段主值缺失时，回退取多语言时期的存量值（默认语言优先，其次按语言顺序）
+                    const fallbackLang = languageOrder.find((lang) => (i18nValueMap[lang]?.[field.field_code] ?? '').trim() !== '')
+                    rawValue = fallbackLang ? (i18nValueMap[fallbackLang]?.[field.field_code] ?? '') : ''
+                  }
                   return (
                     <Col span={8} key={field.id}>
                       <Form.Item label={field.field_name}>
                         <TrimInput
-                          value={resolveFieldDisplayValue(field, rawValue, defaultLangCode) || '—'}
+                          value={resolveFieldDisplayValue(field, rawValue, defaultLangCode, languageOrder) || '—'}
                           disabled
                           style={{ background: '#f5f5f5' }}
                         />
@@ -328,14 +361,16 @@ export default function PackageDetail() {
       )}
 
       {/* Multi Languages - Tabs 形式 */}
-      <div style={{ marginBottom: 32 }}>
-        <SectionTitle title={t('package.detail.multiLanguages')} />
-        <div style={{ paddingLeft: 20 }}>
-          {multiLanguageFields.length === 0 ? (
-            <Empty description={t('package.detail.noMultiLanguages')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
-          ) : (
+      {multiLanguageFields.length > 0 && filteredLanguageOptions.some((lang) =>
+        multiLanguageFields.some((f) => i18nValueMap[lang.code]?.[f.field_code]),
+      ) && (
+        <div style={{ marginBottom: 32 }}>
+          <SectionTitle title={t('package.detail.multiLanguages')} />
+          <div style={{ paddingLeft: 20 }}>
             <Tabs
-              items={filteredLanguageOptions.map((lang) => ({
+              items={filteredLanguageOptions
+                .filter((lang) => multiLanguageFields.some((f) => i18nValueMap[lang.code]?.[f.field_code]))
+                .map((lang) => ({
                 key: lang.code,
                 label: langCodeToName[lang.code] ?? lang.name ?? lang.code,
                 children: (
@@ -344,7 +379,7 @@ export default function PackageDetail() {
                       {multiLanguageFields.map((field) => {
                         const rawValue = i18nValueMap[lang.code]?.[field.field_code] ?? ''
                         const displayValue = rawValue
-                          ? resolveFieldDisplayValue(field, rawValue, lang.code)
+                          ? resolveFieldDisplayValue(field, rawValue, lang.code, languageOrder)
                           : '—'
                         return (
                           <Col span={8} key={field.field_code}>
@@ -359,9 +394,9 @@ export default function PackageDetail() {
                 ),
               }))}
             />
-          )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 关联内容列表 */}
       <div>
@@ -375,10 +410,11 @@ export default function PackageDetail() {
             scroll={{ x: 700 }}
             size="small"
             pagination={{
-              defaultCurrent: 1,
-              defaultPageSize: PAGINATION_CONFIG.defaultPageSize,
+              current: contentPage,
+              pageSize: contentPageSize,
               total: contentTotal,
               showSizeChanger: true,
+              showQuickJumper: true ,
               pageSizeOptions: PAGINATION_CONFIG.pageSizeOptions.map(String),
               showTotal: (n) => t('pagination.total', { n }),
               position: ['bottomCenter'],

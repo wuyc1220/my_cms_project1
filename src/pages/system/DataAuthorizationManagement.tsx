@@ -82,6 +82,7 @@ export default function DataAuthorizationManagement() {
           { label: 'MOVIE', value: 'MOVIE' },
           { label: 'EPISODE', value: 'EPISODE' },
           { label: 'SERIES', value: 'SERIES' },
+          { label: 'SEASON_SERIES', value: 'SEASON_SERIES' },
           { label: 'SEASON', value: 'SEASON' },
           { label: 'CHANNEL', value: 'CHANNEL' },
           { label: 'SCHEDULE', value: 'SCHEDULE' },
@@ -236,6 +237,7 @@ export default function DataAuthorizationManagement() {
               user_ids: userIds,
             })
             message.success(t('system.dataAuth.msg.batchAuthorized'))
+            setSelectedIds([])
             setModalOpen(false)
             void loadList(pagination.current, pagination.pageSize, filters, sortField, sortOrder)
           } catch (err) {
@@ -298,13 +300,46 @@ export default function DataAuthorizationManagement() {
     })
   }
 
+  // 角色/用户列：单行省略展示，悬浮 Tooltip 展示完整标签
+  const renderAuthNames = (
+    items: { key: number; text: string }[],
+    color: string,
+  ) => {
+    if (items.length === 0) return '—'
+    return (
+      <Tooltip
+        title={
+          <Space size={[4, 4]} wrap>
+            {items.map((item) => (
+              <Tag key={item.key} color={color}>
+                {item.text}
+              </Tag>
+            ))}
+          </Space>
+        }
+        overlayStyle={{ maxWidth: 480 }}
+      >
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
+          {items.map((item) => item.text).join('、')}
+        </span>
+      </Tooltip>
+    )
+  }
+
   const columns: ColumnsType<ContentAuthListItem> = [
     {
       title: t('system.dataAuth.col.contentName'),
       dataIndex: 'content_name',
       key: 'content_name',
+      width: 200,
+      ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'content_name' ? sortOrder : null,
+      render: (value: string) => (
+        <Tooltip title={value} autoAdjustOverflow={false} placement={'topLeft'}>
+          <span>{value}</span>
+        </Tooltip>
+      ),
     },
     {
       title: t('system.dataAuth.col.contentType'),
@@ -318,7 +353,7 @@ export default function DataAuthorizationManagement() {
       title: t('system.dataAuth.col.ingestStatus'),
       dataIndex: 'ingest_status',
       key: 'ingest_status',
-      width: 180,
+      width: 220,
       sorter: true,
       sortOrder: sortField === 'ingest_status' ? sortOrder : null,
     },
@@ -327,36 +362,25 @@ export default function DataAuthorizationManagement() {
       dataIndex: 'authorized_roles',
       key: 'authorized_roles',
       width: 300,
-      render: (roles: ContentAuthListItem['authorized_roles']) => (
-        <Space size={[0, 4]} wrap>
-          {roles.map((role) => (
-            <Tag key={role.id} color="blue">
-              {role.name}
-            </Tag>
-          ))}
-        </Space>
-      ),
+      render: (roles: ContentAuthListItem['authorized_roles']) =>
+        renderAuthNames(roles.map((role) => ({ key: role.id, text: role.name })), 'blue'),
     },
     {
       title: t('system.dataAuth.col.authorizedUsers'),
       dataIndex: 'authorized_users',
       key: 'authorized_users',
       width: 300,
-      render: (users: ContentAuthListItem['authorized_users']) => (
-        <Space size={[0, 4]} wrap>
-          {users.map((user) => (
-            <Tag key={user.id} color="green">
-              {user.display_name}（{user.username}）
-            </Tag>
-          ))}
-        </Space>
-      ),
+      render: (users: ContentAuthListItem['authorized_users']) =>
+        renderAuthNames(
+          users.map((user) => ({ key: user.id, text: `${user.display_name}(${user.username})` })),
+          'green',
+        ),
     },
     {
       title: t('common.action'),
       key: 'action',
       fixed: 'right',
-      width: 140,
+      width: 120,
       render: (_, record) => (
         <Space size={0}>
           {canOperate && (
@@ -405,12 +429,12 @@ export default function DataAuthorizationManagement() {
       {/* 工具栏 */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16, gap: 8 }}>
         {canOperate && (
-          <Button onClick={openBatchAuthorizeModal}>
+          <Button disabled={!selectedIds.length} onClick={openBatchAuthorizeModal}>
             {t('system.dataAuth.btn.batchAuthorize')}
           </Button>
         )}
         {canOperate && (
-          <Button danger onClick={handleBatchClear}>
+          <Button danger disabled={!selectedIds.length} onClick={handleBatchClear}>
             {t('system.dataAuth.btn.batchClear')}
           </Button>
         )}
@@ -427,7 +451,7 @@ export default function DataAuthorizationManagement() {
           selectedRowKeys: selectedIds,
           onChange: (keys) => setSelectedIds(keys as number[]),
         }}
-        scroll={{ x: 1000 }}
+        scroll={{ x: 1500 }}
         size="small"
       />
 
@@ -439,7 +463,7 @@ export default function DataAuthorizationManagement() {
         okText={t('common.confirm')}
         cancelText={t('common.cancel')}
         confirmLoading={submitting}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={authorizeForm} layout="vertical">
           <Form.Item name="role_ids" label={t('system.dataAuth.form.authorizeToRole')}>
@@ -459,7 +483,7 @@ export default function DataAuthorizationManagement() {
               mode="multiple"
               placeholder={t('system.dataAuth.form.authorizeToUserPlaceholder')}
               options={userOptions.map((u) => ({
-                label: `${u.display_name}（${u.username}）`,
+                label: `${u.display_name}(${u.username})`,
                 value: u.id,
               }))}
               allowClear

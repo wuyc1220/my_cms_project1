@@ -20,20 +20,27 @@ export interface OperationButton {
 }
 
 export function getWorkflowBelonging(contentType: string, isArchived?: boolean): string {
-  // 归档内容使用 ARCHIVED 流程配置
-  if (isArchived) return 'ARCHIVED'
-  if (contentType === 'MOVIE' || contentType === 'EPISODE') return 'PROGRAM'
+  // 归档内容根据 content_type 使用不同的流程配置
+  if (isArchived) {
+    if (contentType === 'MOVIE') return 'ARCHIVED_MOVIE'
+    if (contentType === 'EPISODE') return 'ARCHIVED_EPISODE'
+    // 其他归档内容类型(如 SERIES/SEASON)暂时使用 ARCHIVED_MOVIE
+    return 'ARCHIVED_MOVIE'
+  }
+  if (contentType === 'MOVIE') return 'MOVIE'
+  if (contentType === 'EPISODE') return 'EPISODE'
   if (contentType === 'SERIES') return 'SERIES'
   if (contentType === 'SEASON') return 'SEASON'
+  if (contentType === 'SEASON_SERIES') return 'SEASON_SERIES'
   if (contentType === 'CHANNEL') return 'CHANNEL'
   if (contentType === 'SCHEDULE') return 'SCHEDULE'
-  if (contentType === 'ARCHIVE') return 'ARCHIVED'
-  return 'PROGRAM'
+  if (contentType === 'ARCHIVE') return 'ARCHIVED_MOVIE'
+  return 'MOVIE'
 }
 
 export function getEntityType(contentType: string): string {
   if (contentType === 'MOVIE' || contentType === 'EPISODE') return 'program'
-  if (contentType === 'SERIES' || contentType === 'SEASON') return 'series'
+  if (contentType === 'SERIES' || contentType === 'SEASON_SERIES' || contentType === 'SEASON') return 'series'
   if (contentType === 'CHANNEL') return 'channel'
   if (contentType === 'SCHEDULE') return 'schedule'
   return 'program'
@@ -198,7 +205,7 @@ export function isNodeAvailable(
   nodes: WorkflowNodeConfigItem[],
   edges: Array<{ source: string | number; target: string | number }>,
   nodeBatchMap: Map<number, number>,  // 接收缓存的批次映射
-  getNodeStatus: (nodeCode: string) => OpStatus
+  getNodeStatus: (nodeCode: string, mandatory?: boolean) => OpStatus
 ): boolean {
   if (nodes.length === 0) return true
 
@@ -230,14 +237,58 @@ export function isNodeAvailable(
   })
 
   for (const node of prevBatchNodes) {
-    const status = getNodeStatus(node.node_code)
-    // completed 为完成，warning 为可选未完成，只有 pending 才阻塞
-    if (status === 'pending') {
+    const status = getNodeStatus(node.node_code, node.mandatory)
+    // completed 为完成，warning 为可选未完成，只有必填节点的 pending 才阻塞
+    // mandatory: false 的节点（非必须环节），即使 pending 也不阻塞后续操作
+    if (status === 'pending' && node.mandatory !== false) {
       return false
     }
   }
 
   return true
+}
+
+/**
+ * 查找第一个未完成的前置节点名称
+ * 用于在编辑模式下显示具体是哪个节点还未操作
+ */
+export function findPrevPendingNodeName(
+  nodeId: number,
+  nodes: WorkflowNodeConfigItem[],
+  edges: Array<{ source: string | number; target: string | number }>,
+  nodeBatchMap: Map<number, number>,
+  getNodeStatus: (nodeCode: string, mandatory?: boolean) => OpStatus
+): string | null {
+  if (nodes.length === 0) return null
+
+  const currentBatch = nodeBatchMap.get(nodeId)
+  if (currentBatch === undefined || currentBatch === 0) return null
+
+  const orderMap = calculateOrderFromEdges(nodes, edges)
+
+  const sortedNodes = [...nodes]
+    .filter(
+      (n) =>
+        n.node_type !== 'parallel_box' &&
+        !isStartOrEndNode(n.node_code)
+    )
+    .sort((a, b) => {
+      const orderA = orderMap.get(a.id)
+      const orderB = orderMap.get(b.id)
+      if (orderA !== undefined && orderB !== undefined) {
+        return orderA - orderB
+      }
+      return a.sequence - b.sequence
+    })
+
+  const pendingNode = sortedNodes
+    .filter((node) => {
+      const batch = nodeBatchMap.get(node.id)
+      return batch !== undefined && batch < currentBatch
+    })
+    .find((node) => getNodeStatus(node.node_code, node.mandatory) === 'pending' && node.mandatory !== false)
+
+  return pendingNode?.node_name ?? null
 }
 
 /**
@@ -304,7 +355,15 @@ export function parseWorkflowConfig(
       ...n,
       sequence: orderMap.get(n.id) ?? n.sequence,
     }))
-    .sort((a, b) => a.sequence - b.sequence)
+    .sort((a, b) => {
+      // 优先按视觉位置排序（从上到下，从左到右）
+      const yDiff = (a.position_y || 0) - (b.position_y || 0)
+      if (Math.abs(yDiff) > 30) return yDiff // y 差距较大时按行排序
+      const xDiff = (a.position_x || 0) - (b.position_x || 0)
+      if (xDiff !== 0) return xDiff // 同一行按 x 排序
+      // 如果位置相同，使用 sequence 排序
+      return a.sequence - b.sequence
+    })
 
   return { filteredNodes, edges }
 }

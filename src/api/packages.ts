@@ -37,8 +37,9 @@ export const deletePackage = async (id: number): Promise<void> => {
   await request.delete(`/packages/${id}`)
 }
 
-export const batchDeletePackages = async (payload: BatchDeletePayload): Promise<void> => {
-  await request.delete('/packages/batch', { data: payload })
+export const batchDeletePackages = async (payload: BatchDeletePayload): Promise<{ success: boolean; deleted: number }> => {
+  const response = await request.delete<{ success: boolean; deleted: number }>('/packages/batch', { data: payload })
+  return response.data
 }
 
 // ─── Package↔Content 关联 ─────────────────────────────────────────────
@@ -73,13 +74,13 @@ export const getAvailableContents = async (
     title: params.title || undefined,
   }
   if (params.content_types?.length) {
-    query.content_types = params.content_types.join(',')
+    query.content_types = params.content_types
   }
   if (params.genre_ids?.length) {
-    query.genre_ids = params.genre_ids.join(',')
+    query.genre_ids = params.genre_ids
   }
   if (params.custom_tag_ids?.length) {
-    query.custom_tag_ids = params.custom_tag_ids.join(',')
+    query.custom_tag_ids = params.custom_tag_ids
   }
   const response = await request.get<PaginatedResponse<ContentSimpleItem>>(
     `/packages/${packageId}/available-contents`,
@@ -113,5 +114,84 @@ export const savePackageI18n = async (
   payload: EntityI18nPayload,
 ): Promise<EntityI18nItem[]> => {
   const response = await request.put<EntityI18nItem[]>(`/packages/${id}/i18n`, payload)
+  return response.data
+}
+
+// ─── Package Export/Import/Template（导出/导入/模板下载）──────────────────
+
+/** 导出服务包 Excel */
+export const exportPackagesExcel = async (ids: number[]): Promise<Blob> => {
+  const response = await request.post('/packages/export', { ids }, { responseType: 'blob' })
+  return response.data
+}
+
+/** 导入结果 */
+export interface PackageImportError {
+  row: number
+  package_name: string
+  content_name: string
+  error_message: string
+}
+
+export interface PackageImportResult {
+  total: number
+  created: number
+  deleted: number
+  skipped: number
+  errors: PackageImportError[]
+}
+
+/** 导入服务包内容关联 */
+export const importPackageContentsExcel = async (file: File): Promise<PackageImportResult> => {
+  const formData = new FormData()
+  formData.append('file', file)
+  const response = await request.post<PackageImportResult>('/packages/import', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return response.data
+}
+
+/** 下载导入模板 */
+export const downloadPackageImportTemplate = async (): Promise<Blob> => {
+  const response = await request.get('/packages/download-template', { responseType: 'blob' })
+  return response.data
+}
+
+// ─── Package 同步给业务系统 ─────────────────────────────────────
+
+export interface PackageSyncPayload {
+  package_ids: number[]
+}
+
+export interface PackageSyncResponse {
+  success: boolean
+  file_path: string
+  stats: Record<string, number>
+  synced_ids: number[]
+  message: string
+  correlate_id: string | null
+  soap_success: boolean | null
+}
+
+export const syncPackages = async (payload: PackageSyncPayload): Promise<PackageSyncResponse> => {
+  const response = await request.post<PackageSyncResponse>('/packages/sync', payload)
+  return response.data
+}
+
+// ─── Package 发布状态检查 ────────────────────────────────────────
+
+export interface PackagePublishCheckResponse {
+  can_publish: boolean
+  total_count: number
+  published_count: number
+  unpublished_count: number
+  unpublished_packages: Array<{ id: number; name: string; ingest_status: string }>
+  message: string
+}
+
+export const checkPackagesPublishStatus = async (contentId: number): Promise<PackagePublishCheckResponse> => {
+  const response = await request.get<PackagePublishCheckResponse>('/packages/publish-check', {
+    params: { content_id: contentId },
+  })
   return response.data
 }

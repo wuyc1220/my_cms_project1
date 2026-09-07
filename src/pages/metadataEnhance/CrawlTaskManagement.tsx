@@ -1,6 +1,7 @@
 /**
  * 爬取任务管理页面
  */
+import dayjs from 'dayjs'
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -72,13 +73,15 @@ export default function CrawlTaskManagement() {
       name: 'object_types',
       labelKey: 'crawlTask.search.objectTypePlaceholder',
       type: 'multiSelect',
-      options: OBJECT_TYPES.map((item) => ({ label: item, value: item })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      options: OBJECT_TYPES.map((item) => ({ label: t(`metadataSource.contentType.${item}` as any), value: item })),
     },
     {
       name: 'crawl_statuses',
       labelKey: 'crawlTask.search.crawlStatusPlaceholder',
       type: 'multiSelect',
-      options: CRAWL_STATUSES.map((s) => ({ label: s, value: s })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      options: CRAWL_STATUSES.map((s) => ({ label: t(`crawlTask.status.${s}` as any), value: s })),
     },
   ], [])
 
@@ -127,7 +130,7 @@ export default function CrawlTaskManagement() {
       updatePagination(result)
     } catch (err) {
       if (isHandledError(err)) return
-      message.error('Failed to load tasks')
+      message.error(t('crawlTask.msg.loadFailed'))
     } finally {
       setLoading(false)
     }
@@ -202,7 +205,8 @@ export default function CrawlTaskManagement() {
       key: 'object_type',
       sorter: true,
       sortOrder: sortField === 'object_type' ? sortOrder : null,
-      render: (v: string) => <Tag color="blue">{v}</Tag>,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      render: (v: string) => <Tag color="blue">{t(`metadataSource.contentType.${v}` as any)}</Tag>,
     },
     {
       title: t('crawlTask.col.sourceName'),
@@ -218,6 +222,7 @@ export default function CrawlTaskManagement() {
       key: 'crawl_status',
       sorter: true,
       sortOrder: sortField === 'crawl_status' ? sortOrder : null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       render: (v: string) => <Tag color={STATUS_COLORS[v] || 'default'}>{t(`crawlTask.status.${v}` as any)}</Tag>,
     },
     {
@@ -227,7 +232,7 @@ export default function CrawlTaskManagement() {
       width: 180,
       sorter: true,
       sortOrder: sortField === 'created_at' ? sortOrder : null,
-      render: (v: string) => v ? new Date(v).toLocaleString() : '-',
+      render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
     },
     {
       title: t('crawlTask.col.completedAt'),
@@ -236,14 +241,14 @@ export default function CrawlTaskManagement() {
       width: 180,
       sorter: true,
       sortOrder: sortField === 'completed_at' ? sortOrder : null,
-      render: (v: string) => v ? new Date(v).toLocaleString() : '-',
+      render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
     },
     {
       title: t('crawlTask.col.action'),
       key: 'action',
       width: 140,
       render: (_: unknown, record: CrawlTaskListItem) => (
-        <Space>
+        <Space size={0}>
           <Tooltip title={t('crawlTask.action.detail')}>
             <Button type="link" size="small" icon={<InfoCircleOutlined />} onClick={() => navigate(`/metadata-enhance/crawl-tasks/${record.id}`)} />
           </Tooltip>

@@ -6,6 +6,7 @@ import {
   Space,
   Table,
   Tag,
+  Tooltip,
   message,
 } from 'antd'
 import {
@@ -31,7 +32,7 @@ import { useTablePagination } from '../../hooks/useTablePagination'
 import SearchForm from '../../components/SearchForm'
 import type { SearchFieldConfig } from '../../types/searchForm'
 import { useSearchForm } from '../../hooks/useSearchForm'
-import { useAuthStore } from '../../stores/authStore'
+import { usePermission } from '../../hooks/usePermission'
 import { isHandledError } from '../../api'
 
 
@@ -50,7 +51,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default function MetadataQualityMonitoring() {
   const { t, language } = useI18n()
-  const { user } = useAuthStore()
+  const { hasPermission } = usePermission()
   const [list, setList] = useState<MetadataQualityCheck[]>([])
   const [loading, setLoading] = useState(false)
   const [triggering, setTriggering] = useState(false)
@@ -58,11 +59,8 @@ export default function MetadataQualityMonitoring() {
   const filtersRef = useRef<MetadataQualityQueryParams>({})
   const navigate = useNavigate()
 
-  // 权限判断
-  const hasOperationPermission =
-    !user?.role_codes?.length ||
-    user.role_codes.includes('admin') ||
-    user.role_codes.some((code) => !code.endsWith('_viewer') && !code.endsWith('_readonly'))
+  // 权限判断：需勾选"元数据质量监控操作"权限
+  const hasOperationPermission = hasPermission('menu.ops.monitor.operate')
 
   const {
     pagination,
@@ -173,6 +171,30 @@ export default function MetadataQualityMonitoring() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // 列表中存在 pending/running 记录时自动轮询刷新（3s），全部结束后停止
+  const POLL_INTERVAL_MS = 3000
+  const POLL_TIMEOUT_MS = 120000
+  const pollStartRef = useRef<number>(0)
+  const loadListRef = useRef(loadList)
+  loadListRef.current = loadList
+
+  useEffect(() => {
+    const hasActiveRecord = list.some(
+      (item) => item.status === 'pending' || item.status === 'running',
+    )
+    if (!hasActiveRecord) {
+      pollStartRef.current = 0
+      return
+    }
+    // 防御：后端异常导致记录永久 pending 时，超过上限停止轮询
+    if (pollStartRef.current === 0) pollStartRef.current = Date.now()
+    if (Date.now() - pollStartRef.current > POLL_TIMEOUT_MS) return
+    const timer = window.setInterval(() => {
+      void loadListRef.current()
+    }, POLL_INTERVAL_MS)
+    return () => window.clearInterval(timer)
+  }, [list])
+
   const handleTrigger = async () => {
     Modal.confirm({
       title: t('ops.metadataQuality.confirmTrigger'),
@@ -196,7 +218,7 @@ export default function MetadataQualityMonitoring() {
 
   const handleBatchDelete = async () => {
     if (selectedIds.length === 0) {
-      message.warning(t('common.msg.initFailed'))
+      message.warning(t('ops.metadataQuality.msgSelectFirst'))
       return
     }
     Modal.confirm({
@@ -295,20 +317,24 @@ export default function MetadataQualityMonitoring() {
       width: 140,
       fixed: 'right',
       render: (_, record) => (
-        <Space size="small">
-          <Button
-            type="link"
-            size="small"
-            icon={<InfoCircleOutlined />}
-            onClick={() => handleViewDetail(record)}
-          />
-          {record.status === 'completed' && (
+        <Space size={0}>
+          <Tooltip title={t('common.detail')}>
             <Button
               type="link"
               size="small"
-              icon={<DownloadOutlined />}
-              onClick={() => handleDownload(record)}
+              icon={<InfoCircleOutlined />}
+              onClick={() => handleViewDetail(record)}
             />
+          </Tooltip>
+          {record.status === 'completed' && (
+            <Tooltip title={t('common.download')}>
+              <Button
+                type="link"
+                size="small"
+                icon={<DownloadOutlined />}
+                onClick={() => handleDownload(record)}
+              />
+            </Tooltip>
           )}
         </Space>
       ),

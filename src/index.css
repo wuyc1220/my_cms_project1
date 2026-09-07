@@ -36,6 +36,11 @@ html, body, #root {
   background: #1677ff;
 }
 
+/* G2 图表 tooltip：挂载到 body 后提升层级，避免被侧边菜单栏遮挡 */
+.g2-tooltip {
+  z-index: 1050 !important;
+}
+
 .ant-table {
   scrollbar-width: auto!important;
   scrollbar-color: auto!important;
@@ -94,10 +99,62 @@ html, body, #root {
 
 /* 滚动条滑块悬停：去除蒙版，恢复纯主题色 */
 .custom-scroll::-webkit-scrollbar-thumb:hover {
-  background: #1677ff !important;
+  background: #1677ff!important;
+}
+
+/* Tooltip 内容区滚动条（超出滚动时生效）：与全局统一（半透明主题色滑块）
+   注意：antd 6 中 Tooltip 内容区为 .ant-tooltip-container（旧 .ant-tooltip-inner 已不存在），
+   overlayInnerStyle/maxHeight/overflowY 均应用在该元素上 */
+.ant-tooltip .ant-tooltip-container::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.ant-tooltip .ant-tooltip-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ant-tooltip .ant-tooltip-container::-webkit-scrollbar-thumb {
+  background: rgba(22, 119, 255, 0.5);
+  border-radius: 4px;
+}
+
+/* 滚动条滑块悬停：去除蒙版，恢复纯主题色 */
+.ant-tooltip .ant-tooltip-container::-webkit-scrollbar-thumb:hover {
+  background: #1677ff;
 }
 
 /* 首页表格：列标题禁止换行（兼容中英文） */
 .compact-table .ant-table-thead > tr > th {
   white-space: nowrap !important;
+}
+
+/* 自定义字段选项表格：预留校验提示空间 */
+.option-form-item-wrapper {
+  min-height: 54px;
+  width: 100%;
+}
+
+.option-form-item-wrapper .ant-form-item {
+  margin-bottom: 0;
+}
+
+.option-form-item-wrapper .ant-form-item-control-input {
+  width: 100%;
+}
+
+.option-form-item-wrapper .ant-form-item-explain {
+  min-height: 22px;
+  word-break: break-all;
+}
+
+/* 删除按钮列：顶部对齐 */
+.option-delete-cell {
+  vertical-align: top !important;
+  padding-top: 12px !important;
+}
+/* 删除按钮列：顶部对齐 */
+.option-no-cell {
+  vertical-align: top !important;
+  padding-top: 13px !important;
 }

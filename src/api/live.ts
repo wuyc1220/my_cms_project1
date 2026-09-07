@@ -118,6 +118,18 @@ export const exportSchedulesExcel = async (ids: number[]): Promise<Blob> => {
   return response.data
 }
 
+/** 下载节目单导入模板 */
+export const downloadScheduleTemplate = async (): Promise<Blob> => {
+  const response = await api.get('/live/schedules/template', { responseType: 'blob' })
+  return response.data
+}
+
+/** 节目单导入校验错误项 */
+export interface ScheduleImportError {
+  row: number
+  errors: string[]
+}
+
 /** 节目单导入冲突项 */
 export interface ScheduleImportConflict {
   row: number
@@ -126,11 +138,17 @@ export interface ScheduleImportConflict {
   begin_time?: string | null
   end_time?: string | null
   conflict_ids: number[]
+  /** 冲突来源：existing=与数据库已有节目冲突 / in_file=与文件内其他行冲突 */
+  conflict_source?: 'existing' | 'in_file'
+  /** in_file 时指向文件内冲突的对方行号 */
+  conflict_row?: number | null
 }
 
-/** 节目单导入结果（含冲突明细） */
+/** 节目单导入结果（含冲突/错误明细） */
 export interface ScheduleImportResultPayload extends ImportResultPayload {
+  skipped?: number
   conflicts?: ScheduleImportConflict[]
+  errors?: ScheduleImportError[]
 }
 
 /** 导入节目单 Excel；force=true 时强制覆盖频道+时间段冲突 */
@@ -142,7 +160,6 @@ export const importSchedulesExcel = async (
   formData.append('file', file)
   const response = await api.post<ScheduleImportResultPayload>('/live/schedules/import', formData, {
     params: { force },
-    headers: { 'Content-Type': 'multipart/form-data' },
   })
   return response.data
 }
@@ -150,6 +167,43 @@ export const importSchedulesExcel = async (
 /** 查询归档内容列表（分页）*/
 export const getArchives = (params: ArchiveQueryParams) =>
   api.get<PaginatedResponse<ArchiveListItem>>('/live/archives', { params }).then((r) => r.data)
+
+/** 导出归档内容 Excel */
+export const exportArchivesExcel = async (ids: number[]): Promise<Blob> => {
+  const response = await api.post('/live/archives/export', { ids }, { responseType: 'blob' })
+  return response.data
+}
+
+/** 归档导入错误项 */
+export interface ArchiveImportError {
+  row: number
+  errors: string[]
+}
+
+/** 归档导入结果 */
+export interface ArchiveImportResultPayload {
+  total: number
+  created: number
+  updated: number
+  skipped: number
+  errors: ArchiveImportError[]
+}
+
+/** 导入归档内容 Excel */
+export const importArchivesExcel = async (file: File): Promise<ArchiveImportResultPayload> => {
+  const formData = new FormData()
+  formData.append('file', file)
+  const response = await api.post<ArchiveImportResultPayload>('/live/archives/import', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return response.data
+}
+
+/** 下载归档内容导入模板 */
+export const downloadArchiveTemplate = async (): Promise<Blob> => {
+  const response = await api.get('/live/archives/template', { responseType: 'blob' })
+  return response.data
+}
 
 /** 获取频道简要列表（节目单新增时的频道下拉）*/
 export const getChannelsSimple = () =>

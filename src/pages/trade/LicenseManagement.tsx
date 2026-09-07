@@ -216,13 +216,11 @@ export default function LicenseManagement() {
     onSearch: (values) => {
       const nextFilters = { ...values } as Record<string, unknown>
       setFilters(nextFilters)
-      setSelectedRowKeys([])
       resetSort()
       void loadList(1, pagination.pageSize, nextFilters, null, null)
     },
     onReset: () => {
       setFilters({})
-      setSelectedRowKeys([])
       resetSort()
       void loadList(1, pagination.pageSize, {}, null, null)
     },
@@ -271,10 +269,10 @@ export default function LicenseManagement() {
     service_types: f.service_types as string[] | undefined,
     platforms: f.platforms as string[] | undefined,
     statuses: f.statuses as string[] | undefined,
-    start_date_from: (f.start_date as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[0]?.format('YYYY-MM-DD'),
-    start_date_to: (f.start_date as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[1]?.format('YYYY-MM-DD'),
-    end_date_from: (f.end_date as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[0]?.format('YYYY-MM-DD'),
-    end_date_to: (f.end_date as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[1]?.format('YYYY-MM-DD'),
+    start_date_from: (f.start_date as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[0]?.startOf('day').format('YYYY-MM-DD'),
+    start_date_to: (f.start_date as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[1]?.endOf('day').format('YYYY-MM-DD'),
+    end_date_from: (f.end_date as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[0]?.startOf('day').format('YYYY-MM-DD'),
+    end_date_to: (f.end_date as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[1]?.endOf('day').format('YYYY-MM-DD'),
   })
 
   const loadList = async (
@@ -284,6 +282,8 @@ export default function LicenseManagement() {
     sortBy?: string | null,
     sortOrd?: 'ascend' | 'descend' | null,
   ) => {
+    // 数据集刷新后旧勾选失效，统一在此重置（覆盖新增/编辑/删除/搜索/翻页等全部刷新路径）
+    setSelectedRowKeys([])
     setLoading(true)
     try {
       const data = await getLicenses({
@@ -316,20 +316,35 @@ export default function LicenseManagement() {
 
   /** 切换单个平台的选中状态 */
   const toggleLicPlatform = (platform: string) => {
-    setLicCheckedPlatforms((prev) => {
-      const next = prev.includes(platform)
-        ? prev.filter((p) => p !== platform)
-        : [...prev, platform]
-      syncPlatformItemsToForm(next, licPlatformRights)
-      return next
-    })
+    const isRemoving = licCheckedPlatforms.includes(platform)
+    const nextPlatforms = isRemoving
+      ? licCheckedPlatforms.filter((p) => p !== platform)
+      : [...licCheckedPlatforms, platform]
+
+    setLicCheckedPlatforms(nextPlatforms)
+
+    if (isRemoving) {
+      // 取消勾选平台时，同时关闭广告权利
+      const nextRights = { ...licPlatformRights, [platform]: false }
+      setLicPlatformRights(nextRights)
+      syncPlatformItemsToForm(nextPlatforms, nextRights)
+    } else {
+      syncPlatformItemsToForm(nextPlatforms, licPlatformRights)
+    }
   }
 
   /** 表头全选 / 全不选 */
   const handleLicSelectAll = (checked: boolean) => {
     const next = checked ? platformOptions.map((o) => o.value) : []
     setLicCheckedPlatforms(next)
-    syncPlatformItemsToForm(next, licPlatformRights)
+    if (!checked) {
+      // 全不选时，清除所有广告权利
+      const nextRights: Record<string, boolean> = {}
+      setLicPlatformRights(nextRights)
+      syncPlatformItemsToForm(next, nextRights)
+    } else {
+      syncPlatformItemsToForm(next, licPlatformRights)
+    }
   }
 
   /** 切换单个平台的广告权利 */
@@ -443,7 +458,6 @@ export default function LicenseManagement() {
     try {
       await deleteLicense(record.id)
       void message.success(t('common.msg.deleted'), 3)
-      setSelectedRowKeys(prev => prev.filter(id => id !== record.id))
       void loadList(pagination.current, pagination.pageSize, filters)
     } catch (err) {
       // 错误已由拦截器处理
@@ -455,7 +469,6 @@ export default function LicenseManagement() {
     try {
       await batchDeleteLicenses({ ids: selectedRowKeys })
       void message.success(t('common.msg.deleteSuccess'), 3)
-      setSelectedRowKeys([])
       void loadList(1, pagination.pageSize, filters)
     } catch (err) {
       // 错误已由拦截器处理
@@ -483,6 +496,8 @@ export default function LicenseManagement() {
       title: t('license.search.name'),
       dataIndex: 'name',
       key: 'name',
+      fixed: 'left',
+      width: 200,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'name' ? sortOrder : null,

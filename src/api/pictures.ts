@@ -7,6 +7,7 @@ export interface PictureItem {
   poster_size_id: number
   file_name: string
   file_path: string
+  relative_path?: string
   file_size: number
   width: number | null
   height: number | null
@@ -22,6 +23,7 @@ export interface PictureCreatePayload {
   file_path: string
   file_name: string
   file_size: number
+  relative_path?: string
 }
 
 export const getPictures = async (entityType: string, entityId: number): Promise<PictureItem[]> => {
@@ -50,4 +52,43 @@ export const uploadPicture = async (entityType: string, entityId: number, poster
 
 export const deletePicture = async (pictureId: number): Promise<void> => {
   await request.delete(`/pictures/${pictureId}`)
+}
+
+/** 发布海报 */
+export interface PicturePublishResponse {
+  success: boolean
+  message: string
+  xml_path?: string
+}
+
+export const publishPictures = async (
+  entityType: string,
+  entityId: number
+): Promise<PicturePublishResponse> => {
+  const response = await request.post<PicturePublishResponse>('/pictures/publish', {
+    entity_type: entityType,
+    entity_id: entityId,
+  })
+  return response.data
+}
+
+/** 校验海报是否已发布 */
+export interface PicturePublishCheckResponse {
+  can_publish: boolean
+  total_count: number
+  published_count: number
+  unpublished_count: number
+  unpublished_pictures: { id: number; file_name: string; ingest_status: string; message: string }[]
+  message: string
+}
+
+export const checkPicturesPublishStatus = async (
+  entityType: string,
+  entityId: number,
+  contentType?: string
+): Promise<PicturePublishCheckResponse> => {
+  const response = await request.get<PicturePublishCheckResponse>('/pictures/publish-check', {
+    params: { entity_type: entityType, entity_id: entityId, content_type: contentType },
+  })
+  return response.data
 }

@@ -3,6 +3,8 @@ import type {
   BatchDeletePayload,
   EntityFieldValueItem,
   EntityFieldValuesPayload,
+  EntityI18nItem,
+  EntityI18nPayload,
   PaginatedResponse,
   PosterSizeCreatePayload,
   PosterSizeListItem,
@@ -45,5 +47,15 @@ export const getPosterSizeFieldValues = async (id: number): Promise<EntityFieldV
 
 export const savePosterSizeFieldValues = async (id: number, payload: EntityFieldValuesPayload): Promise<EntityFieldValueItem[]> => {
   const response = await request.put<EntityFieldValueItem[]>(`/poster-sizes/${id}/field-values`, payload)
+  return response.data
+}
+
+export const getPosterSizeI18n = async (id: number): Promise<EntityI18nItem[]> => {
+  const response = await request.get<EntityI18nItem[]>(`/poster-sizes/${id}/i18n`)
+  return response.data
+}
+
+export const savePosterSizeI18n = async (id: number, payload: EntityI18nPayload): Promise<EntityI18nItem[]> => {
+  const response = await request.put<EntityI18nItem[]>(`/poster-sizes/${id}/i18n`, payload)
   return response.data
 }

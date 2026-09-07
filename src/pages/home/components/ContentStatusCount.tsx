@@ -19,11 +19,11 @@ const STATUS_COLOR_MAP: Record<string, string> = {
   PublishFailed: '#ff4d4f',
   Published: '#52c41a',
   NoActiveLicense: '#ff4d4f',
-  Expired: '#ff4d4f',
-  NearExpiry: '#faad14',
-  Deleted: '#ff4d4f',
   Closed: '#ff4d4f',
   None: '#1890ff',
+  // 计算状态（仅本模块展示）
+  NearExpired: '#faad14',
+  Deleted: '#ff4d4f',
 }
 
 // 状态字段映射（用于从 data 中获取值）
@@ -35,19 +35,19 @@ const STATUS_FIELD_MAP: Record<string, keyof ContentStatusCountType> = {
   PublishFailed: 'publish_failed',
   Published: 'published',
   NoActiveLicense: 'no_active_license',
-  Expired: 'expired',
-  NearExpiry: 'near_expiry',
-  Deleted: 'deleted',
   Closed: 'closed',
   None: 'none_status',
+  // 计算状态（仅本模块展示）
+  NearExpired: 'near_expired',
+  Deleted: 'deleted',
 }
 
 const ContentStatusCount: React.FC<ContentStatusCountProps> = ({ data, visibleStatuses, statusNameMap }) => {
   const { t } = useI18n()
   const navigate = useNavigate()
 
-  // 动态生成状态列表（基于 visibleStatuses 或 statusNameMap 的所有 key）
-  const allStatusCodes = visibleStatuses && visibleStatuses.length > 0
+  // 动态生成状态列表：visibleStatuses 为 undefined 时兜底全部字段；空数组时表示用户全部隐藏，显示为空
+  const allStatusCodes = visibleStatuses !== undefined
     ? visibleStatuses
     : Object.keys(statusNameMap || {}).length > 0
       ? Object.keys(statusNameMap!)
@@ -68,13 +68,14 @@ const ContentStatusCount: React.FC<ContentStatusCountProps> = ({ data, visibleSt
   const statusItems = allStatusItems
 
   const handleClick = (statusCode: string) => {
-    if (statusCode === 'NearExpiry') {
+    // 临近过期：状态 Published + License End Date = [今天, 今天+配置天数]（天数取首页接口返回的 near_expiry_days）
+    if (statusCode === 'NearExpired') {
       const today = dayjs().format('YYYY-MM-DD')
       const threshold = dayjs().add(data.near_expiry_days, 'day').format('YYYY-MM-DD')
       navigate('/vod/contents', {
         state: {
           filters: {
-            contentType: ['MOVIE', 'SEASON', 'SERIES'],
+            contentType: ['MOVIE', 'SEASON', 'SEASON_SERIES', 'SERIES'],
             ingestStatus: 'Published',
             license_end_from: today,
             license_end_to: threshold,
@@ -84,13 +85,13 @@ const ContentStatusCount: React.FC<ContentStatusCountProps> = ({ data, visibleSt
       return
     }
 
+    // 已删除：按 Deleted=YES 过滤（与统计口径一致）
     if (statusCode === 'Deleted') {
-      // 已删除内容跳转到回收站或显示提示
       navigate('/vod/contents', {
         state: {
           filters: {
-            contentType: ['MOVIE', 'SEASON', 'SERIES'],
-            isDeleted: true,
+            contentType: ['MOVIE', 'SEASON', 'SEASON_SERIES', 'SERIES'],
+            deleted: 'YES',
           },
         },
       })
@@ -100,7 +101,7 @@ const ContentStatusCount: React.FC<ContentStatusCountProps> = ({ data, visibleSt
     navigate('/vod/contents', {
       state: {
         filters: {
-          contentType: ['MOVIE', 'SEASON', 'SERIES'],
+          contentType: ['MOVIE', 'SEASON', 'SEASON_SERIES', 'SERIES'],
           ingestStatus: statusCode,
         },
       },

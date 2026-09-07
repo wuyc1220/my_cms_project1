@@ -21,6 +21,7 @@ import {
   batchToggleSensitiveWordStatus,
   createSensitiveWord,
   deleteSensitiveWord,
+  downloadSensitiveWordImportTemplate,
   exportSensitiveWordsExcel,
   getSensitiveWords,
   importSensitiveWordsExcel,
@@ -300,7 +301,23 @@ export default function SensitiveWordManagement() {
       message.success(t('sensitiveWord.msg.exportSuccess'))
     } catch (err) {
       if (isHandledError(err)) return
-      message.error('Export failed')
+      message.error(t('sensitiveWord.msg.exportFailed'))
+    }
+  }
+
+  const handleDownloadTemplate = async () => {
+    try {
+      const blob = await downloadSensitiveWordImportTemplate()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'sensitive_words_import_template.xlsx'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
+    } catch (err) {
+      // error handled by axios interceptor
     }
   }
 
@@ -310,10 +327,14 @@ export default function SensitiveWordManagement() {
     setImporting(true)
     try {
       const result = await importSensitiveWordsExcel(file)
-      message.success(
-        t('sensitiveWord.msg.importSuccess') +
-          ` (total: ${result.total}, created: ${result.created}, updated: ${result.updated})`,
-      )
+      if (result.total === 0) {
+        message.warning(t('sensitiveWord.msg.importEmpty'))
+      } else {
+        message.success(
+          t('sensitiveWord.msg.importSuccess') +
+            t('sensitiveWord.msg.importSummary', { total: String(result.total), created: String(result.created), updated: String(result.updated) }),
+        )
+      }
       void loadList(1, pagination.pageSize, filters, sortField, sortOrder)
     } catch (err) {
       // error handled by axios interceptor
@@ -362,7 +383,7 @@ export default function SensitiveWordManagement() {
       width: 180,
       sorter: true,
       sortOrder: sortField === 'created_at' ? sortOrder : null,
-      render: (value: string) => (value ? new Date(value).toLocaleString() : '-'),
+      render: (value: string) => (value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '-'),
     },
     {
       title: t('common.action'),
@@ -517,19 +538,21 @@ export default function SensitiveWordManagement() {
       >
         <div style={{ marginBottom: 16 }}>
           <a
-            href="/sensitive_words.xlsx"
-            download="sensitive_words.xlsx"
-            style={{ color: '#1890ff', textDecoration: 'underline' }}
+            onClick={() => void handleDownloadTemplate()}
+            style={{ color: '#1890ff', textDecoration: 'underline', cursor: 'pointer' }}
           >
             {t('sensitiveWord.toolbar.importTemplate')}
           </a>
         </div>
         <Upload.Dragger
-          accept=".xlsx,.xls"
+          accept=".xlsx"
           showUploadList={false}
           beforeUpload={() => false}
           onChange={({ file }) => {
-            setImportFile(file.originFileObj as File)
+            // antd v6: beforeUpload 返回 false 时, file 已经是原生 File 对象
+            const f = file as unknown as File
+            if (!f.name) return
+            setImportFile(f)
           }}
         >
           <p className="ant-upload-drag-icon">
@@ -539,8 +562,15 @@ export default function SensitiveWordManagement() {
           <p className="ant-upload-hint">{t('sensitiveWord.import.dragHintSub')}</p>
         </Upload.Dragger>
         {importFile && (
-          <div style={{ marginTop: 12, color: '#52c41a' }}>
-            {importFile.name}
+          <div style={{ marginTop: 12, color: '#52c41a', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>{importFile.name}</span>
+            <Button
+              type="link"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              onClick={() => setImportFile(null)}
+            />
           </div>
         )}
         <div style={{ textAlign: 'right', marginTop: 16 }}>
@@ -559,15 +589,21 @@ export default function SensitiveWordManagement() {
               setImporting(true)
               try {
                 const result = await importSensitiveWordsExcel(importFile)
-                message.success(
-                  t('sensitiveWord.msg.importSuccess') +
-                    ` (total: ${result.total}, created: ${result.created}, updated: ${result.updated})`,
-                )
+                if (result.total === 0) {
+                  message.warning(t('sensitiveWord.msg.importEmpty'))
+                } else {
+                  message.success(
+                    t('sensitiveWord.msg.importSuccess') +
+                      t('sensitiveWord.msg.importSummary', { total: String(result.total), created: String(result.created), updated: String(result.updated) }),
+                  )
+                }
                 setImportModalOpen(false)
                 setImportFile(null)
                 void loadList(1, pagination.pageSize, filters, sortField, sortOrder)
-              } catch {
-                message.error('Import failed')
+              } catch (err) {
+                if (!isHandledError(err)) {
+                  message.error(t('sensitiveWord.msg.importFailed'))
+                }
               } finally {
                 setImporting(false)
               }

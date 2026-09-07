@@ -20,9 +20,9 @@ import {
 } from 'antd'
 import {
   DeleteOutlined,
-  DownloadOutlined,
   EditOutlined,
   InfoCircleOutlined,
+  PaperClipOutlined,
   PlusOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType, TableRowSelection } from 'antd/es/table/interface'
@@ -40,32 +40,21 @@ interface ContractTableProps {
   dataSource: ContractListItem[]
   loading?: boolean
   platformOptions: { label: string; value: string }[]
-  /** 是否显示供应商列 */
   showProvider?: boolean
-  /** 是否显示详情按钮 */
   showDetail?: boolean
-  /** 是否显示添加内容按钮 */
   showAddContent?: boolean
-  /** 是否显示编辑按钮 */
   showEdit?: boolean
-  /** 是否显示删除按钮 */
   showDelete?: boolean
-  /** 是否显示附件按钮 */
   showAttachments?: boolean
-  /** 点击详情回调 */
   onDetail?: (record: ContractListItem) => void
-  /** 数据变更回调 */
   onDataChange?: () => void
-  /** 选中项变更回调 */
   onSelectionChange?: (selectedRowKeys: number[]) => void
-  /** 分页配置 */
   pagination?: false | object
-  /** 表格滚动配置 */
   scroll?: object
-  /** 行选择配置 */
   rowSelection?: TableRowSelection<ContractListItem>
-  /** 表格 onChange 回调 */
   onTableChange?: (pagination: object, filters: object, sorter: object) => void
+  sortField?: string | null
+  sortOrder?: 'ascend' | 'descend' | null
 }
 
 export default function ContractTable({
@@ -81,10 +70,12 @@ export default function ContractTable({
   onDetail,
   onDataChange,
   onSelectionChange,
-  pagination = { pageSize: 10, position: ['bottomCenter'] as const },
+  pagination = { pageSize: 10, placement: ['bottomCenter'] as const },
   scroll = { x: 1000 },
   rowSelection,
   onTableChange,
+  sortField,
+  sortOrder,
 }: ContractTableProps) {
   const { t } = useI18n()
 
@@ -140,8 +131,10 @@ export default function ContractTable({
       title: t('provider.detail.contractName'),
       dataIndex: 'name',
       key: 'name',
+      width: 200,
       ellipsis: { showTitle: false },
-
+      sorter: true,
+      sortOrder: sortField === 'name' ? sortOrder : null,
       render: (val: string, record) => (
         <Tooltip title={val} autoAdjustOverflow={false} placement={'topLeft'} >
           <span
@@ -158,6 +151,8 @@ export default function ContractTable({
       dataIndex: 'start_date',
       key: 'start_date',
       width: 130,
+      sorter: true,
+      sortOrder: sortField === 'start_date' ? sortOrder : null,
       render: (val: string | undefined) => val ?? '—',
     },
     {
@@ -165,6 +160,8 @@ export default function ContractTable({
       dataIndex: 'end_date',
       key: 'end_date',
       width: 130,
+      sorter: true,
+      sortOrder: sortField === 'end_date' ? sortOrder : null,
       render: (val: string | undefined) => val ?? '—',
     },
     ...(showProvider
@@ -175,6 +172,8 @@ export default function ContractTable({
             key: 'provider_name',
             width: 220,
             ellipsis: { showTitle: false } as const,
+            sorter: true,
+            sortOrder: sortField === 'provider_name' ? sortOrder : null,
             render: (val: string | undefined) => val ?? '—',
           },
         ]
@@ -187,7 +186,6 @@ export default function ContractTable({
       render: (platforms: ContractPlatformItem[]) => (
         <Space size={4} wrap>
           {(platforms ?? []).map((p) => {
-            // 从 platformOptions 中查找平台名称
             const platformLabel = platformOptions.find(opt => opt.value === p.platform)?.label ?? p.platform
             return (
               <Tag key={p.platform} color={getPlatformColor(p.platform)}>
@@ -204,6 +202,8 @@ export default function ContractTable({
       key: 'license_count',
       width: 160,
       align: 'center' as const,
+      sorter: true,
+      sortOrder: sortField === 'license_count' ? sortOrder : null,
     },
     {
       title: t('common.action'),
@@ -272,7 +272,7 @@ export default function ContractTable({
               <Button
                 type="link"
                 size="small"
-                icon={<DownloadOutlined />}
+                icon={<PaperClipOutlined />}
                 onClick={() => openAttachments(record)}
               />
             </Tooltip>

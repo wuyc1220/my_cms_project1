@@ -7,8 +7,10 @@ import type {
   PublishPlanResponse,
   PublishPlanUpdate,
   BatchPublishRequest,
+  BatchPublishResultItem,
   IngestHistoryItem,
   IngestHistoryQueryParams,
+  ArchivePublishCheckResponse,
 } from '../types/publish'
 
 // 获取发布任务列表
@@ -17,11 +19,11 @@ export const getPublishes = (params?: PublishQueryParams) =>
 
 // 批量发布
 export const batchPublish = (data: BatchPublishRequest) =>
-  api.post<PublishPlanResponse[]>('/publishes/batch-publish', data).then((r) => r.data)
+  api.post<BatchPublishResultItem[]>('/publishes/batch-publish', data).then((r) => r.data)
 
 // 批量下架
 export const batchUnpublish = (data: BatchPublishRequest) =>
-  api.post<PublishPlanResponse[]>('/publishes/batch-unpublish', data).then((r) => r.data)
+  api.post<BatchPublishResultItem[]>('/publishes/batch-unpublish', data).then((r) => r.data)
 
 // 立即发布
 export const publishNow = (entityType: string, entityId: number) =>
@@ -50,3 +52,11 @@ export const getCurrentPublishPlan = (entityType: string, entityId: number) =>
 // 获取注入历史
 export const getIngestHistories = (entityType: string, entityId: number, params?: IngestHistoryQueryParams) =>
   api.get<PaginatedResponse<IngestHistoryItem>>(`/publishes/${entityType}/${entityId}/history`, { params }).then((r) => r.data)
+
+// 获取对象发布状态
+export const getObjectPublishStatus = (entityType: string, entityId: number) =>
+  api.get(`/publishes/${entityType}/${entityId}/publish-status`).then((r) => r.data)
+
+// 归档产物发布状态预检查（节目单发布前预检）
+export const checkArchivePublishStatus = (entityType: string, entityId: number) =>
+  api.get<ArchivePublishCheckResponse>(`/publishes/${entityType}/${entityId}/archive-publish-check`).then((r) => r.data)

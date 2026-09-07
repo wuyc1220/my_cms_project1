@@ -16,9 +16,6 @@ export const getCustomTags = async (params: CustomTagQueryParams): Promise<Pagin
     sort_by: params.sort_by || undefined,
     sort_order: params.sort_order || undefined,
   }
-  if (params.languages?.length) {
-    query.languages = params.languages.join(',')
-  }
   const response = await request.get<PaginatedResponse<CustomTagListItem>>('/custom-tags/', { params: query })
   return response.data
 }

@@ -22,7 +22,7 @@ export function usePermission() {
   const { user, menus } = useAuthStore()
 
   const isAdmin = useMemo(
-    () => !!user?.role_codes?.includes('admin'),
+    () => !!user?.role_codes?.some((c) => c.toUpperCase() === 'ADMIN'),
     [user?.role_codes],
   )
 

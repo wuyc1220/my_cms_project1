@@ -1,8 +1,9 @@
-import { Card, Table, Button, message } from 'antd'
+import { Card, Table, Button, message, Tooltip } from 'antd'
 import type { TablePaginationConfig } from 'antd/es/table'
 import { InfoCircleOutlined } from '@ant-design/icons'
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
+import dayjs from 'dayjs'
 import type { TaskListItem } from '../../../types/task'
 import { useI18n } from '../../../i18n/useI18n'
 import { getTasks } from '../../../api/tasks'
@@ -52,20 +53,31 @@ const AssignedToMeTable: React.FC = () => {
     void loadData(1, PAGINATION_CONFIG.defaultPageSize)
   }, [])
 
+  const getContentDetailPath = (record: TaskListItem) => {
+    const ct = record.content_type
+    // 任务处理人跳转编排详情，需携带 mode=edit 才能进行内容编排（系统统一约定）
+    if (ct === 'CHANNEL') return `/live/channels/${record.content_id}?mode=edit`
+    if (ct === 'SCHEDULE') return `/live/schedules/${record.content_id}?mode=edit`
+    return `/contents/${record.content_id}?mode=edit`
+  }
+
   const columns = [
     {
       title: t('dashboard.column.contentName'),
       dataIndex: 'content_name',
       key: 'content_name',
+      ellipsis: { showTitle: false },
       render: (text: string, record: TaskListItem) => (
-        <a
-          onClick={() => {
-            navigate(`/contents/${record.content_id}`)
-          }}
-          style={{ cursor: 'pointer', color: '#1890ff' }}
-        >
-          {text}
-        </a>
+        <Tooltip autoAdjustOverflow={false} placement="topLeft" title={text}>
+          <a
+            onClick={() => {
+              navigate(getContentDetailPath(record))
+            }}
+            style={{ cursor: 'pointer', color: '#1890ff' }}
+          >
+            {text}
+          </a>
+        </Tooltip>
       ),
     },
     {
@@ -92,20 +104,24 @@ const AssignedToMeTable: React.FC = () => {
       title: t('dashboard.column.startTime'),
       dataIndex: 'start_time',
       key: 'start_time',
+      width: 160,
+      render: (v?: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '—',
     },
     {
       title: t('dashboard.action'),
       key: 'action',
       render: (_: unknown, record: TaskListItem) => (
-        <Button
-          type="primary"
-          shape="circle"
-          icon={<InfoCircleOutlined />}
-          size="small"
-          onClick={() => {
-            navigate(`/business/tasks/${record.id}`)
-          }}
-        />
+        <Tooltip title={t('common.detail')}>
+          <Button
+            type="link"
+            size="small"
+            icon={<InfoCircleOutlined />}
+            onClick={() => {
+              // 跳转至任务管理模块的任务详情页（与 TaskManagement 列表详情按钮跳转模式一致）
+              navigate(`/business/tasks/${record.id}`)
+            }}
+          />
+        </Tooltip>
       ),
     },
   ]
@@ -119,6 +135,7 @@ const AssignedToMeTable: React.FC = () => {
     pageSize: paginationState.pageSize,
     total: paginationState.total,
     showSizeChanger: true,
+    showQuickJumper: true ,
     pageSizeOptions: PAGINATION_CONFIG.pageSizeOptions.map(String),
     showTotal: (total: number) => t('pagination.total', { n: total }),
     style: { textAlign: 'right' },

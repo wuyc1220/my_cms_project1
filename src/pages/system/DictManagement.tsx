@@ -206,19 +206,6 @@ export default function DictManagement() {
     await loadTree(filters, sortField, sortOrder)
   }
 
-  const renderName = (record: DictNodeListItem) => {
-    const isRoot = record.parent_id === null
-    return (
-      <span style={{ fontWeight: isRoot ? 600 : undefined }}>
-        {record.name}
-      </span>
-    )
-  }
-
-  const renderCode = (record: DictNodeListItem) => (
-    <Tag color="blue">{record.code}</Tag>
-  )
-
   const renderActions = (record: DictNodeListItem) => (
     <Space size={0} wrap={false}>
       {canOperate && (
@@ -252,17 +239,17 @@ export default function DictManagement() {
         </Tooltip>
       )}
       {canOperate && (
-        <Tooltip title={record.is_system ? t('system.dict.tooltipBuiltin') : t('common.delete')}>
-          <Popconfirm
-            title={t('system.dict.confirmDelete', { name: record.name })}
-            onConfirm={() => void handleDelete(record)}
-            disabled={record.is_system}
-            okText={t('common.confirm')}
-            cancelText={t('common.cancel')}
-          >
+        <Popconfirm
+          title={t('system.dict.confirmDelete', { name: record.name })}
+          onConfirm={() => void handleDelete(record)}
+          disabled={record.is_system}
+          okText={t('common.confirm')}
+          cancelText={t('common.cancel')}
+        >
+          <Tooltip title={record.is_system ? t('system.dict.tooltipBuiltin') : t('common.delete')}>
             <Button type="link" size="small" icon={<DeleteOutlined />} danger disabled={record.is_system} />
-          </Popconfirm>
-        </Tooltip>
+          </Tooltip>
+        </Popconfirm>
       )}
     </Space>
   )
@@ -272,18 +259,30 @@ export default function DictManagement() {
       title: t('system.dict.colName'),
       key: 'name',
       dataIndex: 'name',
+      ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'name' ? sortOrder : null,
-      render: (_, record) => renderName(record),
+      render: (_, record) => (
+        <Tooltip autoAdjustOverflow={false} placement="topLeft" title={record.name}>
+          <span style={{ fontWeight: record.parent_id === null ? 600 : undefined }}>
+            {record.name}
+          </span>
+        </Tooltip>
+      ),
     },
     {
       title: t('system.dict.colCode'),
       key: 'code',
       dataIndex: 'code',
       width: 300,
+      ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'code' ? sortOrder : null,
-      render: (_, record) => renderCode(record),
+      render: (_, record) => (
+        <Tooltip title={record.code ?? ''}>
+          <Tag color="blue">{record.code}</Tag>
+        </Tooltip>
+      ),
     },
     {
       title: t('system.dict.colSort'),
@@ -297,12 +296,14 @@ export default function DictManagement() {
       title: t('common.notes'),
       dataIndex: 'remark',
       key: 'remark',
-      ellipsis: true,
+      ellipsis: { showTitle: false },
       width: 300,
       sorter: true,
       sortOrder: sortField === 'remark' ? sortOrder : null,
       render: (value: string | null) => (
-        <span style={{ color: '#8c8c8c' }}>{value || '—'}</span>
+        <Tooltip autoAdjustOverflow={false} placement="topLeft" title={value || '—'}>
+          <span style={{ color: '#8c8c8c' }}>{value || '—'}</span>
+        </Tooltip>
       ),
     },
     {
@@ -393,7 +394,7 @@ export default function DictManagement() {
                     : modal.mode === 'createSibling' && modal.record
                     ? modal.record.parent_id == null
                       ? t('system.dict.labelParentRootPeer')
-                      : `（与"${modal.record.name}"同级）`
+                      : t('system.dict.siblingOf', { name: modal.record.name })
                     : t('system.dict.labelParentRoot')
                 }
                 disabled

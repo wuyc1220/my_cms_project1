@@ -30,6 +30,7 @@ import type { CategoryListItem, CustomFieldListItem, EntityFieldValueItem, Entit
 import type { DictNodeListItem } from '../../types/dict'
 import type { LanguageOption } from '../../types/i18n'
 import { useI18n } from '../../i18n/useI18n'
+import { getFieldOptionLabel } from '../../utils/customField'
 import SectionTitle from '../../components/SectionTitle'
 import { usePermission } from '../../hooks/usePermission'
 
@@ -44,16 +45,12 @@ interface ContentRow {
 }
 
 // 根据自定义字段信息，将 code 值转换为显示 label
-function resolveFieldDisplayValue(field: CustomFieldListItem, rawValue: string, preferredLanguage?: string): string {
+function resolveFieldDisplayValue(field: CustomFieldListItem, rawValue: string, preferredLanguage?: string, languageOrder?: string[]): string {
   if (!rawValue) return ''
   const isSelect = field.field_type === 'DropList' || field.field_type === 'DropList_multiple'
   if (!isSelect) return rawValue
   const codes = rawValue.split(',').filter(Boolean)
-  const labels = codes.map((code) => {
-    const opt = field.options.find((o) => o.code === code)
-    if (!opt) return code
-    return opt.names[preferredLanguage ?? ''] ?? opt.names.default ?? Object.values(opt.names)[0] ?? code
-  })
+  const labels = codes.map((code) => getFieldOptionLabel(field, code, preferredLanguage, languageOrder))
   return labels.join(', ')
 }
 
@@ -104,10 +101,10 @@ export default function CategoryDetail() {
         setI18nValues(savedI18n)
         setLanguageOptions(langs)
         setContentRows(
-          contents.map((c, index) => ({
+          contents.map((c) => ({
             key: c.id,
             id: c.id,
-            sequence: index + 1,
+            sequence: c.sequence,
             content_name: c.content_name,
             content_type: c.content_type,
             genre: c.genre,
@@ -148,9 +145,7 @@ export default function CategoryDetail() {
     if (!id) return
     try {
       await removeCategoryContent(Number(id), contentId)
-      setContentRows((prev) =>
-        prev.filter((r) => r.id !== contentId).map((r, idx) => ({ ...r, sequence: idx + 1 })),
-      )
+      setContentRows((prev) => prev.filter((r) => r.id !== contentId))
       void message.success(t('common.msg.removed'), 3)
     } catch (err) {
     }
@@ -163,6 +158,7 @@ export default function CategoryDetail() {
 
   // 获取第一个语言（defaultLang）的 code
   const defaultLangCode = useMemo(() => languageOptions[0]?.code ?? '', [languageOptions])
+  const languageOrder = useMemo(() => languageOptions.map((l) => l.code), [languageOptions])
 
   // language_code → language_name 映射
   const langCodeToName = useMemo(() => {
@@ -202,7 +198,7 @@ export default function CategoryDetail() {
       return {
         key: field.id,
         field_name: field.field_name,
-        value: resolveFieldDisplayValue(field, rawValue),
+        value: resolveFieldDisplayValue(field, rawValue, defaultLangCode, languageOrder),
       }
     })
   }, [customFields, fieldValues, i18nValueMap, defaultLangCode])
@@ -241,7 +237,9 @@ export default function CategoryDetail() {
             cancelText={t('common.cancel')}
             onConfirm={() => void handleRemoveContent(record.id)}
           >
-            <Button type="link" danger size="small" icon={<DeleteOutlined />} />
+            <Tooltip title={t('common.remove')}>
+              <Button type="link" danger size="small" icon={<DeleteOutlined />} />
+            </Tooltip>
           </Popconfirm>
         ) : null,
     },
@@ -337,8 +335,8 @@ export default function CategoryDetail() {
                   <TrimInput
                     value={(() => {
                       const s = category.ingest_status
-                      if (!s || s === 'None') return '—'
-                      return s
+                      if (!s || s === 'none') return '—'
+                      return t(`common.ingestStatus.${s}` as any)
                     })()}
                     disabled
                     style={{ background: '#f5f5f5' }}
@@ -361,12 +359,10 @@ export default function CategoryDetail() {
       </div>
 
       {/* Custom Fields */}
-      <div style={{ marginBottom: 32 }}>
-        <SectionTitle title={t('category.detail.tabCustomFields')} />
-        <div style={{ paddingLeft: 20 }}>
-          {customFieldRows.length === 0 ? (
-            <Empty description={t('category.detail.noCustomFields')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
-          ) : (
+      {customFieldRows.length > 0 && (
+        <div style={{ marginBottom: 32 }}>
+          <SectionTitle title={t('category.detail.tabCustomFields')} />
+          <div style={{ paddingLeft: 20 }}>
             <Form layout="vertical">
               <Row gutter={24}>
                 {customFieldRows.map((row) => (
@@ -380,17 +376,15 @@ export default function CategoryDetail() {
                 ))}
               </Row>
             </Form>
-          )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Multi Languages */}
-      <div style={{ marginBottom: 32 }}>
-        <SectionTitle title={t('category.detail.tabMultiLanguages')} />
-        <div style={{ paddingLeft: 20 }}>
-          {filteredLanguageOptions.length === 0 ? (
-            <Empty description={t('category.detail.noMultiLanguages')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
-          ) : (
+      {filteredLanguageOptions.length > 0 && (
+        <div style={{ marginBottom: 32 }}>
+          <SectionTitle title={t('category.detail.tabMultiLanguages')} />
+          <div style={{ paddingLeft: 20 }}>
             <Tabs
               items={filteredLanguageOptions.map((lang) => ({
                 key: lang.code,
@@ -421,7 +415,7 @@ export default function CategoryDetail() {
                       {multiLanguageFields.map((field) => {
                         const rawValue = i18nValueMap[lang.code]?.[field.field_code] ?? ''
                         const displayValue = rawValue
-                          ? resolveFieldDisplayValue(field, rawValue, lang.code)
+                          ? resolveFieldDisplayValue(field, rawValue, lang.code, languageOrder)
                           : '—'
                         return (
                           <Col span={8} key={field.field_code}>
@@ -438,9 +432,9 @@ export default function CategoryDetail() {
                 ),
               }))}
             />
-          )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Contents */}
       <div>

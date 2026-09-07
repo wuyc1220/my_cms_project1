@@ -1,7 +1,9 @@
-import { Card, Table, Button, Modal, Form, Select, message } from 'antd'
+import { Card, Table, Button, Modal, Form, Select, message, Tooltip } from 'antd'
+import { UserAddOutlined } from '@ant-design/icons'
 import type { TablePaginationConfig } from 'antd/es/table'
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
+import dayjs from 'dayjs'
 import type { TaskListItem } from '../../../types/task'
 import type { UserListItem } from '../../../types/user'
 import { useI18n } from '../../../i18n/useI18n'
@@ -74,7 +76,7 @@ const NotAssignedTasksTable: React.FC<NotAssignedTasksTableProps> = ({ onDataCha
         status: 'active',
       })
       const options = res.items.map((user: UserListItem) => ({
-        label: user.display_name || user.username,
+        label: user.display_name ? `${user.display_name}(${user.username})` : user.username,
         value: user.id,
       }))
       setUserOptions(options)
@@ -93,61 +95,79 @@ const NotAssignedTasksTable: React.FC<NotAssignedTasksTableProps> = ({ onDataCha
     }
   }, [isModalOpen])
 
+  const getContentDetailPath = (record: TaskListItem) => {
+    const ct = record.content_type
+    if (ct === 'CHANNEL') return `/live/channels/${record.content_id}`
+    if (ct === 'SCHEDULE') return `/live/schedules/${record.content_id}`
+    return `/contents/${record.content_id}`
+  }
+
   const columns = [
     {
       title: t('dashboard.column.contentName'),
       dataIndex: 'content_name',
       key: 'content_name',
+      ellipsis: { showTitle: false },
       render: (text: string, record: TaskListItem) => (
-        <a
-          onClick={() => {
-            navigate(`/contents/${record.content_id}`)
-          }}
-          style={{ cursor: 'pointer', color: '#1890ff' }}
-        >
-          {text}
-        </a>
+        <Tooltip autoAdjustOverflow={false} placement="topLeft" title={text}>
+          <a
+            onClick={() => {
+              navigate(getContentDetailPath(record))
+            }}
+            style={{ cursor: 'pointer', color: '#1890ff' }}
+          >
+            {text}
+          </a>
+        </Tooltip>
       ),
     },
     {
       title: t('dashboard.column.contentType'),
       dataIndex: 'content_type',
       key: 'content_type',
+      width: 160,
     },
     {
       title: t('dashboard.column.ingestStatus'),
       dataIndex: 'ingest_status',
       key: 'ingest_status',
+      width: 160,
     },
     {
       title: t('dashboard.column.taskType'),
       dataIndex: 'task_type',
       key: 'task_type',
+      width: 180,
     },
     {
       title: t('dashboard.column.taskStatus'),
       dataIndex: 'task_status',
       key: 'task_status',
+      width: 180,
     },
     {
       title: t('dashboard.column.startTime'),
       dataIndex: 'start_time',
       key: 'start_time',
+      width: 160,
+      render: (v?: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '—',
     },
     {
       title: t('dashboard.action'),
       key: 'action',
+      width: 100,
       render: (_: unknown, record: TaskListItem) => (
-        <Button
-          type="primary"
-          size="small"
-          onClick={() => {
-            setSelectedTask(record)
-            setIsModalOpen(true)
-          }}
-        >
-          {t('dashboard.assign')}
-        </Button>
+        <Tooltip title={t('dashboard.assign')}>
+          <Button
+            type="link"
+            size="small"
+            icon={<UserAddOutlined />}
+            onClick={() => {
+              setSelectedTask(record)
+              setIsModalOpen(true)
+            }}
+          />
+        </Tooltip>
       ),
     },
   ]
@@ -184,6 +204,7 @@ const NotAssignedTasksTable: React.FC<NotAssignedTasksTableProps> = ({ onDataCha
     pageSize: paginationState.pageSize,
     total: paginationState.total,
     showSizeChanger: true,
+    showQuickJumper: true ,
     pageSizeOptions: PAGINATION_CONFIG.pageSizeOptions.map(String),
     showTotal: (total: number) => t('pagination.total', { n: total }),
     style: { textAlign: 'right' },

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   Empty,
@@ -9,20 +9,18 @@ import {
   Select,
   Spin,
   Switch,
-  Table,
   message,
 } from 'antd'
-import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
-import { getTask, getTaskHistory, assignTask } from '../../api/tasks'
+import { getTask, assignTask } from '../../api/tasks'
 import { getAuthUsers } from '../../api/dataAuth'
 import { useI18n } from '../../i18n/useI18n'
-import type { TaskDetail as TaskDetailType, TaskHistoryItem } from '../../types/task'
+import type { TaskDetail as TaskDetailType } from '../../types/task'
 import type { UserSimpleItem } from '../../types/dataAuth'
 import { isHandledError } from '../../api'
 import SectionTitle from '../../components/SectionTitle'
 import TrimInput from '../../components/TrimInput'
-import { PAGINATION_CONFIG } from '../../constants/pagination'
+import ProcessedHistoryTab from '../../components/ProcessedHistoryTab'
 
 
 // ─── 辅助函数 ─────────────────────────────────────────────────────────
@@ -36,19 +34,6 @@ const statusToI18nKey = (status: string): string => {
   return map[status] ?? status
 }
 
-const historyTypeToI18nKey = (type: string): string => {
-  const map: Record<string, string> = {
-    'Add': 'task.history.type.Add',
-    'Update': 'task.history.type.Update',
-    'Delete': 'task.history.type.Delete',
-    'Assign': 'task.history.type.Assign',
-    'Review': 'task.history.type.Review',
-  }
-  return map[type] ?? type
-}
-
-// ─── 主组件 ───────────────────────────────────────────────────────────
-
 export default function TaskDetail() {
   const { id } = useParams<{ id: string }>()
   const { t } = useI18n()
@@ -56,73 +41,20 @@ export default function TaskDetail() {
 
   const [loading, setLoading] = useState(true)
   const [task, setTask] = useState<TaskDetailType | null>(null)
-  const [history, setHistory] = useState<TaskHistoryItem[]>([])
   const [userOptions, setUserOptions] = useState<{ label: string; value: number }[]>([])
 
-  // 分配弹框
   const [assignOpen, setAssignOpen] = useState(false)
   const [assigneeId, setAssigneeId] = useState<number | undefined>()
   const [updateChilds, setUpdateChilds] = useState(false)
   const [assignLoading, setAssignLoading] = useState(false)
 
-  // ─── 历史表格列 ─────────────────────────────────────────────────────
-
-  const historyColumns: ColumnsType<TaskHistoryItem> = useMemo(
-    () => [
-      {
-        title: t('task.history.processedAt'),
-        dataIndex: 'processed_at',
-        key: 'processed_at',
-        width: 180,
-        render: (val: string) => dayjs(val).format('YYYY-MM-DD HH:mm:ss'),
-      },
-      {
-        title: t('task.history.processedBy'),
-        dataIndex: 'processed_by',
-        key: 'processed_by',
-        width: 160,
-        render: (val: string | null) => val || '—',
-      },
-      {
-        title: t('task.history.processedType'),
-        dataIndex: 'processed_type',
-        key: 'processed_type',
-        width: 120,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        render: (val: string) => t(historyTypeToI18nKey(val) as any),
-      },
-      {
-        title: t('task.history.previousValue'),
-        dataIndex: 'previous_value',
-        key: 'previous_value',
-        ellipsis: { showTitle: false },
-        render: (val: string | null) => val || '—',
-      },
-      {
-        title: t('task.history.updatedValue'),
-        dataIndex: 'updated_value',
-        key: 'updated_value',
-        ellipsis: { showTitle: false },
-        render: (val: string | null) => val || '—',
-      },
-    ],
-    [t],
-  )
-
-  // ─── 数据加载 ─────────────────────────────────────────────────────────
-
   const loadData = async () => {
     setLoading(true)
     try {
-      const [taskData, historyData] = await Promise.all([
-        getTask(taskId),
-        getTaskHistory(taskId),
-      ])
+      const taskData = await getTask(taskId)
       setTask(taskData)
-      setHistory(historyData)
       setAssigneeId(taskData.assignee_id ?? undefined)
-    } catch (err) {
-      // 错误已在拦截器中处理
+    } catch {
     } finally {
       setLoading(false)
     }
@@ -133,11 +65,11 @@ export default function TaskDetail() {
       const users = await getAuthUsers()
       setUserOptions(
         users.map((u: UserSimpleItem) => ({
-          label: u.display_name ? `${u.display_name}（${u.username}）` : u.username,
+          label: u.display_name ? `${u.display_name}(${u.username})` : u.username,
           value: u.id,
         })),
       )
-    } catch (err) {
+    } catch {
       setUserOptions([])
     }
   }
@@ -258,20 +190,7 @@ export default function TaskDetail() {
       <div>
         <SectionTitle title={t('task.detail.history')} />
         <div style={{ paddingLeft: 20 }}>
-          <Table<TaskHistoryItem>
-            rowKey="id"
-            columns={historyColumns}
-            dataSource={history}
-            pagination={{
-              defaultPageSize: PAGINATION_CONFIG.defaultPageSize,
-              pageSizeOptions: PAGINATION_CONFIG.pageSizeOptions.map(String),
-              showSizeChanger: true,
-              position: ['bottomCenter'],
-            }}
-            size="small"
-            scroll={{ x: 800 }}
-            locale={{ emptyText: t('common.noData') }}
-          />
+          <ProcessedHistoryTab entityType="task" entityId={taskId} mode="full" />
         </div>
       </div>
 
@@ -284,7 +203,7 @@ export default function TaskDetail() {
         okText={t('common.confirm')}
         cancelText={t('common.cancel')}
         confirmLoading={assignLoading}
-        destroyOnClose
+        destroyOnHidden
       >
         <div style={{ marginBottom: 16 }}>
           <label style={{ display: 'block', marginBottom: 8, fontWeight: 500 }}>

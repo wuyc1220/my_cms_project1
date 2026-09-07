@@ -144,19 +144,34 @@ export default function CreateLicenseModal({
   }
 
   const togglePlatform = (platform: string) => {
-    setCheckedPlatforms((prev) => {
-      const next = prev.includes(platform)
-        ? prev.filter((p) => p !== platform)
-        : [...prev, platform]
-      syncPlatformItemsToForm(next, platformRights)
-      return next
-    })
+    const isRemoving = checkedPlatforms.includes(platform)
+    const nextPlatforms = isRemoving
+      ? checkedPlatforms.filter((p) => p !== platform)
+      : [...checkedPlatforms, platform]
+
+    setCheckedPlatforms(nextPlatforms)
+
+    if (isRemoving) {
+      // 取消勾选平台时，同时关闭广告权利
+      const nextRights = { ...platformRights, [platform]: false }
+      setPlatformRights(nextRights)
+      syncPlatformItemsToForm(nextPlatforms, nextRights)
+    } else {
+      syncPlatformItemsToForm(nextPlatforms, platformRights)
+    }
   }
 
   const handleSelectAll = (checked: boolean) => {
     const next = checked ? platformOptions.map((o) => o.value) : []
     setCheckedPlatforms(next)
-    syncPlatformItemsToForm(next, platformRights)
+    if (!checked) {
+      // 全不选时，清除所有广告权利
+      const nextRights: Record<string, boolean> = {}
+      setPlatformRights(nextRights)
+      syncPlatformItemsToForm(next, nextRights)
+    } else {
+      syncPlatformItemsToForm(next, platformRights)
+    }
   }
 
   const toggleAdRights = (platform: string, checked: boolean) => {
@@ -217,7 +232,7 @@ export default function CreateLicenseModal({
 
   return (
     <Modal
-      title={`${t('provider.tooltip.addContract')}${prefilledContract ? ` — ${prefilledContract.name}` : ''}`}
+      title={t('license.modal.titleCreate')}
       open={open}
       onCancel={closeModal}
       onOk={() => void handleSubmit()}
@@ -252,6 +267,7 @@ export default function CreateLicenseModal({
                 allowClear
                 placeholder={t('license.placeholder.contract')}
                 options={contractOptions}
+                disabled={!!prefilledContract}
                 filterOption={(input, option) =>
                   String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())
                 }
@@ -294,7 +310,19 @@ export default function CreateLicenseModal({
             <Form.Item
               name="end_date"
               label={t('content.col.endDate')}
-              rules={[{ required: true, message: t('license.form.endRequired') }]}
+              dependencies={['start_date']}
+              rules={[
+                { required: true, message: t('license.form.endRequired') },
+                ({ getFieldValue }) => ({
+                  validator(_, value) {
+                    const startDate = getFieldValue('start_date')
+                    if (!value || !startDate || value.isAfter(startDate) || value.isSame(startDate, 'day')) {
+                      return Promise.resolve()
+                    }
+                    return Promise.reject(new Error(t('license.form.endDateAfterStart')))
+                  },
+                }),
+              ]}
             >
               <DatePicker style={{ width: '100%' }} />
             </Form.Item>
@@ -391,7 +419,7 @@ export default function CreateLicenseModal({
                           transition: 'color 0.15s',
                         }}
                       >
-                        {p}
+                        {opt.label}
                       </div>
                       <div
                         style={{ width: 130, textAlign: 'center' }}

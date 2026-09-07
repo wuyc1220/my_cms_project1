@@ -9,6 +9,7 @@ import {
   InputNumber,
   DatePicker,
   TreeSelect,
+  Tooltip,
 } from 'antd'
 import { UpOutlined, DownOutlined } from '@ant-design/icons'
 import { useI18n } from '../../i18n/useI18n'
@@ -163,6 +164,11 @@ function SearchForm({
             disabled={field.disabled}
             style={commonStyle}
             maxTagCount="responsive"
+            maxTagPlaceholder={(omitted) => (
+              <Tooltip title={omitted.map((o) => String(o.label)).join(', ')}>
+                <span>+{omitted.length} ...</span>
+              </Tooltip>
+            )}
           />
         )
       case 'number':
@@ -204,7 +210,7 @@ function SearchForm({
         <Col flex="1">
           <Row gutter={40}>
             {visibleFields.map((field) => (
-              <Col key={field.name} span={6}>
+              <Col key={field.name} span={field.colSpan ?? 6}>
                 <Form.Item name={field.name} label={getLabel(field)} initialValue={field.defaultValue}>
                   {renderField(field)}
                 </Form.Item>

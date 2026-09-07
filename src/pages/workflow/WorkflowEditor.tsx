@@ -66,6 +66,8 @@ import {
 import type { WorkflowConfigDetail, WorkflowNodeConfigItem, AvailableNode } from '../../types/workflow'
 import { useI18n } from '../../i18n/useI18n'
 import type { MessageKey } from '../../i18n/messages'
+import { FORM_MAX_LENGTH } from '../../constants/form'
+import { useFormRules } from '../../hooks/useFormRules'
 import { isHandledError } from '../../api'
 import TrimInput from '../../components/TrimInput'
 
@@ -170,10 +172,10 @@ function ParallelBoxNode({ data, selected }: { data: any; selected?: boolean; id
       }}>
         <GroupOutlined />
         {data.label}
-        <Tag color="green">{data.parallelRule === 'all_required' ? '全部完成' : '任一完成'}</Tag>
+        <Tag color="green">{data.parallelRule === 'all_required' ? data.allCompletedLabel : data.anyCompletedLabel}</Tag>
       </div>
       <div style={{ fontSize: 12, color: '#666' }}>
-        {data.childCount || 0} 个子节点
+        {data.subNodesLabel}
       </div>
       <Handle type="source" position={Position.Bottom} style={{ background: '#52c41a' }} />
       
@@ -323,6 +325,7 @@ function WorkflowEditorInner() {
   const { configId } = useParams<{ configId: string }>()
   const navigate = useNavigate()
   const { t } = useI18n()
+  const formRules = useFormRules()
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
   const { screenToFlowPosition, fitView } = useReactFlow()
 
@@ -353,7 +356,7 @@ function WorkflowEditorInner() {
         ])
         setConfig(detail)
         setAvailableNodes(nodesResp)
-        const { nodes: flowNodes, edges: flowEdges } = parseNodesToFlow(detail.nodes, detail.config_json)
+        const { nodes: flowNodes, edges: flowEdges } = parseNodesToFlow(detail.nodes, detail.config_json, t as (key: string) => string)
         setNodes(flowNodes)
         setEdges(flowEdges)
       } catch (err) {
@@ -445,6 +448,9 @@ function WorkflowEditorInner() {
             width: 400,
             height: 200,
             childCount: 0,
+            allCompletedLabel: t('workflow.editor.allCompleted'),
+            anyCompletedLabel: t('workflow.editor.anyCompleted'),
+            subNodesLabel: t('workflow.editor.subNodes').replace('{count}', '0'),
           },
         }
         setNodes((nds) => nds.concat(newNode))
@@ -542,6 +548,8 @@ function WorkflowEditorInner() {
                 parallelRule: values.parallelRule,
                 width: values.width,
                 height: values.height,
+                allCompletedLabel: t('workflow.editor.allCompleted'),
+                anyCompletedLabel: t('workflow.editor.anyCompleted'),
               },
             }
           }
@@ -576,6 +584,7 @@ function WorkflowEditorInner() {
           n.position.y <= box.position.y + Number(box.data.height || 200)
         ).length
         box.data.childCount = childCount
+        box.data.subNodesLabel = t('workflow.editor.subNodes').replace('{count}', String(childCount))
       })
 
       const configJson = JSON.stringify({
@@ -605,7 +614,7 @@ function WorkflowEditorInner() {
       void message.success(t('workflow.editor.saveSuccess'))
       const detail = await getWorkflowConfigDetail(Number(configId))
       setConfig(detail)
-      const { nodes: flowNodes, edges: flowEdges } = parseNodesToFlow(detail.nodes, detail.config_json)
+        const { nodes: flowNodes, edges: flowEdges } = parseNodesToFlow(detail.nodes, detail.config_json, t as (key: string) => string)
       setNodes(flowNodes)
       setEdges(flowEdges)
     } catch (err: any) {
@@ -838,7 +847,7 @@ function WorkflowEditorInner() {
         }
       >
         <Form form={nodeForm} layout="vertical">
-          <Form.Item name="label" label={t('workflow.editor.nodeName')} rules={[{ required: true, message: '请输入节点名称' }]}>
+          <Form.Item name="label" label={t('workflow.editor.nodeName')} rules={[{ required: true, message: t('workflow.editor.nodeNameRequired') }, formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
             <TrimInput disabled={isReadOnly} />
           </Form.Item>
           <Form.Item name="nodeCode" label={t('workflow.editor.nodeCode')}>
@@ -850,11 +859,11 @@ function WorkflowEditorInner() {
           <Form.Item name="mandatory" label={t('workflow.editor.mandatory')} valuePropName="checked">
             <Switch disabled={isReadOnly} />
           </Form.Item>
-          <Form.Item name="parentNodeId" label="所属并行框">
+          <Form.Item name="parentNodeId" label={t('workflow.editor.parentNode')}>
             <Select 
               allowClear 
               options={getParallelBoxOptions()} 
-              placeholder="选择所属的并行聚合框（可选）"
+              placeholder={t('workflow.editor.parentNodePlaceholder')}
               disabled={isReadOnly}
             />
           </Form.Item>
@@ -869,7 +878,7 @@ function WorkflowEditorInner() {
 
       {/* 并行框属性编辑抽屉 */}
       <Drawer
-        title="并行聚合框属性"
+        title={t('workflow.editor.parallelBoxProps')}
         placement="right"
         width={360}
         open={parallelBoxDrawerOpen}
@@ -886,33 +895,31 @@ function WorkflowEditorInner() {
               <Button danger icon={<DeleteOutlined />}>{t('workflow.editor.delete')}</Button>
             </Popconfirm>
             <Button type="primary" icon={<SaveOutlined />} onClick={handleParallelBoxSave}>
-              保存
+              {t('workflow.editor.save')}
             </Button>
           </Space>
           ) : null
         }
       >
         <Form form={parallelBoxForm} layout="vertical">
-          <Form.Item name="label" label="名称" rules={[{ required: true }]}>
+          <Form.Item name="label" label={t('workflow.editor.name')} rules={[{ required: true }]}>
             <TrimInput disabled={isReadOnly} />
           </Form.Item>
-          <Form.Item name="parallelRule" label="聚合规则">
+          <Form.Item name="parallelRule" label={t('workflow.editor.parallelRule')}>
             <Radio.Group disabled={isReadOnly}>
-              <Radio.Button value="all_required">全部完成</Radio.Button>
-              <Radio.Button value="any_required">任一完成</Radio.Button>
+              <Radio.Button value="all_required">{t('workflow.editor.allCompleted')}</Radio.Button>
+              <Radio.Button value="any_required">{t('workflow.editor.anyCompleted')}</Radio.Button>
             </Radio.Group>
           </Form.Item>
-          <Form.Item name="width" label="宽度">
+          <Form.Item name="width" label={t('workflow.editor.width')}>
             <TrimInput type="number" disabled={isReadOnly} style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="height" label="高度">
+          <Form.Item name="height" label={t('workflow.editor.height')}>
             <TrimInput type="number" disabled={isReadOnly} style={{ width: '100%' }} />
           </Form.Item>
-          <Card size="small" title="使用说明" style={{ marginTop: 16 }}>
+          <Card size="small" title={t('workflow.editor.usageHint')} style={{ marginTop: 16 }}>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              1. 拖拽流程节点到并行框区域内，表示这些节点并行执行<br/>
-              2. 全部完成：所有子节点完成后才能继续<br/>
-              3. 任一完成：任意一个子节点完成后即可继续
+              {t('workflow.editor.usageText')}
             </Text>
           </Card>
         </Form>
@@ -922,7 +929,7 @@ function WorkflowEditorInner() {
 }
 
 // 开始节点组件
-function StartNode({ selected }: { selected?: boolean }) {
+function StartNode({ data, selected }: { data: { label?: string }; selected?: boolean }) {
   return (
     <div
       style={{
@@ -940,13 +947,13 @@ function StartNode({ selected }: { selected?: boolean }) {
       }}
     >
       <Handle type="source" position={Position.Bottom} style={{ background: '#52c41a' }} />
-      开始
+      {data.label}
     </div>
   )
 }
 
 // 结束节点组件
-function EndNode({ selected }: { selected?: boolean }) {
+function EndNode({ data, selected }: { data: { label?: string }; selected?: boolean }) {
   return (
     <div
       style={{
@@ -964,12 +971,12 @@ function EndNode({ selected }: { selected?: boolean }) {
       }}
     >
       <Handle type="target" position={Position.Top} style={{ background: '#ff4d4f' }} />
-      结束
+      {data.label}
     </div>
   )
 }
 
-function parseNodesToFlow(nodes: WorkflowNodeConfigItem[], configJson?: string | null): { nodes: Node[]; edges: Edge[] } {
+function parseNodesToFlow(nodes: WorkflowNodeConfigItem[], configJson?: string | null, t?: (key: string) => string): { nodes: Node[]; edges: Edge[] } {
   const flowNodes: Node[] = []
   const flowEdges: Edge[] = []
 
@@ -1002,7 +1009,7 @@ function parseNodesToFlow(nodes: WorkflowNodeConfigItem[], configJson?: string |
     id: 'start',
     type: 'start',
     position: startPos,
-    data: { label: '开始', nodeCode: 'start', nodeType: 'start' },
+    data: { label: t ? t('workflow.editor.startNode') : 'Start', nodeCode: 'start', nodeType: 'start' },
   })
 
   for (let i = 0; i < nodes.length; i++) {
@@ -1028,6 +1035,12 @@ function parseNodesToFlow(nodes: WorkflowNodeConfigItem[], configJson?: string |
         width: node.width || (isParallelBox ? 400 : 160),
         height: node.height || (isParallelBox ? 200 : 80),
         parentNodeId: node.parent_node_id ? String(node.parent_node_id) : undefined,
+        ...(isParallelBox && t ? {
+          allCompletedLabel: t('workflow.editor.allCompleted'),
+          anyCompletedLabel: t('workflow.editor.anyCompleted'),
+          childCount: 0,
+          subNodesLabel: t('workflow.editor.subNodes').replace('{count}', '0'),
+        } : {}),
       },
     })
   }
@@ -1038,7 +1051,7 @@ function parseNodesToFlow(nodes: WorkflowNodeConfigItem[], configJson?: string |
     id: 'end',
     type: 'end',
     position: endPos ?? { x: 250, y: lastY },
-    data: { label: '结束', nodeCode: 'end', nodeType: 'end' },
+    data: { label: t ? t('workflow.editor.endNode') : 'End', nodeCode: 'end', nodeType: 'end' },
   })
 
   // 从 config_json 中解析保存的连线（包括 start/end 相关连线）

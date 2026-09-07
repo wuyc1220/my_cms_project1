@@ -27,7 +27,7 @@ import {
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
-import { getContract, getContractAttachments, downloadContractAttachment } from '../../api/contracts'
+import { getContract, getContractAttachments } from '../../api/contracts'
 import { getLicenses, updateLicense } from '../../api/licenses'
 import { getDictTree } from '../../api/dicts'
 import TrimInput from '../../components/TrimInput'
@@ -78,6 +78,7 @@ export default function ContractDetail() {
   const [downloadingId, setDownloadingId] = useState<number | null>(null)
 
   const [platformOptions, setPlatformOptions] = useState<{ label: string; value: string }[]>([])
+  const [serviceTypeOptions, setServiceTypeOptions] = useState<{ label: string; value: string }[]>([])
 
   const [addContentModal, setAddContentModal] = useState<{
     open: boolean
@@ -108,6 +109,10 @@ export default function ContractDetail() {
         const platformRoot = dicts.find((d: DictNodeListItem) => d.code === 'Platform')
         setPlatformOptions(
           (platformRoot?.children ?? []).map((c: DictNodeListItem) => ({ label: c.name, value: c.code })),
+        )
+        const svcRoot = dicts.find((d: DictNodeListItem) => d.code === 'ServiceType')
+        setServiceTypeOptions(
+          (svcRoot?.children ?? []).map((c: DictNodeListItem) => ({ label: c.name, value: c.code })),
         )
       } catch (err) {
         // 错误已由拦截器处理
@@ -163,7 +168,16 @@ export default function ContractDetail() {
   const handleDownloadAttachment = async (attachment: ContractAttachmentItem) => {
     setDownloadingId(attachment.id)
     try {
-      const blob = await downloadContractAttachment(attachment.contract_id, attachment.id)
+      // 优先使用 relative_path 构造下载 URL，避免加密路径双重编码问题
+      const downloadUrl = attachment.relative_path
+        ? `/api/v1/attachments/download?path=${encodeURIComponent(attachment.relative_path)}&inline=1`
+        : (attachment.url || '')
+      const token = localStorage.getItem('token')
+      const resp = await fetch(downloadUrl, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!resp.ok) throw new Error(`${resp.status}`)
+      const blob = await resp.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -202,7 +216,10 @@ export default function ContractDetail() {
       key: 'service_type',
       width: 130,
       ellipsis: { showTitle: false },
-      render: (val: string) => <Tooltip title={val}><span>{val}</span></Tooltip>,
+      render: (val: string) => {
+        const label = serviceTypeOptions.find((o) => o.value === val)?.label ?? val
+        return <Tooltip title={label}><span>{label}</span></Tooltip>
+      },
     },
     {
       title: t('content.col.startDate'),
@@ -225,11 +242,14 @@ export default function ContractDetail() {
       width: 330,
       render: (platforms: LicensePlatformItem[]) => (
         <Space size={4} wrap>
-          {(platforms ?? []).map((p) => (
-            <Tag key={p.platform} color={getPlatformColor(p.platform)}>
-              {p.platform}
-            </Tag>
-          ))}
+          {(platforms ?? []).map((p) => {
+            const platformLabel = platformOptions.find((opt) => opt.value === p.platform)?.label ?? p.platform
+            return (
+              <Tag key={p.platform} color={getPlatformColor(p.platform)}>
+                {platformLabel}
+              </Tag>
+            )
+          })}
         </Space>
       ),
     },

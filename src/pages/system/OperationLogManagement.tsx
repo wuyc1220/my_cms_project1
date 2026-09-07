@@ -85,6 +85,15 @@ const OPERATION_TYPE_KEYS = [
   'MOVIE_CREATE', 'MOVIE_UPDATE', 'MOVIE_DELETE',
   'VOD_FIELD_UPDATE', 'VOD_I18N_UPDATE',
   'EPISODE_INJECT', 'EPISODE_REMOVE',
+  'SEASON_SERIES_INJECT', 'SEASON_SERIES_REMOVE',
+  'PICTURE_PUBLISH',
+  'MOVIE_FIELD_UPDATE', 'MOVIE_I18N_UPDATE',
+  'CAST_ROLE_MAP_FIELD_UPDATE', 'CAST_ROLE_MAP_I18N_UPDATE',
+  'SCHEDULED_TASK_UPDATE',
+  'CONTENT_BATCH_EXPORT', 'CONTENT_BATCH_IMPORT',
+  'PACKAGE_EXPORT', 'PACKAGE_IMPORT',
+  'CATEGORY_SYNC',
+  'DASHBOARD_CONFIG_UPDATE', 'DASHBOARD_CONFIG_RESET',
 ]
 
 const LEGACY_CN_TO_KEY: Record<string, string> = {
@@ -98,8 +107,8 @@ const LEGACY_CN_TO_KEY: Record<string, string> = {
   '合同创建': 'CONTRACT_CREATE', '合同编辑': 'CONTRACT_EDIT', '合同删除': 'CONTRACT_DELETE', '合同批量删除': 'CONTRACT_BATCH_DELETE', '合同附件删除': 'CONTRACT_ATTACHMENT_DELETE', '合同附件上传': 'CONTRACT_ATTACHMENT_UPLOAD',
   '许可证创建': 'LICENSE_CREATE', '许可证编辑': 'LICENSE_EDIT', '许可证删除': 'LICENSE_DELETE', '许可证批量删除': 'LICENSE_BATCH_DELETE', '许可证内容关联': 'LICENSE_CONTENT_ADD', '许可证内容移除': 'LICENSE_CONTENT_REMOVE',
   '服务包创建': 'PACKAGE_CREATE', '服务包编辑': 'PACKAGE_EDIT', '服务包删除': 'PACKAGE_DELETE', '服务包批量删除': 'PACKAGE_BATCH_DELETE', '服务包内容关联': 'PACKAGE_CONTENT_ADD', '服务包内容移除': 'PACKAGE_CONTENT_REMOVE',
-  '立即发布': 'PUBLISH_NOW', '立即下架': 'UNPUBLISH_NOW', '批量发布': 'PUBLISH_BATCH', '批量下架': 'UNPUBLISH_BATCH', '设置发布计划': 'PUBLISH_PLAN_CREATE', '修改发布计划': 'PUBLISH_PLAN_UPDATE', '取消发布计划': 'PUBLISH_PLAN_CANCEL',
-  '节目单创建': 'SCHEDULE_CREATE', '节目单删除': 'SCHEDULE_DELETE', '节目单导出': 'SCHEDULE_EXPORT', '节目单导入': 'SCHEDULE_IMPORT',
+  '立即发布': 'PUBLISH_NOW', '立即下架': 'UNPUBLISH_NOW', '批量发布': 'PUBLISH_BATCH', '批量下架': 'UNPUBLISH_BATCH', '设置发布计划': 'PUBLISH_PLAN_CREATE', '修改发布计划': 'PUBLISH_PLAN_UPDATE', '取消发布计划': 'PUBLISH_PLAN_CANCEL', '计划发布执行成功': 'PUBLISH_PLAN_EXECUTE', '计划下架执行成功': 'UNPUBLISH_PLAN_EXECUTE',
+  '节目单创建': 'SCHEDULE_CREATE', '节目单更新': 'SCHEDULE_UPDATE', '节目单归档': 'SCHEDULE_ARCHIVE', '节目单删除': 'SCHEDULE_DELETE', '节目单导出': 'SCHEDULE_EXPORT', '节目单导入': 'SCHEDULE_IMPORT',
   '人物创建': 'CAST_CREATE', '人物编辑': 'CAST_EDIT', '人物删除': 'CAST_DELETE', '人物批量删除': 'CAST_BATCH_DELETE',
   '栏目创建': 'CATEGORY_CREATE', '栏目编辑': 'CATEGORY_EDIT', '栏目删除': 'CATEGORY_DELETE', '栏目批量删除': 'CATEGORY_BATCH_DELETE',
   '题材创建': 'GENRE_CREATE', '题材编辑': 'GENRE_EDIT', '题材删除': 'GENRE_DELETE', '题材批量删除': 'GENRE_BATCH_DELETE',
@@ -152,9 +161,66 @@ function translateOperationType(raw: string | null, t: (key: string) => string):
   return t(key as Parameters<typeof t>[0]) !== key ? t(key as Parameters<typeof t>[0]) : raw
 }
 
+// log.* 操作内容编码翻译（与详情页 ProcessedHistoryTab 的展示规则保持一致）：
+// - 大写编码（LOG_PROVIDER_CREATED 等）直接查 i18n
+// - 带参数形式 "log.xxx:param"：翻译基础编码后拼接参数
+//   · log.movie.*:类型编码 → "媒资新增-正片"（类型编码二次翻译）
+//   · log.field.edit / log.i18n.edit:语言 → "自定义字段编辑(en)"（语言标识用括号）
+//   · log.episode.inject:标题 等 → "单集注入:标题"（业务名称用冒号）
+// - 无翻译时原样返回
+function translateLogContent(raw: string, t: (key: string) => string): string {
+  if (/^[A-Z_]+$/.test(raw)) {
+    const translated = t(raw)
+    return translated !== raw ? translated : raw
+  }
+  if (!raw.startsWith('log.')) return raw
+  const colonIdx = raw.indexOf(':')
+  if (colonIdx === -1) {
+    const translated = t(raw)
+    return translated !== raw ? translated : raw
+  }
+  const base = raw.substring(0, colonIdx)
+  const param = raw.substring(colonIdx + 1)
+  if (base === 'log.movie.create' || base === 'log.movie.edit' || base === 'log.movie.delete') {
+    return `${t(base)}-${t(`log.movie.type.${param}`)}`
+  }
+  if (base === 'log.custom_field.batch_delete') {
+    return `${t(base)}${param}`
+  }
+  const baseTranslated = t(base)
+  if (baseTranslated === base) return raw
+  if (base === 'log.field.edit' || base === 'log.i18n.edit') {
+    return `${baseTranslated}(${param})`
+  }
+  return `${baseTranslated}:${param}`
+}
+
+// ── 旧日志 JSON 快照降级展示 ──────────────────────────────────
+// 早期版本部分操作未写入 operation_content，前端降级显示 updated_value_json 原文。
+// 此处将 JSON 解析为摘要（提取标识字段），悬停时展示格式化 JSON 便于排查。
+const SNAPSHOT_NAME_KEYS = ['name', 'title', 'keyword', 'field_name', 'username', 'config_key', 'code']
+const SNAPSHOT_AUDIT_KEYS = new Set(['id', 'is_deleted', 'created_at', 'updated_at', 'created_by', 'updated_by'])
+
+function formatSnapshot(raw: string): { summary: string; pretty: string } {
+  try {
+    const obj = JSON.parse(raw)
+    if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+      const nameKey = SNAPSHOT_NAME_KEYS.find((k) => obj[k] != null && typeof obj[k] !== 'object')
+      const fields = Object.entries(obj)
+        .filter(([k, v]) => v != null && !SNAPSHOT_AUDIT_KEYS.has(k) && typeof v !== 'object')
+        .map(([k, v]) => `${k}=${String(v)}`)
+      const summary = nameKey != null ? String(obj[nameKey]) : fields.slice(0, 3).join(', ')
+      return { summary: summary || raw, pretty: JSON.stringify(obj, null, 2) }
+    }
+  } catch {
+    // 非 JSON 原样展示
+  }
+  return { summary: raw, pretty: raw }
+}
+
 interface SearchValues {
   user_name?: string
-  operation_type?: string
+  operation_type?: string[]
   time_range?: [dayjs.Dayjs, dayjs.Dayjs]
   result?: string
 }
@@ -204,7 +270,7 @@ export default function OperationLogManagement() {
     {
       name: 'operation_type',
       labelKey: 'system.log.colType',
-      type: 'select',
+      type: 'multiSelect',
       options: operationTypeOptions,
       placeholderKey: 'system.log.placeholderType',
     },
@@ -235,11 +301,13 @@ export default function OperationLogManagement() {
       const filters = buildParams(values)
       filtersRef.current = filters
       resetSort()
+      setSelectedRowKeys([])
       loadLogs(1, pagination.pageSize, filters, null, null)
     },
     onReset: () => {
       filtersRef.current = {}
       resetSort()
+      setSelectedRowKeys([])
       loadLogs(1, pagination.pageSize, {}, null, null)
     },
   })
@@ -247,7 +315,7 @@ export default function OperationLogManagement() {
   const buildParams = (values: SearchValues): OperationLogQueryParams => {
     const params: OperationLogQueryParams = {}
     if (values.user_name) params.user_name = values.user_name
-    if (values.operation_type) params.operation_type = values.operation_type
+    if (values.operation_type?.length) params.operation_type = values.operation_type.join(',')
     if (values.result) params.result = values.result
     if (values.time_range?.length === 2) {
       params.time_start = values.time_range[0].startOf('day').toISOString()
@@ -288,7 +356,11 @@ export default function OperationLogManagement() {
   const handleExport = async () => {
     setExporting(true)
     try {
-      await exportOperationLogs(filtersRef.current)
+      const params: Record<string, unknown> = { ...filtersRef.current }
+      if (selectedRowKeys.length > 0) {
+        params.ids = selectedRowKeys.join(",")
+      }
+      await exportOperationLogs(params)
       message.success(t('system.log.msgExportSuccess'), 3)
     } catch (err) {
       // error handled by axios interceptor
@@ -312,6 +384,7 @@ export default function OperationLogManagement() {
       message.success(t('system.log.msgClearSuccess').replace('{n}', String(res.deleted)), 3)
       setClearOpen(false)
       clearForm.resetFields()
+      setSelectedRowKeys([])
       loadLogs(1, pagination.pageSize, filtersRef.current, sortField, sortOrder)
     } catch (err) {
       // error handled by axios interceptor
@@ -337,6 +410,12 @@ export default function OperationLogManagement() {
       width: 220,
       sorter: true,
       sortOrder: sortField === 'user_name' ? sortOrder : null,
+      render: (_: unknown, record: OperationLogItem) => {
+        const display = record.user_display_name
+        const username = record.user_name
+        if (display && username) return `${display}(${username})`
+        return display || username || '-'
+      },
     },
     {
       title: t('system.log.colType'),
@@ -349,40 +428,30 @@ export default function OperationLogManagement() {
     },
     {
       title: t('system.log.colContent'),
-      dataIndex: 'updated_value_json',
-      key: 'updated_value_json',
+      dataIndex: 'operation_content',
+      key: 'operation_content',
       width: 300,
       ellipsis: { showTitle: false },
       render: (value: string | null, record: OperationLogItem) => {
-        let display = value ?? record.updated_value ?? record.operation_content
-        if (display && typeof display === 'string') {
-          if (display.startsWith('log.movie.create:') || display.startsWith('log.movie.edit:') || display.startsWith('log.movie.delete:')) {
-            const colonIdx = display.indexOf(':')
-            const movieType = display.substring(colonIdx + 1)
-            const baseKey = display.substring(0, colonIdx)
-            const baseTranslated = t(baseKey as MessageKey)
-            const typeMap: Record<string, Record<string, string>> = {
-              cn: { '1': '正片', '2': '预告片', '3': '字幕' },
-              en: { '1': 'Movie', '2': 'Trailer', '3': 'Subtitle' },
-            }
-            const lang = (document.documentElement.lang || 'cn') === 'en' ? 'en' : 'cn'
-            const typeLabel = typeMap[lang]?.[movieType] ?? movieType
-            display = `${baseTranslated}-${typeLabel}`
-          } else if (display.startsWith('log.custom_field.batch_delete:')) {
-            const colonIdx = display.indexOf(':')
-            const fieldNames = display.substring(colonIdx + 1)
-            const baseKey = display.substring(0, colonIdx)
-            const baseTranslated = t(baseKey as MessageKey)
-            display = `${baseTranslated}${fieldNames}`
-          } else if (display.startsWith('log.') || /^[A-Z_]+$/.test(display)) {
-            const translated = t(display as MessageKey)
-            if (translated !== display) {
-              display = translated
-            }
+        // 人类可读的操作内容优先展示；无业务文案时降级为 JSON 快照摘要（悬停查看格式化详情）
+        let display: string | null = value
+        let detail: string | null = value
+        if (display == null) {
+          const snapshot = record.updated_value_json ?? record.updated_value
+          if (typeof snapshot === 'string' && snapshot.trim().startsWith('{')) {
+            const { summary, pretty } = formatSnapshot(snapshot)
+            display = summary
+            detail = pretty
+          } else {
+            display = snapshot
+            detail = snapshot
           }
         }
+        if (display && typeof display === 'string') {
+          display = translateLogContent(display, tStr)
+        }
         return display != null ? (
-          <Tooltip title={display} autoAdjustOverflow={false} placement={'topLeft'}>
+          <Tooltip title={detail ?? display} placement="topLeft" overlayStyle={{ maxWidth: 480, padding: '0 8px', position: 'fixed' }}>
             <span style={{ padding: '2px 6px' }}>{display}</span>
           </Tooltip>
         ) : (
@@ -421,7 +490,7 @@ export default function OperationLogManagement() {
       render: (value: string | null) =>
           value != null ? (
 
-              <Tooltip title={value}  autoAdjustOverflow={false} placement={'topLeft'}>
+              <Tooltip title={value} placement="topLeft" overlayStyle={{ maxWidth: 480, padding: '0 8px', position: 'fixed' }}>
               <span
                   style={{
                     padding: '2px 6px',

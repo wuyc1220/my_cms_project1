@@ -4,18 +4,21 @@
  * 功能同节目单管理列表，固定 channel_id 过滤。
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
+  Badge,
   Button,
   Col,
-  DatePicker,
   Form,
+  Input,
+  InputNumber,
   Modal,
   Popconfirm,
-  Radio,
   Row,
+  Select,
   Space,
+  Spin,
   Switch,
   Table,
   Tag,
@@ -26,7 +29,6 @@ import {
 import {
   CheckCircleOutlined,
   ClockCircleOutlined,
-  CloseCircleOutlined,
   DeleteOutlined,
   DownloadOutlined,
   EditOutlined,
@@ -44,14 +46,18 @@ import {
   importSchedulesExcel,
   archiveSchedule,
 } from '../../api/live'
-import { updateContent } from '../../api/contents'
+import { getDictTree } from '../../api/dicts'
+import { getContents } from '../../api/contents'
+import { getScheduleMetadata } from '../../api/metadata'
 import SearchForm from '../../components/SearchForm'
 import ScheduleCreateModal from '../../components/ScheduleCreateModal'
 import { useI18n } from '../../i18n/useI18n'
 import { useTablePagination } from '../../hooks/useTablePagination'
 import { useSearchForm } from '../../hooks/useSearchForm'
+import { usePermission } from '../../hooks/usePermission'
 import type { ScheduleListItem, ScheduleQueryParams } from '../../types/live'
 import type { SearchFieldConfig } from '../../types/searchForm'
+import type { DictNodeListItem } from '../../types/dict'
 import { isHandledError } from '../../api'
 
 
@@ -77,10 +83,13 @@ interface ChannelScheduleTabProps {
 export default function ChannelScheduleTab({ channelId, channelName, mode }: ChannelScheduleTabProps) {
   const { t } = useI18n()
   const navigate = useNavigate()
+  const { hasPermission } = usePermission()
+  const canScheduleOperate = hasPermission('menu.live.schedules.operate')
 
   const [schedules, setSchedules] = useState<ScheduleListItem[]>([])
   const [loading, setLoading] = useState(false)
   const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([])
+  const [ingestStatusOptions, setIngestStatusOptions] = useState<{ label: string; value: string }[]>([])
 
   // 待归档数量
   const [toBeArchivedCount, setToBeArchivedCount] = useState(0)
@@ -89,11 +98,21 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
   // 新增节目单弹框
   const [createModalOpen, setCreateModalOpen] = useState(false)
 
-  // 归档计划弹框
-  const [archiveModalOpen, setArchiveModalOpen] = useState(false)
-  const [archiveModalLoading, setArchiveModalLoading] = useState(false)
-  const [archiveRecord, setArchiveRecord] = useState<ScheduleListItem | null>(null)
-  const [archiveForm] = Form.useForm()
+  // 元数据详情弹框（Archived 列点击查看）
+  const [metadataModalOpen, setMetadataModalOpen] = useState(false)
+  const [metadataModalLoading, setMetadataModalLoading] = useState(false)
+  const [metadataSaving, setMetadataSaving] = useState(false)
+  const [metadataContentId, setMetadataContentId] = useState<number>(0)
+  const [metadataScheduleName, setMetadataScheduleName] = useState('')
+  const [metadataForm] = Form.useForm()
+  const seriesTypeValue = Form.useWatch('series_type', metadataForm) ?? 0
+
+  // SeriesType 字典选项
+  const [seriesTypeOptions, setSeriesTypeOptions] = useState<{ label: string; value: number }[]>([])
+
+  // Series / Show 搜索
+  const [seriesSearchOptions, setSeriesSearchOptions] = useState<{ value: string; label: string; id: number; series_ordinal?: number }[]>([])
+  const [showSearchOptions, setShowSearchOptions] = useState<{ value: string; label: string; id: number }[]>([])
 
   // Excel 导入状态
   const [importing, setImporting] = useState(false)
@@ -112,8 +131,8 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
         ...params,
         page: p,
         page_size: ps,
-        sort_by: sortBy ?? undefined,
-        sort_order: sortOrd ? (sortOrd === 'ascend' ? 'asc' : 'desc') : undefined,
+        sort_by: sortBy || 'created_at',
+        sort_order: sortOrd ? (sortOrd === 'ascend' ? 'asc' : 'desc') : 'desc',
       })
       setSchedules(res.items)
       return res
@@ -152,6 +171,12 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
         placeholderKey: 'common.placeholder.programKeyword',
       },
       {
+        name: 'statuses',
+        labelKey: 'common.col.ingestStatus',
+        type: 'multiSelect',
+        options: ingestStatusOptions,
+      },
+      {
         name: 'cutv_enable',
         labelKey: 'common.col.cutvEnable',
         type: 'select',
@@ -160,6 +185,47 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
           { label: '是', labelKey: 'common.yes', value: true },
           { label: '否', labelKey: 'common.no', value: false },
         ],
+      },
+      {
+        name: 'to_be_archived',
+        label: ' ',
+        type: 'input',
+        render: () => (
+          <Badge count={toBeArchivedCount > 0 ? toBeArchivedCount : undefined} size="medium" offset={[4, 0]} styles={{
+            root: { width: '100%' }
+          }}>
+            <Button
+              type={toBeArchivedActive ? 'primary' : 'default'}
+              onClick={() => {
+                if (toBeArchivedActive) {
+                  setToBeArchivedActive(false)
+                  setFilters({ channel_id: channelId })
+                  resetSort()
+                  void (async () => {
+                    const res = await loadList(1, pagination.pageSize, { channel_id: channelId }, null, null)
+                    if (res) updatePagination(res)
+                  })()
+                } else {
+                  setToBeArchivedActive(true)
+                  const params: ScheduleQueryParams = {
+                    channel_id: channelId,
+                    cutv_enable: true,
+                    is_archived: false,
+                  }
+                  setFilters(params)
+                  resetSort()
+                  void (async () => {
+                    const res = await loadList(1, pagination.pageSize, params, null, null)
+                    if (res) updatePagination(res)
+                  })()
+                }
+              }}
+              block
+            >
+              {t('live.schedule.btn.toBeArchived')}
+            </Button>
+          </Badge>
+        ),
       },
       {
         name: 'begin_range',
@@ -172,7 +238,7 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
         type: 'dateRange',
       },
     ],
-    []
+    [ingestStatusOptions, toBeArchivedActive, toBeArchivedCount, channelId, t]
   )
 
   // ── 使用 useSearchForm Hook ──────────────────────────────────────────────
@@ -187,17 +253,19 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
     handleSearch,
     handleReset,
   } = useSearchForm<SearchValues>({
+    defaultValues: { channel_id: channelId } as Partial<SearchValues>,
     onSearch: (values) => {
       const params: ScheduleQueryParams = { channel_id: channelId }
       if (values.title) params.title = values.title
+      if (values.statuses?.length) params.statuses = values.statuses
       if (values.cutv_enable !== undefined) params.cutv_enable = values.cutv_enable
       if (values.begin_range?.[0]) {
-        params.begin_from = values.begin_range[0].format('YYYY-MM-DD HH:mm')
-        params.begin_to = values.begin_range[1].format('YYYY-MM-DD HH:mm')
+        params.begin_from = values.begin_range[0].startOf('day').format('YYYY-MM-DD HH:mm')
+        params.begin_to = values.begin_range[1].endOf('day').format('YYYY-MM-DD HH:mm')
       }
       if (values.end_range?.[0]) {
-        params.end_from = values.end_range[0].format('YYYY-MM-DD HH:mm')
-        params.end_to = values.end_range[1].format('YYYY-MM-DD HH:mm')
+        params.end_from = values.end_range[0].startOf('day').format('YYYY-MM-DD HH:mm')
+        params.end_to = values.end_range[1].endOf('day').format('YYYY-MM-DD HH:mm')
       }
       setFilters(params)
       resetSort()
@@ -241,8 +309,148 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
       if (res) updatePagination(res)
     })()
     void loadToBeArchivedCount()
+    void getDictTree().then((dicts) => {
+      const ingestRoot = dicts.find((d: DictNodeListItem) => d.code === 'Ingest_Status')
+      setIngestStatusOptions((ingestRoot?.children ?? []).map((c: DictNodeListItem) => ({ label: c.name, value: c.code })))
+      const seriesTypeRoot = dicts.find((d: DictNodeListItem) => d.code === 'SeriesType')
+      if (seriesTypeRoot?.children) {
+        setSeriesTypeOptions(seriesTypeRoot.children.map((c: DictNodeListItem) => ({ label: c.name, value: Number(c.code) })))
+      }
+    }).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelId])
+
+  // ── 元数据详情弹框处理 ───────────────────────────────────────────
+  const handleShowMetadata = async (record: ScheduleListItem) => {
+    if (record.status !== 'Published') {
+      void message.error(t('live.schedule.msg.scheduleNotPublishedCannotArchive'))
+      return
+    }
+    setMetadataContentId(record.id)
+    setMetadataScheduleName(record.title)
+    setMetadataModalOpen(true)
+    setMetadataModalLoading(true)
+    // 清空上一次弹框残留的下拉选项，避免 setFieldsValue 不触发 onChange 时
+    // 旧的 SEASON_SERIES 选项串到 Series 类型的 Series Name 下拉中
+    setSeriesSearchOptions([])
+    setShowSearchOptions([])
+    try {
+      const meta = await getScheduleMetadata(record.id)
+      // 先重置表单，清除上次打开弹窗时的残留输入（setFieldsValue 为合并更新，不会清空未覆盖字段）
+      metadataForm.resetFields()
+      metadataForm.setFieldsValue({
+        series_type: meta?.series_type ?? 0,
+        series_name: meta?.series_name ?? '',
+        series_id: meta?.series_id ?? '',
+        sequence: meta?.sequence ?? undefined,
+        series_ordinal: meta?.series_ordinal ?? undefined,
+        show_name: meta?.show_name ?? '',
+        show_id: meta?.show_id ?? '',
+        program_id: meta?.program_id ?? '',
+        cutv_enable: true,
+      })
+    } catch (err) {
+      if (isHandledError(err)) return
+      void message.error(t('live.schedule.msg.metadataLoadFailed'), 5)
+    } finally {
+      setMetadataModalLoading(false)
+    }
+  }
+
+  const handleSaveMetadata = async () => {
+    try {
+      const values = await metadataForm.validateFields()
+      setMetadataSaving(true)
+
+      // 1. 元数据随归档一次性提交：后端同事务处理，归档校验（如 Sequence 重复）
+      // 失败时整体回滚，不会单独修改节目单状态
+      await archiveSchedule({
+        schedule_id: metadataContentId,
+        mode: 'now',
+        series_type: values.series_type,
+        series_name: values.series_name || undefined,
+        series_id: values.series_id || undefined,
+        sequence: values.sequence,
+        series_ordinal: values.series_ordinal,
+        show_name: values.show_name || undefined,
+        show_id: values.show_id || undefined,
+        program_id: values.program_id || undefined,
+        cutv_enable: values.cutv_enable ?? true,
+      })
+
+      void message.success(t('live.schedule.msg.metadataSaved'), 3)
+      setMetadataModalOpen(false)
+      const res = await loadList(pagination.current, pagination.pageSize, { ...filters, channel_id: channelId }, sortField, sortOrder)
+      if (res) updatePagination(res)
+      void loadToBeArchivedCount()
+    } catch (err) {
+      console.log('[handleSaveMetadata] error=', err)
+      if (isHandledError(err)) return
+      void message.error(t('live.schedule.msg.metadataSaveFailed'), 5)
+    } finally {
+      setMetadataSaving(false)
+    }
+  }
+
+  // ── Series / Show 搜索 ────────────────────────────────────────────
+
+  const loadInitialSeries = useCallback(() => {
+    void getContents({ page: 1, page_size: 1000, content_types: ['SERIES'] })
+      .then((res) => {
+        setSeriesSearchOptions(res.items.map((item: { title: string; id: number; series_ordinal?: number }) => ({ value: item.title, label: `${item.title} (ID:${item.id})`, id: item.id, series_ordinal: item.series_ordinal })))
+      })
+      .catch(() => setSeriesSearchOptions([]))
+  }, [])
+
+  const loadInitialShow = useCallback(() => {
+    void getContents({ page: 1, page_size: 1000, content_types: ['SEASON'] })
+      .then((res) => {
+        setShowSearchOptions(res.items.map((item: { title: string; id: number }) => ({ value: item.title, label: `${item.title} (ID:${item.id})`, id: item.id })))
+      })
+      .catch(() => setShowSearchOptions([]))
+  }, [])
+
+  const searchSeries = useCallback((keyword: string) => {
+    // 清空搜索词时恢复全量选项，避免下拉停留在上次的空结果
+    if (!keyword || keyword.trim().length < 1) { loadInitialSeries(); return }
+    void getContents({ page: 1, page_size: 1000, title: keyword.trim(), content_types: ['SERIES'] })
+      .then((res) => {
+        setSeriesSearchOptions(res.items.map((item: { title: string; id: number; series_ordinal?: number }) => ({ value: item.title, label: `${item.title} (ID:${item.id})`, id: item.id, series_ordinal: item.series_ordinal })))
+      })
+      .catch(() => setSeriesSearchOptions([]))
+  }, [])
+
+  const searchShow = useCallback((keyword: string) => {
+    // 清空搜索词时恢复全量选项，避免下拉停留在上次的空结果
+    if (!keyword || keyword.trim().length < 1) { loadInitialShow(); return }
+    void getContents({ page: 1, page_size: 1000, title: keyword.trim(), content_types: ['SEASON'] })
+      .then((res) => {
+        setShowSearchOptions(res.items.map((item: { title: string; id: number }) => ({ value: item.title, label: `${item.title} (ID:${item.id})`, id: item.id })))
+      })
+      .catch(() => setShowSearchOptions([]))
+  }, [])
+
+  const loadInitialSeriesByShow = useCallback(() => {
+    const showId = metadataForm.getFieldValue('show_id')
+    if (!showId) { setSeriesSearchOptions([]); return }
+    void getContents({ page: 1, page_size: 1000, parent_id: Number(showId), content_types: ['SEASON_SERIES'] })
+      .then((res) => {
+        setSeriesSearchOptions(res.items.map((item: { title: string; id: number; series_ordinal?: number }) => ({ value: item.title, label: `${item.title} (ID:${item.id})`, id: item.id, series_ordinal: item.series_ordinal })))
+      })
+      .catch(() => setSeriesSearchOptions([]))
+  }, [])
+
+  const searchSeriesByShow = useCallback((keyword: string) => {
+    const showId = metadataForm.getFieldValue('show_id')
+    if (!showId) { setSeriesSearchOptions([]); return }
+    const params: Record<string, unknown> = { page: 1, page_size: 1000, parent_id: Number(showId), content_types: ['SEASON_SERIES'] }
+    if (keyword.trim()) params.title = keyword.trim()
+    void getContents(params)
+      .then((res) => {
+        setSeriesSearchOptions(res.items.map((item: { title: string; id: number; series_ordinal?: number }) => ({ value: item.title, label: `${item.title} (ID:${item.id})`, id: item.id, series_ordinal: item.series_ordinal })))
+      })
+      .catch(() => setSeriesSearchOptions([]))
+  }, [])
 
   // ── 操作处理 ────────────────────────────────────────────────────────────
 
@@ -251,7 +459,7 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
       await deleteSchedule(id)
       void message.success(t('live.schedule.msg.deleted'), 3)
       setSelectedRowKeys(prev => prev.filter(key => key !== id))
-      const res = await loadList(pagination.current, pagination.pageSize, filters, null, null)
+      const res = await loadList(pagination.current, pagination.pageSize, { ...filters, channel_id: channelId }, null, null)
       if (res) updatePagination(res)
     } catch (err: unknown) {
       if (isHandledError(err)) return
@@ -260,49 +468,6 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
     }
   }
 
-  const handleCutvChange = async (record: ScheduleListItem, checked: boolean) => {
-    try {
-      await updateContent(record.id, { cutv_enable: checked })
-      void message.success(t('common.msg.updateSuccess'), 3)
-      setSchedules((prev) =>
-        prev.map((item) => (item.id === record.id ? { ...item, cutv_enable: checked } : item))
-      )
-    } catch (err) {
-    }
-  }
-
-  const handleArchivePlan = async () => {
-    if (!archiveRecord) return
-    try {
-      await archiveForm.validateFields()
-      setArchiveModalLoading(true)
-      const mode = (archiveForm.getFieldValue('mode') as 'now' | 'plan') || 'now'
-      const scheduledTime = archiveForm.getFieldValue('scheduled_time') as dayjs.Dayjs | undefined
-      // 调用归档 API：根据 SeriesType 创建 MOVIE/EPISODE/SERIES/SEASON 归档产物
-      const result = await archiveSchedule({
-        schedule_id: archiveRecord.id,
-        mode,
-        scheduled_time:
-          mode === 'plan' && scheduledTime ? scheduledTime.toISOString() : undefined,
-      })
-      if (result.success) {
-        void message.success(t('live.schedule.msg.archivePlanSaved'), 3)
-        setArchiveModalOpen(false)
-        // 重新拉列表以获取最新 archive_content_id / archive_published
-        const res = await loadList(pagination.current, pagination.pageSize, filters, sortField, sortOrder)
-        if (res) updatePagination(res)
-        void loadToBeArchivedCount()
-      } else {
-        void message.error(result.message || t('live.schedule.msg.archivePlanSaveFailed'), 5)
-      }
-    } catch (err: unknown) {
-      if (isHandledError(err)) return
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      void message.error(detail || t('live.schedule.msg.archivePlanSaveFailed'), 5)
-    } finally {
-      setArchiveModalLoading(false)
-    }
-  }
 
   // ── 列定义 ──────────────────────────────────────────────────────────────
 
@@ -331,7 +496,7 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
       sortOrder: sortField === 'title' ? sortOrder : null,
       render: (v: string, record) => (
         <Tooltip title={v}>
-          <a onClick={() => navigate(`/trade/contents/${record.id}`)}>{v}</a>
+          <a onClick={() => navigate(`/live/schedules/${record.id}?mode=${record.is_discarded ? 'view' : 'edit'}`)}>{v}</a>
         </Tooltip>
       ),
     },
@@ -344,7 +509,7 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
       sorter: true,
       sortOrder: sortField === 'begin_time' ? sortOrder : null,
       render: (v?: string) => {
-        const text = v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '—'
+        const text = v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '—'
         return (
           <Tooltip title={text}>
             <span>{text}</span>
@@ -361,7 +526,7 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
       sorter: true,
       sortOrder: sortField === 'end_time' ? sortOrder : null,
       render: (v?: string) => {
-        const text = v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '—'
+        const text = v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '—'
         return (
           <Tooltip title={text}>
             <span>{text}</span>
@@ -384,30 +549,10 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
       ),
     },
     {
-      title: t('common.col.cutvEnable'),
-      key: 'cutv',
-      width: 110,
-      render: (_: unknown, record: ScheduleListItem) => (
-        <Switch
-          size="small"
-          disabled={mode === 'view'}
-          checked={record.cutv_enable ?? false}
-          onChange={(checked) => void handleCutvChange(record, checked)}
-        />
-      ),
-    },
-    {
       title: t('common.col.archived'),
       key: 'archived',
       width: 90,
       render: (_: unknown, record: ScheduleListItem) => {
-        if (!record.cutv_enable) {
-          return (
-            <Tooltip title={t('common.tooltip.cutvDisabledNoArchive')}>
-              <CloseCircleOutlined style={{ color: '#faad14', fontSize: 16 }} />
-            </Tooltip>
-          )
-        }
         if (record.is_archived && record.archive_content_id) {
           const isPublished = record.archive_published
           const icon = isPublished ? (
@@ -422,7 +567,7 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
             <Tooltip title={t(tipKey)}>
               <span
                 onClick={() => {
-                  navigate(`/contents/${record.archive_content_id}?mode=view`)
+                  navigate(`/contents/${record.archive_content_id}?mode=edit`)
                 }}
               >
                 {icon}
@@ -437,21 +582,13 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
             </Tooltip>
           )
         }
-        if (mode === 'view') {
-          return (
-            <Tooltip title={t('common.tooltip.notArchived')}>
-              <ExclamationCircleOutlined style={{ color: '#8c8c8c', fontSize: 16 }} />
-            </Tooltip>
-          )
-        }
         return (
           <Tooltip title={t('common.tooltip.notArchived')}>
             <ExclamationCircleOutlined
-              style={{ color: '#8c8c8c', fontSize: 16, cursor: 'pointer' }}
+              style={{ color: '#8c8c8c', fontSize: 16, cursor: canScheduleOperate ? 'pointer' : 'not-allowed' }}
               onClick={() => {
-                setArchiveRecord(record)
-                archiveForm.resetFields()
-                setArchiveModalOpen(true)
+                if (!canScheduleOperate) return
+                void handleShowMetadata(record)
               }}
             />
           </Tooltip>
@@ -464,10 +601,10 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
       width: 110,
       fixed: 'right',
       render: (_, record) => (
-        <Space size={4}>
+        <Space size={0}>
           <Tooltip title={t('common.detail')}>
             <Button
-              type="text"
+              type="link"
               size="small"
               icon={<InfoCircleOutlined />}
               onClick={() => {
@@ -480,34 +617,34 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
               }}
             />
           </Tooltip>
-          {mode === 'edit' && (
-            <>
-              <Tooltip title={t('common.edit')}>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<EditOutlined />}
-                  onClick={() => {
-                    sessionStorage.removeItem('schedule_list_context')
-                    sessionStorage.setItem(
-                      'schedule_list_context',
-                      JSON.stringify({ ids: schedules.map((s) => s.id) })
-                    )
-                    navigate(`/live/schedules/${record.id}?mode=edit`)
-                  }}
-                />
+          {canScheduleOperate && (
+            <Tooltip title={t('common.edit')}>
+              <Button
+                type="link"
+                size="small"
+                icon={<EditOutlined />}
+                onClick={() => {
+                  sessionStorage.removeItem('schedule_list_context')
+                  sessionStorage.setItem(
+                    'schedule_list_context',
+                    JSON.stringify({ ids: schedules.map((s) => s.id) })
+                  )
+                  navigate(`/live/schedules/${record.id}?mode=edit`)
+                }}
+              />
+            </Tooltip>
+          )}
+          {canScheduleOperate && (
+            <Popconfirm
+              title={t('live.schedule.confirm.delete')}
+              onConfirm={() => void handleDelete(record.id)}
+              okText={t('common.confirm')}
+              cancelText={t('common.cancel')}
+            >
+              <Tooltip title={t('common.delete')}>
+                <Button type="link" size="small" danger icon={<DeleteOutlined />} />
               </Tooltip>
-              <Popconfirm
-                title={t('live.schedule.confirm.delete')}
-                onConfirm={() => void handleDelete(record.id)}
-                okText={t('common.confirm')}
-                cancelText={t('common.cancel')}
-              >
-                <Tooltip title={t('common.delete')}>
-                  <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-                </Tooltip>
-              </Popconfirm>
-            </>
+            </Popconfirm>
           )}
         </Space>
       ),
@@ -535,41 +672,11 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
         <Col>
           <Space>
             <Button
-              type={toBeArchivedActive ? 'primary' : 'default'}
-              onClick={() => {
-                if (toBeArchivedActive) {
-                  setToBeArchivedActive(false)
-                  setFilters({ channel_id: channelId })
-                  resetSort()
-                  void (async () => {
-                    const res = await loadList(1, pagination.pageSize, { channel_id: channelId }, null, null)
-                    if (res) updatePagination(res)
-                  })()
-                } else {
-                  setToBeArchivedActive(true)
-                  const params: ScheduleQueryParams = {
-                    channel_id: channelId,
-                    cutv_enable: true,
-                    is_archived: false,
-                  }
-                  setFilters(params)
-                  resetSort()
-                  void (async () => {
-                    const res = await loadList(1, pagination.pageSize, params, null, null)
-                    if (res) updatePagination(res)
-                  })()
-                }
-              }}
-            >
-              {t('live.schedule.btn.toBeArchived')} {toBeArchivedCount}
-            </Button>
-
-            <Button
               icon={<DownloadOutlined />}
-              disabled={selectedRowKeys.length === 0}
               onClick={async () => {
                 try {
-                  const blob = await exportSchedulesExcel(selectedRowKeys)
+                  const ids = selectedRowKeys.length > 0 ? selectedRowKeys : schedules.map((s) => s.id)
+                  const blob = await exportSchedulesExcel(ids)
                   const url = window.URL.createObjectURL(blob)
                   const a = document.createElement('a')
                   a.href = url
@@ -588,6 +695,7 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
               {t('common.btn.excelExport')}
             </Button>
 
+            {canScheduleOperate && (
             <Upload
               accept=".xlsx,.xls"
               showUploadList={false}
@@ -610,19 +718,21 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
                   .finally(() => setImporting(false))
               }}
             >
-              <Button icon={<UploadOutlined />} loading={importing} disabled={mode === 'view'}>
+              <Button icon={<UploadOutlined />} loading={importing}>
                 {t('common.btn.excelImport')}
               </Button>
             </Upload>
+          )}
 
+          {canScheduleOperate && (
             <Button
               type="primary"
               icon={<PlusOutlined />}
-              disabled={mode === 'view'}
               onClick={() => setCreateModalOpen(true)}
             >
               {t('live.schedule.btn.new')}
             </Button>
+          )}
           </Space>
         </Col>
       </Row>
@@ -658,47 +768,138 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
           setCreateModalOpen(false)
           void message.success(t('live.schedule.msg.created'), 3)
           void (async () => {
-            const res = await loadList(1, pagination.pageSize, filters, null, null)
+            const res = await loadList(1, pagination.pageSize, { ...filters, channel_id: channelId }, null, null)
             if (res) updatePagination(res)
           })()
         }}
       />
 
-      {/* 归档计划弹框 */}
+      {/* 元数据详情弹框 */}
       <Modal
-        title={t('live.schedule.archivePlan.title')}
-        open={archiveModalOpen}
-        onOk={handleArchivePlan}
-        onCancel={() => setArchiveModalOpen(false)}
-        confirmLoading={archiveModalLoading}
-        destroyOnHidden
-        width={480}
+        title={`${metadataScheduleName} - ${t('common.detail')}`}
+        open={metadataModalOpen}
+        onCancel={() => {
+          if (!metadataSaving) setMetadataModalOpen(false)
+        }}
+        width={640}
+        destroyOnClose
+        afterClose={() => {
+          metadataForm.resetFields()
+          setSeriesSearchOptions([])
+          setShowSearchOptions([])
+        }}
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <Button onClick={() => setMetadataModalOpen(false)} disabled={metadataSaving}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="primary" loading={metadataSaving} onClick={() => void handleSaveMetadata()}>
+              {t('common.confirm')}
+            </Button>
+          </div>
+        }
       >
-        <Form form={archiveForm} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item name="mode" label={t('live.schedule.archivePlan.executionMode')} initialValue="now">
-            <Radio.Group>
-              <Radio.Button value="now">{t('live.schedule.archivePlan.now')}</Radio.Button>
-              <Tooltip title={t('common.placeholder.comingSoon')}>
-                <Radio.Button value="plan" disabled>
-                  {t('live.schedule.archivePlan.plan')}
-                </Radio.Button>
-              </Tooltip>
-            </Radio.Group>
-          </Form.Item>
-          <Form.Item noStyle shouldUpdate={(prev, curr) => prev.mode !== curr.mode}>
-            {({ getFieldValue }) =>
-              getFieldValue('mode') === 'plan' ? (
-                <Form.Item
-                  name="scheduled_time"
-                  label={t('live.schedule.archivePlan.scheduledTime')}
-                  rules={[{ required: true, message: t('live.schedule.archivePlan.timeRequired') }]}
-                >
-                  <DatePicker showTime style={{ width: '100%' }} />
+        {metadataModalLoading ? (
+          <div style={{ minHeight: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Spin />
+          </div>
+        ) : (
+          <Form form={metadataForm} layout="vertical" autoComplete="off" style={{ marginTop: 8 }}>
+            <Row gutter={16}>
+              <Col span={8}>
+                <Form.Item name="cutv_enable" label={t('content.metadata.cutvEnable')} valuePropName="checked">
+                  <Switch
+                    checkedChildren={t('content.metadata.yes')}
+                    unCheckedChildren={t('content.metadata.no')}
+                    disabled
+                  />
                 </Form.Item>
-              ) : null
-            }
-          </Form.Item>
-        </Form>
+              </Col>
+              <Col span={8}>
+                <Form.Item name="series_type" label={t('content.metadata.seriesType')}>
+                  <Select
+                    showSearch
+                    optionFilterProp="label"
+                    placeholder={t('common.placeholder.select')}
+                    options={seriesTypeOptions}
+                    onChange={() => {
+                      metadataForm.setFieldsValue({
+                        show_name: undefined,
+                        show_id: undefined,
+                        series_name: undefined,
+                        series_id: undefined,
+                        sequence: undefined,
+                        series_ordinal: undefined,
+                      })
+                      setSeriesSearchOptions([])
+                      setShowSearchOptions([])
+                    }}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item name="program_id" hidden>
+                  <Input />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            {(seriesTypeValue === 1 || seriesTypeValue === 2) && (
+              <Row gutter={16}>
+                {seriesTypeValue === 2 && (
+                  <Col span={12}>
+                    <Form.Item name="show_name" label={t('content.metadata.showName')} rules={[{ required: true, message: t('common.required') }]}>
+                      <Select
+                        showSearch
+                        filterOption={false}
+                        placeholder={t('common.placeholder.enterOrSearch')}
+                        options={showSearchOptions}
+                        onSearch={(val) => searchShow(val)}
+                        onOpenChange={(open) => { if (open) loadInitialShow() }}
+                        onSelect={(_val, option) => {
+                          metadataForm.setFieldsValue({ show_id: String((option as unknown as { id: number }).id) })
+                          metadataForm.setFieldsValue({ series_name: undefined, series_id: undefined })
+                          setSeriesSearchOptions([])
+                          loadInitialSeriesByShow()
+                        }}
+                      />
+                    </Form.Item>
+                  </Col>
+                )}
+                <Col span={12}>
+                  <Form.Item name="series_name" label={t('content.metadata.seriesName')} rules={[{ required: true, message: t('common.required') }]}>
+                    <Select
+                      showSearch
+                      filterOption={false}
+                      placeholder="Please search & select"
+                      options={seriesSearchOptions}
+                      onSearch={(val) => seriesTypeValue === 2 ? searchSeriesByShow(val) : searchSeries(val)}
+                      onOpenChange={(open) => {
+                        if (open) {
+                          seriesTypeValue === 2 ? loadInitialSeriesByShow() : loadInitialSeries()
+                        }
+                      }}
+                      onSelect={(_val, option) => {
+                        const opt = option as unknown as { id: number; series_ordinal?: number }
+                        metadataForm.setFieldsValue({ series_id: String(opt.id), series_ordinal: opt.series_ordinal ?? undefined })
+                      }}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="sequence" label={t('content.col.sequence')} rules={[{ required: true, message: t('common.required') }]}>
+                    <InputNumber style={{ width: '100%' }} min={0} />
+                  </Form.Item>
+                </Col>
+              </Row>
+            )}
+
+            {/* 隐藏字段：随表单提交自动保存 */}
+            <Form.Item name="series_id" hidden><Input /></Form.Item>
+            <Form.Item name="show_id" hidden><Input /></Form.Item>
+            <Form.Item name="series_ordinal" hidden><InputNumber /></Form.Item>
+          </Form>
+        )}
       </Modal>
     </div>
   )

@@ -42,6 +42,11 @@ export const getPasswordMinLength = async (): Promise<number> => {
   return response.data.value
 }
 
+export const getPasswordPatternMinLen = async (): Promise<number> => {
+  const response = await request.get<{ value: number }>('/configs/public/password-pattern-min-len')
+  return response.data.value
+}
+
 export const getPublicConfig = async (key: string): Promise<string | null> => {
   const response = await request.get<{ key: string; value: string | null }>(`/configs/public/${key}`)
   return response.data.value

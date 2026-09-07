@@ -73,22 +73,25 @@ export default function ProcessesTab({ contentId, refreshVersion }: ProcessesTab
       title: t('content.col.processName'),
       dataIndex: 'name',
       key: 'name',
-      width: 120,
       ellipsis: { showTitle: false },
       render: (v: string) => <Tooltip title={v}><span>{v}</span></Tooltip>,
     },
     {
-      title: t('content.col.endDateTime'),
+      title: t('content.col.processedAt'),
       dataIndex: 'end_dt',
       key: 'end_dt',
-      width: 160,
-      render: (v?: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '—',
+      width: 200,
+      render: (_: unknown, record: ProcessListItem) => {
+        // Pending 状态没有 end_dt，显示 start_dt
+        const dt = record.status === 'Pending' ? record.start_dt : record.end_dt
+        return dt ? dayjs(dt).format('YYYY-MM-DD HH:mm') : '—'
+      },
     },
     {
       title: t('content.col.processedBefore'),
       dataIndex: 'processed_before',
       key: 'processed_before',
-      width: 100,
+      width: 200,
       align: 'center',
       render: (v?: boolean) => <ProcessedBeforeDot processedBefore={v} />,
     },
@@ -96,31 +99,20 @@ export default function ProcessesTab({ contentId, refreshVersion }: ProcessesTab
       title: t('content.col.status'),
       dataIndex: 'status',
       key: 'status',
-      width: 100,
+      width: 200,
       render: (v?: string) => v ?? '—',
     },
     {
-      title: t('content.col.assigned'),
+      title: t('content.col.processedBy'),
       dataIndex: 'assigned',
-      key: 'assigned',
-      width: 120,
-      ellipsis: { showTitle: false },
-      render: (v?: string) => v ? <Tooltip title={v}><span>{v}</span></Tooltip> : '—',
-    },
-    {
-      title: t('content.col.info'),
-      dataIndex: 'info',
-      key: 'info',
-      width: 80,
-      align: 'center',
-      render: (v?: string) =>
-        v ? (
-          <Tooltip title={v}>
-            <span style={{ color: '#1677ff', cursor: 'pointer' }}>详情</span>
-          </Tooltip>
-        ) : (
-          '—'
-        ),
+      key: 'processed_by',
+      width: 220,
+      render: (_: unknown, record: ProcessListItem) => {
+        const display = record.assigned_display_name
+        const username = record.assigned
+        if (display && username) return `${display}(${username})`
+        return display || username || '—'
+      },
     },
   ]
 

@@ -4,6 +4,7 @@ import {
 } from 'antd'
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
+import { parseApiValue, getFieldOptionLabel, formatApiValue, getCustomFieldRules, getCustomFieldPlaceholder } from '../utils/customField'
 import {
   getProgramMetadata, createProgramMetadata, updateProgramMetadata,
   getSeriesMetadata, createSeriesMetadata, updateSeriesMetadata,
@@ -19,10 +20,14 @@ import { getCustomFields } from '../api/customFields'
 import { getContents, getContent, updateContent, getContentI18n, saveContentI18n, getContentFieldValues, saveContentFieldValues } from '../api/contents'
 import { getMultiLanguageOptions } from '../api/i18n'
 import { getPackages } from '../api/packages'
+import { getObjectPublishStatus } from '../api/publishes'
 import { useI18n } from '../i18n/useI18n'
+import { useSensitiveCheck } from '../hooks/useSensitiveCheck'
 import TrimInput from './TrimInput'
-import { FORM_MAX_LENGTH } from '../constants/form'
+import CustomFieldControl from './CustomFieldControl'
+import { FORM_MAX_LENGTH, INT32_MAX } from '../constants/form'
 import { useFormRules } from '../hooks/useFormRules'
+
 import type { EntityI18nItem, EntityFieldValueItem } from '../types/basic'
 import type {
   ContentMetadataItem, ContentMetadataCreate, ContentMetadataUpdate,
@@ -35,6 +40,54 @@ import type { LanguageOption } from '../types/i18n'
 import type { DictNodeListItem } from '../types/dict'
 import type { PackageListItem } from '../types/package'
 import { isHandledError } from '../api'
+
+function inputRequiredMsg(label: string, language: 'cn' | 'en'): string {
+  return language === 'cn' ? `请输入${label}` : `Enter ${label}`
+}
+
+function selectRequiredMsg(label: string, language: 'cn' | 'en'): string {
+  return language === 'cn' ? `请选择${label}` : `Select ${label}`
+}
+
+/**
+ * 兼容存量旧格式 sections_info（Excel 导入字符串格式入库）：
+ * - 数字字符串（"30"）→ 数字
+ * - 时间字符串（"00:30:00"）→ 秒数
+ * - 无法识别的非空值 → 置空（undefined），返回 true 提示用户检查
+ */
+function normalizeSectionsInfoForForm(values: Record<string, unknown>): boolean {
+  const raw = values.sections_info
+  if (!Array.isArray(raw)) return false
+  let cleaned = false
+  values.sections_info = raw.map((item) => {
+    const src = (item ?? {}) as Record<string, unknown>
+    const entry: Record<string, unknown> = {}
+    for (const field of ['type', 'action', 'start', 'end'] as const) {
+      const value = src[field]
+      if (typeof value === 'number' && !Number.isNaN(value)) {
+        entry[field] = value
+        continue
+      }
+      if (typeof value === 'string') {
+        const text = value.trim()
+        if (/^-?\d+$/.test(text)) {
+          entry[field] = Number(text)
+          continue
+        }
+        const match = text.match(/^(\d{1,3}):([0-5]\d):([0-5]\d)$/)
+        if (match) {
+          entry[field] = Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3])
+          continue
+        }
+      }
+      if (value != null) cleaned = true
+      entry[field] = undefined
+    }
+    entry.tag = typeof src.tag === 'string' ? src.tag : ''
+    return entry
+  })
+  return cleaned
+}
 
 
 /* ═══════════════════════════════════════════════════════════ */
@@ -80,6 +133,7 @@ export default function MetadataModal({
   initialBeginTime, initialEndTime, sourceScheduleId,
 }: MetadataModalProps) {
   const { t } = useI18n()
+  const { checkSensitive } = useSensitiveCheck()
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [metadata, setMetadata] = useState<MetadataState | null>(null)
@@ -87,6 +141,18 @@ export default function MetadataModal({
   const [updateChildsMain, setUpdateChildsMain] = useState(false)
   const [updateChildsCustomFields, setUpdateChildsCustomFields] = useState(false)
   const [updateChildsI18n, setUpdateChildsI18n] = useState(false)
+  
+  // ★ 发布状态（用于 Schedule 类型 CUTVEnable 校验）
+  const [isPublished, setIsPublished] = useState(false)
+
+  // ★ 加载时的主表字段快照（栏目/自定义标签/节目单起止时间），
+  //   保存时用于判断主表字段是否有实际变化，仅变化才调用 updateContent（bug 32185）
+  const initialMainRef = useRef<{
+    genre_ids: number[] | null
+    custom_tag_ids: number[] | null
+    begin_time: string | null
+    end_time: string | null
+  }>({ genre_ids: null, custom_tag_ids: null, begin_time: null, end_time: null })
 
   // ── 数据源 ────────────────────────────────────────────────
   const [genres, setGenres] = useState<GenreListItem[]>([])
@@ -101,7 +167,7 @@ export default function MetadataModal({
 
   const kind = useMemo<MetadataKind>(() => {
     if (contentType === 'MOVIE' || contentType === 'EPISODE') return 'program'
-    if (contentType === 'SERIES' || contentType === 'SEASON') return 'series'
+    if (contentType === 'SERIES' || contentType === 'SEASON' || contentType === 'SEASON_SERIES') return 'series'
     if (contentType === 'CHANNEL') return 'channel'
     return 'schedule'
   }, [contentType])
@@ -151,7 +217,7 @@ export default function MetadataModal({
         getTags({ page: 1, page_size: 500 }).catch(() => ({ items: [], total: 0 })),
         getCustomTags({ page: 1, page_size: 500 }).catch(() => ({ items: [], total: 0 })),
         getContentTypes({ page: 1, page_size: 500 }).catch(() => ({ items: [], total: 0 })),
-        getPackages({ page: 1, page_size: 500 }).catch(() => ({ items: [], total: 0 })),
+        getPackages({ page: 1, page_size: 9999, ingest_statuses: ['success'] }).catch(() => ({ items: [], total: 0 })),
       ])
 
       setGenres(genresRes.items ?? [])
@@ -169,6 +235,18 @@ export default function MetadataModal({
     if (!contentId) return
     setLoading(true)
     try {
+      const cfRes = await getCustomFields({
+        page: 1, page_size: 500,
+        belongings: kind === 'program' ? ['ALL', 'Program']
+          : kind === 'series' ? ['ALL', 'Series']
+            : kind === 'channel' ? ['ALL', 'Channel']
+              : ['ALL', 'Schedule'],
+      }).catch(() => ({ items: [] as CustomFieldListItem[], total: 0 }))
+      const currentCustomFields = cfRes.items ?? []
+      if (currentCustomFields.length && !customFields.length) {
+        setCustomFields(currentCustomFields)
+      }
+
       let state: MetadataState
       switch (kind) {
         case 'program':
@@ -182,43 +260,45 @@ export default function MetadataModal({
           break
         case 'schedule':
           state = { kind, data: await getScheduleMetadata(contentId) }
+          // ★ 获取发布状态（用于 CUTVEnable 校验）
+          try {
+            const pubStatus = await getObjectPublishStatus('Content', contentId)
+            setIsPublished(pubStatus?.is_published ?? false)
+          } catch {
+            setIsPublished(false)
+          }
           break
       }
       
-      // ✅ 获取主表数据（包含 custom_tag_ids 和 genre_id）
       const contentDetail = await getContent(contentId).catch(() => null)
-      
+
+      // 记录主表字段初始值快照（bug 32185：保存时 diff 判断用）
+      initialMainRef.current = {
+        genre_ids: (contentDetail?.content?.genre_ids as number[] | undefined) ?? null,
+        custom_tag_ids: (contentDetail?.content?.custom_tag_ids as number[] | undefined) ?? null,
+        begin_time: contentDetail?.content?.begin_time
+          ? dayjs(contentDetail.content.begin_time as unknown as string).toISOString()
+          : null,
+        end_time: contentDetail?.content?.end_time
+          ? dayjs(contentDetail.content.end_time as unknown as string).toISOString()
+          : null,
+      }
+
       setMetadata(state)
 
-      // 并行加载 i18n 和自定义字段值
       const [i18nItems, fieldValueItems] = await Promise.all([
         getContentI18n(contentId).catch(() => [] as EntityI18nItem[]),
         getContentFieldValues(contentId).catch(() => [] as EntityFieldValueItem[]),
       ])
 
-      // 构建 custom_field_values（按 field_code 索引）
       const customFieldValues: Record<string, unknown> = {}
       for (const fv of fieldValueItems) {
-        const field = customFields.find(f => f.id === fv.custom_field_id)
+        const field = currentCustomFields.find(f => f.id === fv.custom_field_id)
         if (field && !field.multi_language) {
-          let val: unknown = fv.value
-          if (field.field_type === 'multi_select' || field.field_type === 'DropList_multiple') {
-            if (typeof val === 'string' && val.includes(',')) {
-              val = val.split(',').map(v => v.trim()).filter(Boolean)
-            } else if (typeof val === 'string' && val) {
-              val = [val]
-            }
-          } else if (field.field_type === 'Integer' || field.field_type === 'Decimal') {
-            if (typeof val === 'string' && val) {
-              const n = Number(val)
-              if (!isNaN(n)) val = n
-            }
-          }
-          customFieldValues[field.field_code] = val
+          customFieldValues[field.field_code] = parseApiValue(field.field_type, fv.value)
         }
       }
 
-      // 构建 i18n values
       const i18nValues: Record<string, Record<string, unknown>> = {}
       for (const item of i18nItems) {
         if (!i18nValues[item.language]) i18nValues[item.language] = {}
@@ -231,21 +311,9 @@ export default function MetadataModal({
             if (!isNaN(n)) val = [n]
           }
         } else if (item.field_name.startsWith('cf_')) {
-          const fieldCode = item.field_name.slice(3)
-          const field = customFields.find(f => f.field_code === fieldCode && f.multi_language)
+          const field = currentCustomFields.find(f => f.field_code === item.field_name && f.multi_language)
           if (field) {
-            if (field.field_type === 'DropList_multiple' || field.field_type === 'multi_select') {
-              if (typeof val === 'string' && val.includes(',')) {
-                val = val.split(',').map(v => v.trim()).filter(Boolean)
-              } else if (typeof val === 'string' && val) {
-                val = [val]
-              }
-            } else if (field.field_type === 'Integer' || field.field_type === 'Decimal') {
-              if (typeof val === 'string' && val) {
-                const n = Number(val)
-                if (!isNaN(n)) val = n
-              }
-            }
+            val = parseApiValue(field.field_type, val)
           }
         }
         i18nValues[item.language][item.field_name] = val
@@ -253,22 +321,29 @@ export default function MetadataModal({
 
       if (state.data) {
         const values = { ...state.data } as Record<string, unknown>
+        // ✅ 兼容存量字符串格式 sections_info（旧导入数据），无法识别的值置空并提示
+        const sectionsCleaned = normalizeSectionsInfoForForm(values)
         
-        // ✅ 从主表获取 genre_id、custom_tag_ids、begin_time、end_time
-        const contentGenreId = contentDetail?.content?.genre_id
+        // ✅ 从主表获取 genre_ids、custom_tag_ids、begin_time、end_time
+        const contentGenreIds = contentDetail?.content?.genre_ids
         const contentCustomTagIds = contentDetail?.content?.custom_tag_ids
         const contentBeginTime = contentDetail?.content?.begin_time
         const contentEndTime = contentDetail?.content?.end_time
         
-        if (contentGenreId !== undefined) {
-          values.genre_id = contentGenreId
+        if (contentGenreIds !== undefined) {
+          values.genre_ids = contentGenreIds
         }
         if (contentCustomTagIds !== undefined) {
           values.custom_tag_ids = contentCustomTagIds
         }
-        // ✅ 将 release_year 从数字转换为 dayjs 对象
-        if (values.release_year && typeof values.release_year === 'number') {
-          values.release_year = dayjs(String(values.release_year), 'YYYY')
+        // ✅ 将 release_year 转换为 dayjs 对象（兼容 number/string 类型）
+        if (values.release_year != null && (typeof values.release_year === 'number' || typeof values.release_year === 'string')) {
+          const yearNum = Number(values.release_year)
+          if (!isNaN(yearNum) && yearNum > 0) {
+            values.release_year = dayjs(String(yearNum), 'YYYY')
+          } else {
+            values.release_year = null
+          }
         }
         // ✅ begin_time / end_time 从主表获取（Schedule 类型）
         if (kind === 'schedule') {
@@ -286,13 +361,17 @@ export default function MetadataModal({
         
         values.i18n = i18nValues
         values.custom_field_values = customFieldValues
+        form.resetFields()
         form.setFieldsValue(values)
+        if (sectionsCleaned) {
+          message.warning(t('content.metadata.sectionsInfo.legacyNormalized'), 5)
+        }
       } else {
         // 新建：name 默认同 contentName，如果有初始时间则使用
         form.resetFields()
         
-        // ✅ 从主表获取 genre_id、custom_tag_ids、begin_time、end_time
-        const contentGenreId = contentDetail?.content?.genre_id
+        // ✅ 从主表获取 genre_ids、custom_tag_ids、begin_time、end_time
+        const contentGenreIds = contentDetail?.content?.genre_ids
         const contentCustomTagIds = contentDetail?.content?.custom_tag_ids
         const contentBeginTime = contentDetail?.content?.begin_time
         const contentEndTime = contentDetail?.content?.end_time
@@ -304,8 +383,8 @@ export default function MetadataModal({
         }
         
         // ✅ 如果主表有值，使用主表的值
-        if (contentGenreId !== undefined) {
-          initialValues.genre_id = contentGenreId
+        if (contentGenreIds !== undefined) {
+          initialValues.genre_ids = contentGenreIds
         }
         if (contentCustomTagIds?.length) {
           initialValues.custom_tag_ids = contentCustomTagIds
@@ -362,6 +441,7 @@ export default function MetadataModal({
 
               // 合并初始值（优先使用传入的初始时间）
               Object.assign(initialValues, scheduleValues)
+              normalizeSectionsInfoForForm(initialValues)
               if (initialBeginTime) {
                 initialValues.begin_time = dayjs(initialBeginTime)
               }
@@ -382,7 +462,7 @@ export default function MetadataModal({
     } finally {
       setLoading(false)
     }
-  }, [contentId, kind, form, contentName, customFields, initialBeginTime, initialEndTime, sourceScheduleId])
+  }, [contentId, kind, form, contentName, initialBeginTime, initialEndTime, sourceScheduleId])
 
   useEffect(() => {
     if (open && contentId) void load()
@@ -390,12 +470,11 @@ export default function MetadataModal({
 
   // ── Main tab 字段同步到 Multi Languages 默认语言 ──────────
   const watchedName = Form.useWatch('name', form)
-  const watchedGenreId = Form.useWatch('genre_id', form)
+  const watchedGenreIds = Form.useWatch('genre_ids', form)
   const watchedTagIds = Form.useWatch('tag_ids', form)
   const watchedDescription = Form.useWatch('description', form)
   const watchedSortName = Form.useWatch('sort_name', form)
   const watchedShortTitle = Form.useWatch('short_title', form)
-  const watchedOriginalName = Form.useWatch('original_name', form)
 
   useEffect(() => {
     if (!defaultLanguage || loading) return
@@ -408,8 +487,8 @@ export default function MetadataModal({
       defaultLangI18n['name'] = watchedName
       changed = true
     }
-    if (watchedGenreId !== undefined && watchedGenreId !== null) {
-      defaultLangI18n['genre_ids'] = Array.isArray(watchedGenreId) ? watchedGenreId : [watchedGenreId]
+    if (watchedGenreIds !== undefined && watchedGenreIds !== null) {
+      defaultLangI18n['genre_ids'] = Array.isArray(watchedGenreIds) ? watchedGenreIds : [watchedGenreIds]
       changed = true
     }
     if (watchedTagIds !== undefined && watchedTagIds !== null) {
@@ -428,15 +507,11 @@ export default function MetadataModal({
       defaultLangI18n['short_title'] = watchedShortTitle
       changed = true
     }
-    if (watchedOriginalName !== undefined && watchedOriginalName !== null) {
-      defaultLangI18n['original_name'] = watchedOriginalName
-      changed = true
-    }
 
     if (changed) {
       form.setFieldsValue({ i18n: { ...currentI18n, [defaultLanguage]: defaultLangI18n } })
     }
-  }, [watchedName, watchedGenreId, watchedTagIds, watchedDescription, watchedSortName, watchedShortTitle, watchedOriginalName, defaultLanguage, loading, form])
+  }, [watchedName, watchedGenreIds, watchedTagIds, watchedDescription, watchedSortName, watchedShortTitle, defaultLanguage, loading, form])
 
   // ── 保存 ───────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState('main')
@@ -464,11 +539,18 @@ export default function MetadataModal({
         await form.validateFields()
         return true
       } catch (error) {
-        const errorFields = (error as { errorFields?: Array<{ name: (string | number)[] }> })?.errorFields
+        const err = error as { errorFields?: Array<{ name: (string | number)[]; errors: string[] }> }
+        const errorFields = err?.errorFields
         if (!errorFields || errorFields.length === 0) return true
         const hasCurrentTabError = errorFields.some(ef => getFieldTab(ef.name) === activeTab)
         if (hasCurrentTabError) {
-          message.warning(t('content.metadata.requiredCheck'), 3)
+          // 优先显示 sections 重叠校验的具体错误
+          const overlapError = errorFields.find(ef => ef.name[0] === '_sections_overlap_check')
+          if (overlapError && overlapError.errors?.length > 0) {
+            message.warning(overlapError.errors[0], 3)
+          } else {
+            message.warning(t('content.metadata.requiredCheck'), 3)
+          }
           return false
         }
         return true
@@ -480,13 +562,20 @@ export default function MetadataModal({
         await form.validateFields()
         return null
       } catch (error) {
-        const errorFields = (error as { errorFields?: Array<{ name: (string | number)[] }> })?.errorFields
+        const err = error as { errorFields?: Array<{ name: (string | number)[]; errors: string[] }> }
+        const errorFields = err?.errorFields
         if (!errorFields || errorFields.length === 0) return null
         const otherError = errorFields.find(ef => getFieldTab(ef.name) !== activeTab)
         if (otherError) {
           const targetTab = getFieldTab(otherError.name)
           setActiveTab(targetTab)
-          message.warning(t('content.metadata.requiredCheck'), 3)
+          // 优先显示 sections 重叠校验的具体错误
+          const overlapError = errorFields.find(ef => ef.name[0] === '_sections_overlap_check')
+          if (overlapError && overlapError.errors?.length > 0) {
+            message.warning(overlapError.errors[0], 3)
+          } else {
+            message.warning(t('content.metadata.requiredCheck'), 3)
+          }
           return targetTab
         }
         return null
@@ -539,9 +628,18 @@ export default function MetadataModal({
       const customFieldValues = values.custom_field_values as Record<string, unknown> | undefined
       delete values.custom_field_values
       
-      // ✅ 分离 custom_tag_ids、genre_id、begin_time、end_time
-      // 注意：genre_id 需要传给后端用于校验，但不保存到元数据表
-      const { custom_tag_ids, begin_time, end_time, ...metadataValues } = values
+      // ✅ 分离 custom_tag_ids、genre_ids、begin_time、end_time
+      // 注意：genre_ids 需要传给后端用于校验，但不保存到元数据表
+      const { custom_tag_ids, genre_ids, begin_time, end_time, ...metadataValues } = values
+
+      // ✅ 清空语义保障：antd 清空 Select 等控件后表单值为 undefined，JSON 序列化会丢弃该 key，
+      // 后端 model_dump(exclude_unset=True) 会视为“未提交”而跳过更新，导致清空不生效；
+      // 仅对 DB 已返回（已回填）的字段将 undefined 转 null，使“清空”语义生效；
+      // 未回填的字段（加载失败或未来新增字段）保持“省略 = 不变更”，避免误清空
+      const loadedData = (metadata.data ?? {}) as Record<string, unknown>
+      for (const key of Object.keys(metadataValues)) {
+        if (metadataValues[key] === undefined && key in loadedData) metadataValues[key] = null
+      }
       
       // 调试日志
       if (kind === 'series') {
@@ -549,18 +647,48 @@ export default function MetadataModal({
         console.log('[MetadataModal] metadataValues.update_childs:', metadataValues.update_childs)
       }
 
+      // 敏感词预校验：提交前检查所有文本数据（含 i18n、自定义字段、元数据）
+      const ok = await checkSensitive(values as Record<string, unknown>)
+      if (!ok) return
+
       // ✅ 先保存自定义字段和i18n，再保存元数据（触发sync时需要最新的DB数据）
-      // 更新主表的 genre_id、custom_tag_ids、begin_time、end_time
+      // 更新主表的 genre_ids、custom_tag_ids、begin_time、end_time
       const contentUpdate: Record<string, unknown> = {
-        genre_id: (values as Record<string, unknown>).genre_id as number | undefined,
-        custom_tag_ids: (custom_tag_ids as number[] | undefined)?.length ? custom_tag_ids as number[] : undefined,
+        genre_ids: genre_ids as number[] | undefined,
+        // ✅ 原样透传：清空后为 []（触发后端删除全部标签关联）；有值为数组（幂等回写）；
+        // 未回填时为 undefined/null（序列化省略或后端跳过 = 不变更），避免加载失败时误清空
+        custom_tag_ids: custom_tag_ids as number[] | null | undefined,
       }
       // ✅ Schedule 类型：begin_time / end_time 写入主表
       if (kind === 'schedule') {
         contentUpdate.begin_time = begin_time && dayjs.isDayjs(begin_time) ? begin_time.toISOString() : undefined
         contentUpdate.end_time = end_time && dayjs.isDayjs(end_time) ? end_time.toISOString() : undefined
       }
-      await updateContent(contentId, contentUpdate)
+
+      // 仅当主表字段（栏目/自定义标签/节目单起止时间）相对加载时值有实际变化才调用 updateContent，
+      // 避免仅修改元数据/自定义字段/多语言时产生多余的 CONTENT_EDIT 日志（bug 32185）
+      const initial = initialMainRef.current
+      const sameIds = (a: unknown, b: number[] | null): boolean => {
+        const arr = (a as number[] | null | undefined) ?? null
+        if (arr === null && b === null) return true
+        if (!arr || !b || arr.length !== b.length) return false
+        return arr.every((v, i) => v === b[i])
+      }
+      let mainChanged =
+        !sameIds(contentUpdate.genre_ids, initial.genre_ids) ||
+        !sameIds(contentUpdate.custom_tag_ids, initial.custom_tag_ids)
+      if (kind === 'schedule') {
+        const sameTime = (a: unknown, b: string | null): boolean => ((a as string | undefined) ?? null) === b
+        mainChanged =
+          mainChanged ||
+          !sameTime(contentUpdate.begin_time, initial.begin_time) ||
+          !sameTime(contentUpdate.end_time, initial.end_time)
+      }
+      if (mainChanged) {
+        // 弹窗链路跳过 updateContent 的 Metadata 流程补写（题材/标签为中间步骤，
+        // 此时元数据尚未保存会写入 Pending 记录），最终由 create/updateXxxMetadata 统一记一条
+        await updateContent(contentId, contentUpdate, true)
+      }
 
       // 保存 i18n 数据（按语言分别保存，默认语言只保存 cf_ 自定义字段，其余已在主表保存）
       if (i18nData && contentId) {
@@ -570,6 +698,13 @@ export default function MetadataModal({
             if (lang === defaultLanguage && !fieldName.startsWith('cf_')) continue
             if (fieldValue === undefined || fieldValue === null || fieldValue === '') {
               payloadFields[fieldName] = null
+            } else if (fieldName.startsWith('cf_')) {
+              const field = customFields.find(f => f.field_code === fieldName)
+              if (field) {
+                payloadFields[fieldName] = formatApiValue(field.field_type, fieldValue)
+              } else {
+                payloadFields[fieldName] = String(fieldValue)
+              }
             } else if (Array.isArray(fieldValue)) {
               payloadFields[fieldName] = fieldValue.join(',')
             } else {
@@ -590,7 +725,7 @@ export default function MetadataModal({
             if (!field) return null
             let strValue: string | null = null
             if (value !== undefined && value !== null && value !== '') {
-              strValue = Array.isArray(value) ? value.join(',') : String(value)
+              strValue = formatApiValue(field.field_type, value)
             }
             return { custom_field_id: field.id, value: strValue }
           })
@@ -643,7 +778,7 @@ export default function MetadataModal({
     } catch (err: unknown) {
       if (isHandledError(err)) return
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      message.error(detail ?? '保存失败', 5)
+      message.error(detail ?? t('common.msg.saveFailed'), 5)
     } finally {
       setSaving(false)
     }
@@ -722,7 +857,7 @@ export default function MetadataModal({
                     </>
                   )}
                   {kind === 'channel' && <ChannelMainForm contentName={contentName} contentType={contentType} genreOpts={genreOpts} customTagOpts={customTagOpts} dictOpts={dictOpts} />}
-                  {kind === 'schedule' && <ScheduleMainForm contentName={contentName} contentType={contentType} genreOpts={genreOpts} tagOpts={tagOpts} customTagOpts={customTagOpts} typeOpts={typeOpts} dictOpts={dictOpts} packageOpts={packageOpts} />}
+                  {kind === 'schedule' && <ScheduleMainForm contentName={contentName} contentType={contentType} genreOpts={genreOpts} tagOpts={tagOpts} customTagOpts={customTagOpts} typeOpts={typeOpts} dictOpts={dictOpts} packageOpts={packageOpts} isPublished={isPublished} />}
                 </>
               ),
             },
@@ -732,7 +867,7 @@ export default function MetadataModal({
               forceRender: true,
               children: (
                 <>
-                  <CustomFieldsTab customFields={customFields} defaultLanguage={defaultLanguage} readOnly={readOnly} />
+                  <CustomFieldsTab customFields={customFields} defaultLanguage={defaultLanguage} readOnly={readOnly} dictOpts={dictOpts} />
                   {kind === 'series' && !readOnly && (
                     <div style={{ marginTop: 16 }}>
                       <Space>
@@ -750,7 +885,7 @@ export default function MetadataModal({
               forceRender: true,
               children: (
                 <>
-                  <MultiLanguagesTab kind={kind} customFields={customFields} genres={genres} tags={tags} dictOpts={dictOpts} currentLanguage={currentLanguage} onLanguageChange={setCurrentLanguage} readOnly={readOnly} defaultLanguage={defaultLanguage} />
+                  <MultiLanguagesTab customFields={customFields} genres={genres} tags={tags} dictOpts={dictOpts} currentLanguage={currentLanguage} onLanguageChange={setCurrentLanguage} readOnly={readOnly} defaultLanguage={defaultLanguage} contentType={contentType} />
                   {kind === 'series' && !readOnly && (
                     <div style={{ marginTop: 16 }}>
                       <Space>
@@ -795,15 +930,17 @@ interface MainFormProps {
   typeOpts: { value: number; label: string }[]
   dictOpts: (code: string) => DictOption[]
   packageOpts?: { value: number; label: string }[]
+  isPublished?: boolean  // ★ 发布状态（用于 Schedule CUTVEnable 校验）
 }
 
 function ProgramMainForm({ contentName, contentType, genreOpts, tagOpts, customTagOpts, typeOpts, dictOpts }: MainFormProps) {
-  const { t } = useI18n()
+  const { t, language } = useI18n()
+  const formRules = useFormRules()
   return (
     <Row gutter={16}>
       {/* 第 1 列 */}
       <Col span={8}>
-        <Form.Item name="name" label={t('content.metadata.name')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+        <Form.Item name="name" label={t('content.metadata.name')} rules={[{ required: true, message: inputRequiredMsg(t('content.metadata.name'), language) }, formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
           <TrimInput />
         </Form.Item>
       </Col>
@@ -815,12 +952,12 @@ function ProgramMainForm({ contentName, contentType, genreOpts, tagOpts, customT
       </Col>
 
       <Col span={8}>
-        <Form.Item name="type_id" label={t('content.metadata.type')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+        <Form.Item name="type_id" label={t('content.metadata.type')} rules={[{ required: true, message: selectRequiredMsg(t('content.metadata.type'), language) }]}>
           <Select showSearch optionFilterProp="label" allowClear placeholder="Please select" options={typeOpts} />
         </Form.Item>
       </Col>
       <Col span={8}>
-        <Form.Item name="vod_type" label={t('content.metadata.vodType')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+        <Form.Item name="vod_type" label={t('content.metadata.vodType')} rules={[{ required: true, message: selectRequiredMsg(t('content.metadata.vodType'), language) }]}>
           <Select showSearch optionFilterProp="label" mode="multiple" allowClear placeholder="Please select" options={dictOpts('VodType')} />
         </Form.Item>
       </Col>
@@ -831,12 +968,12 @@ function ProgramMainForm({ contentName, contentType, genreOpts, tagOpts, customT
       </Col>
 
       <Col span={8}>
-        <Form.Item name="original_name" label={t('content.metadata.originalName')}>
+        <Form.Item name="original_name" label={t('content.metadata.originalName')} rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
           <TrimInput />
         </Form.Item>
       </Col>
       <Col span={8}>
-        <Form.Item name="original_country" label={t('content.metadata.originalCountry')}>
+        <Form.Item name="original_country" label={t('content.metadata.originalCountry')} rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
           <TrimInput />
         </Form.Item>
       </Col>
@@ -847,24 +984,24 @@ function ProgramMainForm({ contentName, contentType, genreOpts, tagOpts, customT
       </Col>
 
       <Col span={8}>
-        <Form.Item name="genre_id" label={t('content.metadata.genre')} rules={[{ required: true, message: t('content.metadata.required') }]}>
-          <Select allowClear placeholder="Please select" showSearch optionFilterProp="label" options={genreOpts} />
+        <Form.Item name="genre_ids" label={t('content.metadata.genre')} rules={[{ required: true, message: selectRequiredMsg(t('content.metadata.genre'), language) }]}>
+          <Select mode="multiple" allowClear placeholder="Please select" showSearch optionFilterProp="label" options={genreOpts} />
         </Form.Item>
       </Col>
       <Col span={8}>
-        <Form.Item name="sort_name" label={t('content.metadata.sortName')}>
+        <Form.Item name="sort_name" label={t('content.metadata.sortName')} rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
           <TrimInput />
         </Form.Item>
       </Col>
       <Col span={8}>
-        <Form.Item name="short_title" label={t('content.metadata.shortTitle')}>
+        <Form.Item name="short_title" label={t('content.metadata.shortTitle')} rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
           <TrimInput />
         </Form.Item>
       </Col>
 
       <Col span={8}>
         <Form.Item name="release_year" label={t('content.metadata.releaseYear')}>
-          <DatePicker picker="year" style={{ width: '100%' }} placeholder="请选择年份" />
+          <DatePicker picker="year" style={{ width: '100%' }} placeholder={t('content.metadata.selectYear')} />
         </Form.Item>
       </Col>
       <Col span={8}>
@@ -879,7 +1016,7 @@ function ProgramMainForm({ contentName, contentType, genreOpts, tagOpts, customT
       </Col>
 
       <Col span={8}>
-        <Form.Item name="rating_level" label={t('content.metadata.ratingLevel')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+        <Form.Item name="rating_level" label={t('content.metadata.ratingLevel')} rules={[{ required: true, message: selectRequiredMsg(t('content.metadata.ratingLevel'), language) }]}>
           <Select showSearch optionFilterProp="label" allowClear placeholder="Please select" options={dictOpts('RatingLevel')} />
         </Form.Item>
       </Col>
@@ -889,7 +1026,7 @@ function ProgramMainForm({ contentName, contentType, genreOpts, tagOpts, customT
         </Form.Item>
       </Col>
       <Col span={8}>
-        <Form.Item name="rating" label={t('content.metadata.rating')}>
+        <Form.Item name="rating" label={t('content.metadata.rating')} rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
           <TrimInput />
         </Form.Item>
       </Col>
@@ -905,23 +1042,18 @@ function ProgramMainForm({ contentName, contentType, genreOpts, tagOpts, customT
         </Form.Item>
       </Col>
       <Col span={8}>
-        <Form.Item name="studio" label={t('content.metadata.studio')}>
+        <Form.Item name="studio" label={t('content.metadata.studio')} rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
           <TrimInput />
         </Form.Item>
       </Col>
 
       <Col span={8}>
-        <Form.Item name="cdr_id" label={t('content.metadata.cdrId')} rules={[{ required: true, message: t('content.metadata.required') }]}>
-          <TrimInput />
-        </Form.Item>
-      </Col>
-      <Col span={8}>
-        <Form.Item name="begin_duration" label={t('content.metadata.beginDuration')}>
+        <Form.Item name="begin_duration" label={t('content.metadata.beginDuration')} rules={[formRules.numberRange(0, INT32_MAX)]}>
           <InputNumber style={{ width: '100%' }} min={0} />
         </Form.Item>
       </Col>
       <Col span={8}>
-        <Form.Item name="end_duration" label={t('content.metadata.endDuration')}>
+        <Form.Item name="end_duration" label={t('content.metadata.endDuration')} rules={[formRules.numberRange(0, INT32_MAX)]}>
           <InputNumber style={{ width: '100%' }} min={0} />
         </Form.Item>
       </Col>
@@ -951,14 +1083,14 @@ function ProgramMainForm({ contentName, contentType, genreOpts, tagOpts, customT
       </Col>
 
       <Col span={8}>
-        <Form.Item name="metalayout" label={t('content.metadata.metalayout')} initialValue="0" rules={[{ required: true, message: t('content.metadata.required') }]}>
+        <Form.Item name="metalayout" label={t('content.metadata.metalayout')} initialValue="0" rules={[{ required: true, message: selectRequiredMsg(t('content.metadata.metalayout'), language) }]}>
           <Select showSearch optionFilterProp="label" allowClear placeholder="Please select" options={dictOpts('Metalayout')} />
         </Form.Item>
       </Col>
 
       {/* Description */}
       <Col span={8}>
-        <Form.Item name="description" label={t('content.metadata.description')}>
+        <Form.Item name="description" label={t('content.metadata.description')} rules={[formRules.maxLength(FORM_MAX_LENGTH.TEXT_AREA)]}>
           <TrimInput.TextArea rows={3} />
         </Form.Item>
       </Col>
@@ -972,16 +1104,16 @@ function ProgramMainForm({ contentName, contentType, genreOpts, tagOpts, customT
 }
 
 /* ═══════════════════════════════════════════════════════════ */
-/*  Series Main 标签页 (SERIES / SEASON)                       */
+/*  Series Main 标签页 (SERIES / SEASON_SERIES / SEASON)                       */
 /* ═══════════════════════════════════════════════════════════ */
 
 function SeriesMainForm({ contentName, contentType, genreOpts, tagOpts, customTagOpts, typeOpts, dictOpts }: MainFormProps) {
-  const { t } = useI18n()
+  const { t, language } = useI18n()
   const formRules = useFormRules()
   return (
     <Row gutter={16}>
       <Col span={8}>
-        <Form.Item name="name" label={t('content.metadata.name')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+        <Form.Item name="name" label={t('content.metadata.name')} rules={[{ required: true, message: inputRequiredMsg(t('content.metadata.name'), language) }, formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
           <TrimInput />
         </Form.Item>
       </Col>
@@ -993,12 +1125,12 @@ function SeriesMainForm({ contentName, contentType, genreOpts, tagOpts, customTa
       </Col>
 
       <Col span={8}>
-        <Form.Item name="type_id" label={t('content.metadata.type')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+        <Form.Item name="type_id" label={t('content.metadata.type')} rules={[{ required: true, message: selectRequiredMsg(t('content.metadata.type'), language) }]}>
           <Select showSearch optionFilterProp="label" allowClear placeholder="Please select" options={typeOpts} />
         </Form.Item>
       </Col>
       <Col span={8}>
-        <Form.Item name="vod_type" label={t('content.metadata.vodType')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+        <Form.Item name="vod_type" label={t('content.metadata.vodType')} rules={[{ required: true, message: selectRequiredMsg(t('content.metadata.vodType'), language) }]}>
           <Select showSearch optionFilterProp="label" mode="multiple" allowClear placeholder="Please select" options={dictOpts('VodType')} />
         </Form.Item>
       </Col>
@@ -1009,12 +1141,12 @@ function SeriesMainForm({ contentName, contentType, genreOpts, tagOpts, customTa
       </Col>
 
       <Col span={8}>
-        <Form.Item name="original_name" label={t('content.metadata.originalName')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+        <Form.Item name="original_name" label={t('content.metadata.originalName')} rules={[{ required: true, message: inputRequiredMsg(t('content.metadata.originalName'), language) }, formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
           <TrimInput />
         </Form.Item>
       </Col>
       <Col span={8}>
-        <Form.Item name="original_country" label={t('content.metadata.originalCountry')}>
+        <Form.Item name="original_country" label={t('content.metadata.originalCountry')} rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
           <TrimInput />
         </Form.Item>
       </Col>
@@ -1025,24 +1157,24 @@ function SeriesMainForm({ contentName, contentType, genreOpts, tagOpts, customTa
       </Col>
 
       <Col span={8}>
-        <Form.Item name="genre_id" label={t('content.metadata.genre')} rules={[{ required: true, message: t('content.metadata.required') }]}>
-          <Select allowClear placeholder="Please select" showSearch optionFilterProp="label" options={genreOpts} />
+        <Form.Item name="genre_ids" label={t('content.metadata.genre')} rules={[{ required: true, message: selectRequiredMsg(t('content.metadata.genre'), language) }]}>
+          <Select mode="multiple" allowClear placeholder="Please select" showSearch optionFilterProp="label" options={genreOpts} />
         </Form.Item>
       </Col>
       <Col span={8}>
-        <Form.Item name="sort_name" label={t('content.metadata.sortName')}>
+        <Form.Item name="sort_name" label={t('content.metadata.sortName')} rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
           <TrimInput />
         </Form.Item>
       </Col>
       <Col span={8}>
-        <Form.Item name="short_title" label={t('content.metadata.shortTitle')}>
+        <Form.Item name="short_title" label={t('content.metadata.shortTitle')} rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
           <TrimInput />
         </Form.Item>
       </Col>
 
       <Col span={8}>
         <Form.Item name="release_year" label={t('content.metadata.releaseYear')}>
-          <DatePicker picker="year" style={{ width: '100%' }} placeholder="请选择年份" />
+          <DatePicker picker="year" style={{ width: '100%' }} placeholder={t('content.metadata.selectYear')} />
         </Form.Item>
       </Col>
       <Col span={8}>
@@ -1057,7 +1189,7 @@ function SeriesMainForm({ contentName, contentType, genreOpts, tagOpts, customTa
       </Col>
 
       <Col span={8}>
-        <Form.Item name="rating_level" label={t('content.metadata.ratingLevel')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+        <Form.Item name="rating_level" label={t('content.metadata.ratingLevel')} rules={[{ required: true, message: selectRequiredMsg(t('content.metadata.ratingLevel'), language) }]}>
           <Select showSearch optionFilterProp="label" allowClear placeholder="Please select" options={dictOpts('RatingLevel')} />
         </Form.Item>
       </Col>
@@ -1067,7 +1199,7 @@ function SeriesMainForm({ contentName, contentType, genreOpts, tagOpts, customTa
         </Form.Item>
       </Col>
       <Col span={8}>
-        <Form.Item name="rating" label={t('content.metadata.rating')}>
+        <Form.Item name="rating" label={t('content.metadata.rating')} rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
           <TrimInput />
         </Form.Item>
       </Col>
@@ -1083,24 +1215,8 @@ function SeriesMainForm({ contentName, contentType, genreOpts, tagOpts, customTa
         </Form.Item>
       </Col>
       <Col span={8}>
-        <Form.Item name="studio" label={t('content.metadata.studio')}>
+        <Form.Item name="studio" label={t('content.metadata.studio')} rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
           <TrimInput />
-        </Form.Item>
-      </Col>
-
-      <Col span={8}>
-        <Form.Item name="cdr_id" label={t('content.metadata.cdrId')} rules={[{ required: true, message: t('content.metadata.required') }]}>
-          <TrimInput />
-        </Form.Item>
-      </Col>
-      <Col span={8}>
-        <Form.Item name="begin_duration" label={t('content.metadata.beginDuration')}>
-          <InputNumber style={{ width: '100%' }} min={0} />
-        </Form.Item>
-      </Col>
-      <Col span={8}>
-        <Form.Item name="end_duration" label={t('content.metadata.endDuration')}>
-          <InputNumber style={{ width: '100%' }} min={0} />
         </Form.Item>
       </Col>
 
@@ -1128,7 +1244,13 @@ function SeriesMainForm({ contentName, contentType, genreOpts, tagOpts, customTa
         </Form.Item>
       </Col>
 
-      <Col span={16}>
+      <Col span={8}>
+        <Form.Item name="metalayout" label={t('content.metadata.metalayout')} initialValue="0" rules={[{ required: true, message: selectRequiredMsg(t('content.metadata.metalayout'), language) }]}>
+          <Select showSearch optionFilterProp="label" allowClear placeholder="Please select" options={dictOpts('Metalayout')} />
+        </Form.Item>
+      </Col>
+
+      <Col span={8}>
         <Form.Item name="description" label={t('content.metadata.description')} rules={[formRules.maxLength(FORM_MAX_LENGTH.TEXT_AREA)]}>
           <TrimInput.TextArea rows={3} />
         </Form.Item>
@@ -1150,11 +1272,12 @@ interface ChannelFormProps {
 }
 
 function ChannelMainForm({ contentName, contentType, genreOpts, customTagOpts, dictOpts }: ChannelFormProps) {
-  const { t } = useI18n()
+  const { t, language } = useI18n()
+  const formRules = useFormRules()
   return (
     <Row gutter={16}>
       <Col span={8}>
-        <Form.Item name="name" label={t('content.metadata.channelName')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+        <Form.Item name="name" label={t('content.metadata.channelName')} rules={[{ required: true, message: inputRequiredMsg(t('content.metadata.channelName'), language) }, formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
           <TrimInput />
         </Form.Item>
       </Col>
@@ -1166,8 +1289,8 @@ function ChannelMainForm({ contentName, contentType, genreOpts, customTagOpts, d
       </Col>
 
       <Col span={8}>
-        <Form.Item name="genre_id" label={t('content.metadata.genre')} rules={[{ required: true, message: t('content.metadata.required') }]}>
-          <Select allowClear placeholder="Please select" showSearch optionFilterProp="label" options={genreOpts} />
+        <Form.Item name="genre_ids" label={t('content.metadata.genre')} rules={[{ required: true, message: selectRequiredMsg(t('content.metadata.genre'), language) }]}>
+          <Select mode="multiple" allowClear placeholder="Please select" showSearch optionFilterProp="label" options={genreOpts} />
         </Form.Item>
       </Col>
       <Col span={8}>
@@ -1176,18 +1299,18 @@ function ChannelMainForm({ contentName, contentType, genreOpts, customTagOpts, d
         </Form.Item>
       </Col>
       <Col span={8}>
-        <Form.Item name="channel_number" label={t('content.metadata.channelNumber')}>
+        <Form.Item name="channel_number" label={t('content.metadata.channelNumber')} rules={[formRules.numberRange(0, INT32_MAX)]}>
           <InputNumber style={{ width: '100%' }} min={0} />
         </Form.Item>
       </Col>
 
       <Col span={16}>
-        <Form.Item name="description" label={t('content.metadata.description')}>
+        <Form.Item name="description" label={t('content.metadata.description')} rules={[formRules.maxLength(FORM_MAX_LENGTH.TEXT_AREA)]}>
           <TrimInput.TextArea rows={3} />
         </Form.Item>
       </Col>
       <Col span={8}>
-        <Form.Item name="channel_type" label={t('content.metadata.channelType')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+        <Form.Item name="channel_type" label={t('content.metadata.channelType')} rules={[{ required: true, message: selectRequiredMsg(t('content.metadata.channelType'), language) }]}>
           <Select showSearch optionFilterProp="label" allowClear placeholder="Please select" options={dictOpts('Channel_type')} />
         </Form.Item>
       </Col>
@@ -1198,7 +1321,7 @@ function ChannelMainForm({ contentName, contentType, genreOpts, customTagOpts, d
         </Form.Item>
       </Col>
       <Col span={8}>
-        <Form.Item name="rating_level" label={t('content.metadata.ratingLevel')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+        <Form.Item name="rating_level" label={t('content.metadata.ratingLevel')} rules={[{ required: true, message: selectRequiredMsg(t('content.metadata.ratingLevel'), language) }]}>
           <Select showSearch optionFilterProp="label" allowClear placeholder="Please select" options={dictOpts('RatingLevel')} />
         </Form.Item>
       </Col>
@@ -1247,8 +1370,9 @@ function ChannelMainForm({ contentName, contentType, genreOpts, customTagOpts, d
 /*  Schedule Main 标签页 (SCHEDULE)                            */
 /* ═══════════════════════════════════════════════════════════ */
 
-function ScheduleMainForm({ contentName, contentType, genreOpts, tagOpts, customTagOpts, typeOpts, dictOpts, packageOpts }: MainFormProps) {
-  const { t } = useI18n()
+function ScheduleMainForm({ contentName, contentType, genreOpts, customTagOpts, dictOpts, packageOpts }: MainFormProps) {
+  const { t, language } = useI18n()
+  const formRules = useFormRules()
 
   /* ── 条件显示字段监听 ─────────────────────────────────────────────────── */
   const cutvEnable = Form.useWatch('cutv_enable') ?? false
@@ -1269,19 +1393,21 @@ function ScheduleMainForm({ contentName, contentType, genreOpts, tagOpts, custom
       setSeriesSearchOptions([])
       return
     }
-    void getContents({ page: 1, page_size: 20, title: keyword.trim(), content_types: ['SERIES'] })
+    // 按 series_type 锁定类型：1=普通连续剧 SERIES，2=分季单季 SEASON_SERIES，避免选错层级
+    const seriesTypes = seriesType === 2 ? ['SEASON_SERIES'] : ['SERIES']
+    void getContents({ page: 1, page_size: 1000, title: keyword.trim(), content_types: seriesTypes })
       .then((res) => {
         setSeriesSearchOptions(res.items.map((item) => ({ value: item.title, label: `${item.title} (ID:${item.id})`, id: item.id })))
       })
       .catch(() => setSeriesSearchOptions([]))
-  }, [])
+  }, [seriesType])
 
   const searchShow = useCallback((keyword: string) => {
     if (!keyword || keyword.trim().length < 1) {
       setShowSearchOptions([])
       return
     }
-    void getContents({ page: 1, page_size: 20, title: keyword.trim(), content_types: ['SEASON'] })
+    void getContents({ page: 1, page_size: 1000, title: keyword.trim(), content_types: ['SEASON'] })
       .then((res) => {
         setShowSearchOptions(res.items.map((item) => ({ value: item.title, label: `${item.title} (ID:${item.id})`, id: item.id })))
       })
@@ -1292,7 +1418,7 @@ function ScheduleMainForm({ contentName, contentType, genreOpts, tagOpts, custom
     <Row gutter={16}>
       {/* 第 1 行：节目名称 / 内容名称（只读）/ 内容类型（只读） */}
       <Col span={8}>
-        <Form.Item name="name" label={t('content.metadata.programName')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+        <Form.Item name="name" label={t('content.metadata.programName')} rules={[{ required: true, message: inputRequiredMsg(t('content.metadata.programName'), language) }, formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
           <TrimInput />
         </Form.Item>
       </Col>
@@ -1305,8 +1431,8 @@ function ScheduleMainForm({ contentName, contentType, genreOpts, tagOpts, custom
 
       {/* 第 2 行：题材 / 自定义标签 / 状态 */}
       <Col span={8}>
-        <Form.Item name="genre_id" label={t('content.metadata.genre')} rules={[{ required: true, message: t('content.metadata.required') }]}>
-          <Select allowClear placeholder="Please select" showSearch optionFilterProp="label" options={genreOpts} />
+        <Form.Item name="genre_ids" label={t('content.metadata.genre')} rules={[{ required: true, message: selectRequiredMsg(t('content.metadata.genre'), language) }]}>
+          <Select mode="multiple" allowClear placeholder="Please select" showSearch optionFilterProp="label" options={genreOpts} />
         </Form.Item>
       </Col>
       <Col span={8}>
@@ -1322,29 +1448,35 @@ function ScheduleMainForm({ contentName, contentType, genreOpts, tagOpts, custom
 
       {/* 第 3 行：开始时间 / 结束时间 */}
       <Col span={8}>
-        <Form.Item name="begin_time" label={t('content.metadata.beginTime')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+        <Form.Item name="begin_time" label={t('content.metadata.beginTime')} rules={[{ required: true, message: selectRequiredMsg(t('content.metadata.beginTime'), language) }]}>
           <DatePicker showTime style={{ width: '100%' }} format="YYYY-MM-DD HH:mm:ss" />
         </Form.Item>
       </Col>
       <Col span={8}>
-        <Form.Item name="end_time" label={t('content.metadata.endTime')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+        <Form.Item
+          name="end_time"
+          label={t('content.metadata.endTime')}
+          dependencies={['begin_time']}
+          rules={[
+            { required: true, message: selectRequiredMsg(t('content.metadata.endTime'), language) },
+            ({ getFieldValue }) => ({
+              validator(_, value) {
+                const beginTime = getFieldValue('begin_time')
+                if (value != null && beginTime != null && value.isBefore(beginTime)) {
+                  return Promise.reject(new Error(t('content.metadata.sectionsInfo.endMustGreaterStart')))
+                }
+                return Promise.resolve()
+              },
+            }),
+          ]}
+        >
           <DatePicker showTime style={{ width: '100%' }} format="YYYY-MM-DD HH:mm:ss" />
         </Form.Item>
       </Col>
 
-      {/* 第 4 行：类型 / 标签 / 分级 */}
+      {/* 第 4 行：分级 */}
       <Col span={8}>
-        <Form.Item name="type_id" label={t('content.metadata.type')}>
-          <Select showSearch optionFilterProp="label" allowClear placeholder="Please select" options={typeOpts} />
-        </Form.Item>
-      </Col>
-      <Col span={8}>
-        <Form.Item name="tag_ids" label={t('content.metadata.tags')}>
-          <Select showSearch optionFilterProp="label" mode="multiple" allowClear placeholder="Please select" options={tagOpts} />
-        </Form.Item>
-      </Col>
-      <Col span={8}>
-        <Form.Item name="rating_level" label={t('content.metadata.ratingLevel')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+        <Form.Item name="rating_level" label={t('content.metadata.ratingLevel')} rules={[{ required: true, message: selectRequiredMsg(t('content.metadata.ratingLevel'), language) }]}>
           <Select showSearch optionFilterProp="label" allowClear placeholder="Please select" options={dictOpts('RatingLevel')} />
         </Form.Item>
       </Col>
@@ -1366,30 +1498,14 @@ function ScheduleMainForm({ contentName, contentType, genreOpts, tagOpts, custom
         </Form.Item>
       </Col>
 
-      {/* 第 6 行：制片公司 / CDR ID / 评分 */}
-      <Col span={8}>
-        <Form.Item name="studio" label={t('content.metadata.studio')}>
-          <TrimInput />
-        </Form.Item>
-      </Col>
-      <Col span={8}>
-        <Form.Item
-          name="cdr_id"
-          label={t('content.metadata.cdrId')}
-          rules={ppvEnable ? [{ required: true, message: t('content.metadata.required') }] : []}
-        >
-          <TrimInput />
-        </Form.Item>
-      </Col>
-
-      {/* 第 7 行：播出类型 / CUTV / TSTV / TSTV 模式 / NPVR */}
+      {/* 第 6 行：播出类型 / NPVR / TSTV / TSTV 模式 */}
       <Col span={8}>
         <Form.Item name="broadcast_type" label={t('content.metadata.broadcastType')}>
           <Select showSearch optionFilterProp="label" allowClear placeholder="Please select" options={dictOpts('BroadcastType')} />
         </Form.Item>
       </Col>
       <Col span={8}>
-        <Form.Item name="cutv_enable" label={t('content.metadata.cutvEnable')} valuePropName="checked" initialValue={false}>
+        <Form.Item name="npvr_enable" label={t('content.metadata.npvrEnable')} valuePropName="checked" initialValue={true}>
           <Switch checkedChildren={t('content.metadata.yes')} unCheckedChildren={t('content.metadata.no')} />
         </Form.Item>
       </Col>
@@ -1405,16 +1521,11 @@ function ScheduleMainForm({ contentName, contentType, genreOpts, tagOpts, custom
           </Form.Item>
         </Col>
       )}
-      <Col span={8}>
-        <Form.Item name="npvr_enable" label={t('content.metadata.npvrEnable')} valuePropName="checked" initialValue={true}>
-          <Switch checkedChildren={t('content.metadata.yes')} unCheckedChildren={t('content.metadata.no')} />
-        </Form.Item>
-      </Col>
 
       {/* cutv_enable 勾选时显示 program_id */}
       {cutvEnable && (
         <Col span={8}>
-          <Form.Item name="program_id" label={t('content.metadata.programId')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+          <Form.Item name="program_id" label={t('content.metadata.programId')} rules={[{ required: true, message: inputRequiredMsg(t('content.metadata.programId'), language) }, formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
             <TrimInput />
           </Form.Item>
         </Col>
@@ -1429,12 +1540,12 @@ function ScheduleMainForm({ contentName, contentType, genreOpts, tagOpts, custom
       {ppvEnable && (
         <>
           <Col span={8}>
-            <Form.Item name="pre_buffer" label={t('content.metadata.preBuffer')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+            <Form.Item name="pre_buffer" label={t('content.metadata.preBuffer')} initialValue={0} rules={[{ required: true, message: inputRequiredMsg(t('content.metadata.preBuffer'), language) }]}>
               <InputNumber style={{ width: '100%' }} min={0} />
             </Form.Item>
           </Col>
           <Col span={8}>
-            <Form.Item name="post_buffer" label={t('content.metadata.postBuffer')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+            <Form.Item name="post_buffer" label={t('content.metadata.postBuffer')} initialValue={0} rules={[{ required: true, message: inputRequiredMsg(t('content.metadata.postBuffer'), language) }]}>
               <InputNumber style={{ width: '100%' }} min={0} />
             </Form.Item>
           </Col>
@@ -1443,35 +1554,28 @@ function ScheduleMainForm({ contentName, contentType, genreOpts, tagOpts, custom
       {ppvEnable && (
         <>
           <Col span={8}>
-            <Form.Item name="package_ids" label={t('content.metadata.packageId')} rules={[{ required: true, message: t('content.metadata.required') }]}>
-              <Select showSearch optionFilterProp="label" mode="multiple" allowClear placeholder="Please select" options={packageOpts} />
+            <Form.Item name="package_ids" label={t('content.metadata.packageId')} rules={[{ required: true, message: selectRequiredMsg(t('content.metadata.packageId'), language) }]}>
+              <Select showSearch optionFilterProp="label" mode="multiple" allowClear maxTagCount="responsive" placeholder="Please select" options={packageOpts} />
             </Form.Item>
           </Col>
           <Col span={8}>
-            <Form.Item name="purchase_begin_time" label={t('content.metadata.purchaseBeginTime')}>
+            <Form.Item name="purchase_begin_time" label={t('content.metadata.purchaseBeginTime')} initialValue={180}>
               <InputNumber style={{ width: '100%' }} />
             </Form.Item>
           </Col>
           <Col span={8}>
-            <Form.Item name="purchase_end_time" label={t('content.metadata.purchaseEndTime')}>
+            <Form.Item name="purchase_end_time" label={t('content.metadata.purchaseEndTime')} initialValue={-1}>
               <InputNumber style={{ width: '100%' }} />
             </Form.Item>
           </Col>
         </>
       )}
 
-      {/* 第 9 行：Series 类型 */}
-      <Col span={8}>
-        <Form.Item name="series_type" label={t('content.metadata.seriesType')} rules={[{ required: true, message: t('content.metadata.required') }]}>
-          <Select showSearch optionFilterProp="label" allowClear placeholder="Please select" options={dictOpts('SeriesType').map((o) => ({ label: o.label, value: Number(o.value) }))} />
-        </Form.Item>
-      </Col>
-
-      {/* series_type = 1 或 2 时显示 Series 字段 */}
+            {/* series_type = 1 或 2 时显示 Series 字段 */}
       {(seriesType === 1 || seriesType === 2) && (
         <>
           <Col span={8}>
-            <Form.Item name="series_name" label={t('content.metadata.seriesName')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+            <Form.Item name="series_name" label={t('content.metadata.seriesName')} rules={[{ required: true, message: inputRequiredMsg(t('content.metadata.seriesName'), language) }]}>
               <AutoComplete
                 options={seriesSearchOptions}
                 onSearch={(val) => searchSeries(val)}
@@ -1486,17 +1590,17 @@ function ScheduleMainForm({ contentName, contentType, genreOpts, tagOpts, custom
                   }
                   form.setFieldsValue({ series_id: '' })
                 }}
-                placeholder="请输入或搜索"
+                placeholder={t('common.placeholder.enterOrSearch')}
               />
             </Form.Item>
           </Col>
           <Col span={8}>
-            <Form.Item name="series_id" label={t('content.metadata.seriesId')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+            <Form.Item name="series_id" label={t('content.metadata.seriesId')} rules={[{ required: true, message: inputRequiredMsg(t('content.metadata.seriesId'), language) }, formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
               <TrimInput />
             </Form.Item>
           </Col>
           <Col span={8}>
-            <Form.Item name="sequence" label={t('content.metadata.sequence')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+            <Form.Item name="sequence" label={t('content.metadata.sequence')} rules={[{ required: true, message: inputRequiredMsg(t('content.metadata.sequence'), language) }]}>
               <InputNumber style={{ width: '100%' }} min={0} />
             </Form.Item>
           </Col>
@@ -1507,12 +1611,12 @@ function ScheduleMainForm({ contentName, contentType, genreOpts, tagOpts, custom
       {seriesType === 2 && (
         <>
           <Col span={8}>
-            <Form.Item name="series_ordinal" label={t('content.metadata.seriesOrdinal')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+            <Form.Item name="series_ordinal" label={t('content.metadata.seriesOrdinal')} rules={[{ required: true, message: inputRequiredMsg(t('content.metadata.seriesOrdinal'), language) }]}>
               <InputNumber style={{ width: '100%' }} min={0} />
             </Form.Item>
           </Col>
           <Col span={8}>
-            <Form.Item name="show_name" label={t('content.metadata.showName')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+            <Form.Item name="show_name" label={t('content.metadata.showName')} rules={[{ required: true, message: inputRequiredMsg(t('content.metadata.showName'), language) }]}>
               <AutoComplete
                 options={showSearchOptions}
                 onSearch={(val) => searchShow(val)}
@@ -1527,12 +1631,12 @@ function ScheduleMainForm({ contentName, contentType, genreOpts, tagOpts, custom
                   }
                   form.setFieldsValue({ show_id: '' })
                 }}
-                placeholder="请输入或搜索"
+                placeholder={t('common.placeholder.enterOrSearch')}
               />
             </Form.Item>
           </Col>
           <Col span={8}>
-            <Form.Item name="show_id" label={t('content.metadata.showId')} rules={[{ required: true, message: t('content.metadata.required') }]}>
+            <Form.Item name="show_id" label={t('content.metadata.showId')} rules={[{ required: true, message: inputRequiredMsg(t('content.metadata.showId'), language) }, formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
               <TrimInput />
             </Form.Item>
           </Col>
@@ -1541,7 +1645,7 @@ function ScheduleMainForm({ contentName, contentType, genreOpts, tagOpts, custom
 
       {/* 简介 */}
       <Col span={16}>
-        <Form.Item name="description" label={t('content.metadata.description')}>
+        <Form.Item name="description" label={t('content.metadata.description')} rules={[formRules.maxLength(FORM_MAX_LENGTH.TEXT_AREA)]}>
           <TrimInput.TextArea rows={3} />
         </Form.Item>
       </Col>
@@ -1560,62 +1664,134 @@ function ScheduleMainForm({ contentName, contentType, genreOpts, tagOpts, custom
 /*  SectionsInfo 动态字段编辑器                                */
 /* ═══════════════════════════════════════════════════════════ */
 
+interface SectionInfoItem {
+  type?: number
+  action?: number
+  tag?: string
+  start?: number
+  end?: number
+}
+
 function SectionsInfoEditor() {
   const { t } = useI18n()
+  const formRules = useFormRules()
+
+  const validateSectionsOverlap = (sections: SectionInfoItem[] | undefined): string | undefined => {
+    if (!sections || sections.length < 2) return undefined
+    const validSections = sections
+      .filter(s => s.start !== undefined && s.end !== undefined)
+      .map(s => ({ start: s.start!, end: s.end! }))
+      .sort((a, b) => a.start - b.start)
+    for (let i = 0; i < validSections.length - 1; i++) {
+      if (validSections[i].end > validSections[i + 1].start) {
+        return t('content.metadata.sectionsInfo.sectionsOverlap')
+      }
+    }
+    return undefined
+  }
+
   return (
-    <Form.List name="sections_info">
-      {(fields, { add, remove }) => (
-        <div>
-          <div style={{ marginBottom: 8, fontWeight: 600 }}>{t('content.metadata.sectionsInfo')}</div>
-          {fields.map(({ key, name, ...restField }) => (
-            <Row key={key} gutter={8}  style={{ marginBottom: 4 }}>
-              <Col span={4}>
-                <Form.Item {...restField} name={[name, 'type']} rules={[{ required: true, message: t('content.metadata.required') }]}>
-                  <Select showSearch optionFilterProp="label" placeholder={t('content.metadata.sectionsInfo.type')}
-                    options={[
-                      { value: 1, label: '1:intro' },
-                      { value: 2, label: '2:ad' },
-                      { value: 3, label: '3:chapter' },
+    <>
+      <Form.List name="sections_info">
+        {(fields, { add, remove }) => (
+          <div>
+            <div style={{ marginBottom: 8, fontWeight: 600 }}>{t('content.metadata.sectionsInfo')}</div>
+            {fields.map(({ key, name, ...restField }) => (
+              <Row key={key} gutter={8} style={{ marginBottom: 4 }}>
+                <Col span={4}>
+                  <Form.Item {...restField} name={[name, 'type']} rules={[{ required: true, message: t('content.metadata.required') }]}>
+                    <Select showSearch optionFilterProp="label" placeholder={t('content.metadata.sectionsInfo.type')}
+                      options={[
+                        { value: 1, label: '1:intro' },
+                        { value: 2, label: '2:ad' },
+                        { value: 3, label: '3:chapter' },
+                      ]}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={4}>
+                  <Form.Item {...restField} name={[name, 'action']} rules={[{ required: true, message: t('content.metadata.required') }]}>
+                    <Select showSearch optionFilterProp="label" placeholder={t('content.metadata.sectionsInfo.action')}
+                      options={[
+                        { value: 0, label: '0:no skip' },
+                        { value: 1, label: '1:skip' },
+                      ]}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={4}>
+                  <Form.Item {...restField} name={[name, 'tag']} rules={[{ required: true, message: t('content.metadata.required') }, formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
+                    <TrimInput placeholder={t('content.metadata.sectionsInfo.tag')} />
+                  </Form.Item>
+                </Col>
+                <Col span={4}>
+                  <Form.Item
+                    {...restField}
+                    name={[name, 'start']}
+                    rules={[{ required: true, message: t('content.metadata.required') }]}
+                  >
+                    <InputNumber 
+                      style={{ width: '100%' }} 
+                      placeholder={t('content.metadata.sectionsInfo.start')} 
+                      min={0}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={4}>
+                  <Form.Item
+                    {...restField}
+                    name={[name, 'end']}
+                    dependencies={[['sections_info', name, 'start']]}
+                    rules={[
+                      { required: true, message: t('content.metadata.required') },
+                      ({ getFieldValue }) => ({
+                        validator(_, value) {
+                          const start = getFieldValue(['sections_info', name, 'start'])
+                          if (value != null && start != null && value < start) {
+                            return Promise.reject(new Error(t('content.metadata.sectionsInfo.endMustGreaterStart')))
+                          }
+                          return Promise.resolve()
+                        },
+                      }),
                     ]}
-                  />
-                </Form.Item>
-              </Col>
-              <Col span={4}>
-                <Form.Item {...restField} name={[name, 'action']} rules={[{ required: true, message: t('content.metadata.required') }]}>
-                  <Select showSearch optionFilterProp="label" placeholder={t('content.metadata.sectionsInfo.action')}
-                    options={[
-                      { value: 0, label: '0:no skip' },
-                      { value: 1, label: '1:skip' },
-                    ]}
-                  />
-                </Form.Item>
-              </Col>
-              <Col span={4}>
-                <Form.Item {...restField} name={[name, 'tag']} rules={[{ required: true, message: t('content.metadata.required') }]}>
-                  <TrimInput placeholder={t('content.metadata.sectionsInfo.tag')} />
-                </Form.Item>
-              </Col>
-              <Col span={4}>
-                <Form.Item {...restField} name={[name, 'start']} rules={[{ required: true, message: t('content.metadata.required') }]}>
-                  <InputNumber style={{ width: '100%' }} placeholder={t('content.metadata.sectionsInfo.start')} min={0} />
-                </Form.Item>
-              </Col>
-              <Col span={4}>
-                <Form.Item {...restField} name={[name, 'end']} rules={[{ required: true, message: t('content.metadata.required') }]}>
-                  <InputNumber style={{ width: '100%' }} placeholder={t('content.metadata.sectionsInfo.end')} min={0} />
-                </Form.Item>
-              </Col>
-              <Col span={4}>
-                <Button type="text" danger icon={<DeleteOutlined />} onClick={() => remove(name)} />
-              </Col>
-            </Row>
-          ))}
-          <Button type="dashed" onClick={() => add()} icon={<PlusOutlined />} style={{ width: '100%' }}>
-            {t('content.metadata.sectionsInfo.addRow')}
-          </Button>
-        </div>
-      )}
-    </Form.List>
+                  >
+                    <InputNumber 
+                      style={{ width: '100%' }} 
+                      placeholder={t('content.metadata.sectionsInfo.end')} 
+                      min={0}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={4}>
+                  <Button type="text" danger icon={<DeleteOutlined />} onClick={() => remove(name)} />
+                </Col>
+              </Row>
+            ))}
+            <Button type="dashed" onClick={() => add()} icon={<PlusOutlined />} style={{ width: '100%' }}>
+              {t('content.metadata.sectionsInfo.addRow')}
+            </Button>
+          </div>
+        )}
+      </Form.List>
+      <Form.Item
+        name="_sections_overlap_check"
+        rules={[
+          ({ getFieldValue }) => ({
+            validator() {
+              const sections = getFieldValue('sections_info') as SectionInfoItem[] | undefined
+              const error = validateSectionsOverlap(sections)
+              if (error) {
+                return Promise.reject(new Error(error))
+              }
+              return Promise.resolve()
+            },
+          }),
+        ]}
+        style={{ display: 'none' }}
+      >
+        <TrimInput />
+      </Form.Item>
+    </>
   )
 }
 
@@ -1623,42 +1799,31 @@ function SectionsInfoEditor() {
 /*  Custom Fields 标签页                                       */
 /* ═══════════════════════════════════════════════════════════ */
 
-function CustomFieldsTab({ customFields, defaultLanguage, readOnly: disabled }: { customFields: CustomFieldListItem[]; defaultLanguage: string; readOnly: boolean }) {
+function CustomFieldsTab({ customFields, defaultLanguage, readOnly: disabled, dictOpts }: { customFields: CustomFieldListItem[]; defaultLanguage: string; readOnly: boolean; dictOpts: (code: string) => DictOption[] }) {
   const { t } = useI18n()
 
   if (customFields.length === 0) {
     return <div style={{ color: '#999', textAlign: 'center', padding: 24 }}>No custom fields configured</div>
   }
 
+  const allLanguages = dictOpts('Multi_Languages')
+  const languageOrder = allLanguages.map(l => l.value)
+
   return (
     <Row gutter={16}>
       {customFields.map(field => {
-        const isRequired = field.mandatory
-        const lang = defaultLanguage
-        const options = field.options.map(o => ({ value: o.code, label: o.names?.[lang] ?? o.code }))
+        const options = field.options.map(o => ({ value: o.code, label: getFieldOptionLabel(field, o.code, defaultLanguage, languageOrder) }))
         const namePath = field.multi_language
-          ? (['i18n', defaultLanguage, `cf_${field.field_code}`] as (string | number)[])
+          ? (['i18n', defaultLanguage, field.field_code] as (string | number)[])
           : (['custom_field_values', field.field_code] as (string | number)[])
         return (
           <Col span={8} key={field.id}>
             <Form.Item
               name={namePath}
               label={field.field_name}
-              rules={isRequired ? [{ required: true, message: t('content.metadata.required') }] : undefined}
+              rules={getCustomFieldRules(field, t('customField.validation.integerOnly'), t)}
             >
-              {field.field_type === 'DropList' ? (
-                <Select showSearch optionFilterProp="label" allowClear placeholder="Please select" options={options} disabled={disabled} />
-              ) : field.field_type === 'DropList_multiple' ? (
-                <Select showSearch optionFilterProp="label" mode="multiple" allowClear placeholder="Please select" options={options} disabled={disabled} />
-              ) : field.field_type === 'LongText' ? (
-                <TrimInput.TextArea rows={2} disabled={disabled} />
-              ) : field.field_type === 'Integer' || field.field_type === 'Decimal' ? (
-                <InputNumber style={{ width: '100%' }} disabled={disabled} />
-              ) : field.field_type === 'Date' ? (
-                <DatePicker style={{ width: '100%' }} disabled={disabled} />
-              ) : (
-                <TrimInput disabled={disabled} />
-              )}
+              <CustomFieldControl fieldType={field.field_type} options={options} disabled={disabled} placeholder={getCustomFieldPlaceholder(field, t)} />
             </Form.Item>
           </Col>
         )
@@ -1672,9 +1837,8 @@ function CustomFieldsTab({ customFields, defaultLanguage, readOnly: disabled }: 
 /* ═══════════════════════════════════════════════════════════ */
 
 function MultiLanguagesTab({
-  kind, customFields, genres, tags, dictOpts, currentLanguage, onLanguageChange, readOnly: disabled, defaultLanguage,
+  customFields, genres, tags, dictOpts, currentLanguage, onLanguageChange, readOnly: disabled, defaultLanguage, contentType,
 }: {
-  kind: MetadataKind
   customFields: CustomFieldListItem[]
   genres: GenreListItem[]
   tags: TagListItem[]
@@ -1683,9 +1847,18 @@ function MultiLanguagesTab({
   onLanguageChange: (lang: string) => void
   readOnly: boolean
   defaultLanguage: string
+  contentType: string
 }) {
   const { t } = useI18n()
   const form = Form.useFormInstance()
+  const formRules = useFormRules()
+
+  // 根据内容类型获取 Name 字段的标签
+  const getNameLabel = () => {
+    if (contentType === 'CHANNEL') return t('content.metadata.channelName')
+    if (contentType === 'SCHEDULE') return t('content.metadata.programName')
+    return t('content.metadata.name')
+  }
 
   const allLanguages = dictOpts('Multi_Languages')
   const languages = useMemo(() => allLanguages.filter(l => l.value !== defaultLanguage), [allLanguages, defaultLanguage])
@@ -1694,24 +1867,22 @@ function MultiLanguagesTab({
     ? currentLanguage
     : languages[0]?.value || null
 
-  // 根据当前语言过滤 Genre / Tag 选项
-  const genreOptsForLang = useMemo(() => {
-    if (!selectedLang) return []
-    return genres.filter(g => g.language === selectedLang).map(g => ({ value: g.id, label: g.name }))
-  }, [genres, selectedLang])
-
-  const tagOptsForLang = useMemo(() => {
-    if (!selectedLang) return []
-    return tags.filter(tg => tg.language === selectedLang).map(tg => ({ value: tg.id, label: tg.name }))
-  }, [tags, selectedLang])
-
   // 多语言自定义字段
   const mlCustomFields = useMemo(() => customFields.filter(f => f.multi_language), [customFields])
+
+  // SCHEDULE 类型：监听 SeriesType 以条件显示 SeriesName/ShowName
+  const isSchedule = contentType === 'SCHEDULE'
+  const seriesType = isSchedule ? (Form.useWatch('series_type') ?? 0) : 0
 
   // 清除某语言下的全部字段
   const handleClear = (lang: string) => {
     const current = form.getFieldValue('i18n') as Record<string, Record<string, unknown>> | undefined
-    form.setFieldsValue({ i18n: { ...current, [lang]: {} } })
+    const cleared: Record<string, unknown> = {}
+    const langData = current?.[lang] ?? {}
+    for (const key of Object.keys(langData)) {
+      cleared[key] = undefined
+    }
+    form.setFieldsValue({ i18n: { ...current, [lang]: cleared } })
   }
 
   if (languages.length === 0) {
@@ -1749,83 +1920,112 @@ function MultiLanguagesTab({
 
       {/* 右侧语言表单 */}
       <Col span={18}>
-        {selectedLang ? (
+        {languages.length > 0 ? (
           <div>
-            <div style={{ marginBottom: 12, fontWeight: 600 }}>
-              {t('content.metadata.language')}: {languages.find(l => l.value === selectedLang)?.label}
-            </div>
-            <Row gutter={16}>
-              {/* Name | SortName */}
-              <Col span={12}>
-                <Form.Item name={['i18n', selectedLang!, 'name']} label={t('content.metadata.name')}>
-                  <TrimInput disabled={disabled} />
-                </Form.Item>
-              </Col>
-              <Col span={12}>
-                <Form.Item name={['i18n', selectedLang!, 'sort_name']} label={t('content.metadata.sortName')}>
-                  <TrimInput disabled={disabled} />
-                </Form.Item>
-              </Col>
+            {languages.map(lang => {
+              const genreOpts = genres.filter(g => g.language === lang.value).map(g => ({ value: g.id, label: g.name }))
+              const tagOpts = tags.filter(tg => tg.language === lang.value).map(tg => ({ value: tg.id, label: tg.name }))
+              return (
+                <div key={lang.value} style={{ display: selectedLang === lang.value ? 'block' : 'none' }}>
+                  {selectedLang === lang.value && (
+                    <div style={{ marginBottom: 12, fontWeight: 600 }}>
+                      {t('content.metadata.language')}: {lang.label}
+                    </div>
+                  )}
+                  <Row gutter={16}>
+                    {/* Name */}
+                    <Col span={12}>
+                      <Form.Item name={['i18n', lang.value, 'name']} label={getNameLabel()} rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
+                        <TrimInput disabled={disabled} />
+                      </Form.Item>
+                    </Col>
 
-              {/* Tags | ShortTitle */}
-              <Col span={12}>
-                <Form.Item name={['i18n', selectedLang!, 'tag_ids']} label={t('content.metadata.tags')}>
-                  <Select showSearch optionFilterProp="label" mode="multiple" allowClear placeholder="Please select" options={tagOptsForLang} disabled={disabled || tagOptsForLang.length === 0} />
-                </Form.Item>
-              </Col>
-              <Col span={12}>
-                <Form.Item name={['i18n', selectedLang!, 'short_title']} label={t('content.metadata.shortTitle')}>
-                  <TrimInput disabled={disabled} />
-                </Form.Item>
-              </Col>
+                    {/* SortName - 非 SCHEDULE 类型显示 */}
+                    {!isSchedule && (
+                      <Col span={12}>
+                        <Form.Item name={['i18n', lang.value, 'sort_name']} label={t('content.metadata.sortName')} rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
+                          <TrimInput disabled={disabled} />
+                        </Form.Item>
+                      </Col>
+                    )}
 
-              {/* Description | Genre */}
-              <Col span={12}>
-                <Form.Item name={['i18n', selectedLang!, 'description']} label={t('content.metadata.description')}>
-                  <TrimInput.TextArea rows={3} disabled={disabled} />
-                </Form.Item>
-              </Col>
-              <Col span={12}>
-                <Form.Item name={['i18n', selectedLang!, 'genre_ids']} label={t('content.metadata.genre')}>
-                  <Select showSearch optionFilterProp="label" mode="multiple" allowClear placeholder="Please select" options={genreOptsForLang} disabled={disabled || genreOptsForLang.length === 0} />
-                </Form.Item>
-              </Col>
+                    {/* SCHEDULE: Genre */}
+                    {isSchedule && (
+                      <Col span={12}>
+                        <Form.Item name={['i18n', lang.value, 'genre_ids']} label={t('content.metadata.genre')}>
+                          <Select showSearch optionFilterProp="label" mode="multiple" allowClear placeholder="Please select" options={genreOpts} disabled={disabled || genreOpts.length === 0} />
+                        </Form.Item>
+                      </Col>
+                    )}
 
-              {/* Program 额外 original_name */}
-              {kind === 'program' && (
-                <Col span={12}>
-                  <Form.Item name={['i18n', selectedLang!, 'original_name']} label={t('content.metadata.originalName')}>
-                    <TrimInput disabled={disabled} />
-                  </Form.Item>
-                </Col>
-              )}
+                    {/* Tags - 非 SCHEDULE 类型显示 */}
+                    {!isSchedule && (
+                      <Col span={12}>
+                        <Form.Item name={['i18n', lang.value, 'tag_ids']} label={t('content.metadata.tags')}>
+                          <Select showSearch optionFilterProp="label" mode="multiple" allowClear placeholder="Please select" options={tagOpts} disabled={disabled || tagOpts.length === 0} />
+                        </Form.Item>
+                      </Col>
+                    )}
+                    {!isSchedule && (
+                      <Col span={12}>
+                        <Form.Item name={['i18n', lang.value, 'short_title']} label={t('content.metadata.shortTitle')} rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
+                          <TrimInput disabled={disabled} />
+                        </Form.Item>
+                      </Col>
+                    )}
 
-              {/* Custom Fields */}
-              {mlCustomFields.map(field => {
-                const options = field.options.map(o => ({ value: o.code, label: o.names?.[selectedLang!] ?? o.code }))
-                let control: React.ReactNode
-                if (field.field_type === 'DropList') {
-                  control = <Select showSearch optionFilterProp="label" allowClear placeholder="Please select" options={options} disabled={disabled} />
-                } else if (field.field_type === 'DropList_multiple') {
-                  control = <Select showSearch optionFilterProp="label" mode="multiple" allowClear placeholder="Please select" options={options} disabled={disabled} />
-                } else if (field.field_type === 'LongText') {
-                  control = <TrimInput.TextArea rows={2} disabled={disabled} />
-                } else if (field.field_type === 'Integer' || field.field_type === 'Decimal') {
-                  control = <InputNumber style={{ width: '100%' }} disabled={disabled} />
-                } else if (field.field_type === 'Date') {
-                  control = <DatePicker style={{ width: '100%' }} disabled={disabled} />
-                } else {
-                  control = <TrimInput disabled={disabled} />
-                }
-                return (
-                  <Col span={12} key={field.id}>
-                    <Form.Item name={['i18n', selectedLang!, `cf_${field.field_code}`]} label={field.field_name}>
-                      {control}
-                    </Form.Item>
-                  </Col>
-                )
-              })}
-            </Row>
+                    {/* Description - 所有类型显示 */}
+                    <Col span={12}>
+                      <Form.Item name={['i18n', lang.value, 'description']} label={t('content.metadata.description')} rules={[formRules.maxLength(FORM_MAX_LENGTH.TEXT_AREA)]}>
+                        <TrimInput.TextArea rows={3} disabled={disabled} />
+                      </Form.Item>
+                    </Col>
+
+                    {/* Genre - 非 SCHEDULE 类型在此显示 */}
+                    {!isSchedule && (
+                      <Col span={12}>
+                        <Form.Item name={['i18n', lang.value, 'genre_ids']} label={t('content.metadata.genre')}>
+                          <Select showSearch optionFilterProp="label" mode="multiple" allowClear placeholder="Please select" options={genreOpts} disabled={disabled || genreOpts.length === 0} />
+                        </Form.Item>
+                      </Col>
+                    )}
+
+                    {/* SCHEDULE 专用：SeriesName（series_type = 1 或 2） */}
+                    {isSchedule && (seriesType === 1 || seriesType === 2) && (
+                      <Col span={12}>
+                        <Form.Item name={['i18n', lang.value, 'series_name']} label={t('content.metadata.seriesName')} rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
+                          <TrimInput disabled={disabled} />
+                        </Form.Item>
+                      </Col>
+                    )}
+
+                    {/* SCHEDULE 专用：ShowName（series_type = 2） */}
+                    {isSchedule && seriesType === 2 && (
+                      <Col span={12}>
+                        <Form.Item name={['i18n', lang.value, 'show_name']} label={t('content.metadata.showName')} rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
+                          <TrimInput disabled={disabled} />
+                        </Form.Item>
+                      </Col>
+                    )}
+
+                    {/* Custom Fields */}
+                    {mlCustomFields.map(field => {
+                      const languageOrder = allLanguages.map(l => l.value)
+                      const options = field.options.map(o => ({ value: o.code, label: getFieldOptionLabel(field, o.code, lang.value, languageOrder) }))
+                      // 多语言 Tab 不做必填校验，仅保留非 required 规则（如整数校验、长度限制）
+                      const mlRules = (getCustomFieldRules(field, t('customField.validation.integerOnly'), t) ?? []).filter(r => !r.required)
+                      return (
+                        <Col span={12} key={field.id}>
+                          <Form.Item name={['i18n', lang.value, field.field_code]} label={field.field_name} rules={mlRules.length > 0 ? mlRules : undefined}>
+                            <CustomFieldControl fieldType={field.field_type} options={options} disabled={disabled} placeholder={getCustomFieldPlaceholder(field, t)} />
+                          </Form.Item>
+                        </Col>
+                      )
+                    })}
+                  </Row>
+                </div>
+              )
+            })}
           </div>
         ) : (
           <div style={{ color: '#999', textAlign: 'center', padding: 48 }}>Select a language</div>

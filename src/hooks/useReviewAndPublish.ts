@@ -1,6 +1,9 @@
 import { useCallback, useState } from 'react'
 import { App } from 'antd'
 import { initiateReview, checkReviewPermission } from '../api/live'
+import { checkPicturesPublishStatus } from '../api/pictures'
+import { checkPackagesPublishStatus } from '../api/packages'
+import { checkArchivePublishStatus } from '../api/publishes'
 import { normalizeNodeCode } from '../utils/workflow'
 import { useI18n } from '../i18n/useI18n'
 import type { MessageKey } from '../i18n/messages'
@@ -11,18 +14,22 @@ import { isHandledError } from '../api'
 export interface UseReviewAndPublishOptions {
   contentId: number | undefined
   contentName?: string
-  contentStatus?: string  // 内容当前状态
+  contentStatus?: string
+  contentType?: string
+  parentId?: number | undefined
   licenses?: ContentLicenseRef[]
   hasInitiatedReview?: boolean
-  processes?: Array<{ node_code?: string; status?: string }>  // ✅ 字段改为可选
-  isTaskAssignee?: boolean  // 当前用户是否是任务分配人
+  processes?: Array<{ node_code?: string; status?: string }>
+  isTaskAssignee?: boolean
+  pageReadOnly?: boolean
+  isNodeReadOnly?: (nodeCode: string) => boolean
   onSuccess?: () => void
 }
 
 export interface UseReviewAndPublishReturn {
   reviewOpen: boolean
   reviewMode: 'initiate' | 'review'
-  reviewReadOnly: boolean  // 审核弹框是否只读（无审批权限时只能查看）
+  reviewReadOnly: boolean
   publishPlanOpen: boolean
   placeholderModal: string | null
   submitting: boolean
@@ -48,7 +55,7 @@ function checkLicenseBound(licenses: ContentLicenseRef[] | undefined, t: (key: M
 export function useReviewAndPublish(
   options: UseReviewAndPublishOptions
 ): UseReviewAndPublishReturn {
-  const { contentId, contentStatus, hasInitiatedReview, licenses, processes, onSuccess } = options
+  const { contentId, contentStatus, contentType, parentId, hasInitiatedReview, licenses, processes, pageReadOnly, isNodeReadOnly, onSuccess } = options
   const { t } = useI18n()
   const { message } = App.useApp()
 
@@ -61,58 +68,57 @@ export function useReviewAndPublish(
 
   const handleReviewAction = useCallback(
     async (key: string, label: string): Promise<boolean> => {
-      console.log('[handleReviewAction] key:', key, 'label:', label)
       const normalizedKey = normalizeNodeCode(key)
-      console.log('[handleReviewAction] normalizedKey:', normalizedKey)
+      console.log('[handleReviewAction] key=', key, 'normalizedKey=', normalizedKey, 'hasInitiatedReview=', hasInitiatedReview, 'pageReadOnly=', pageReadOnly)
 
       if (normalizedKey === 'ApplicationReview') {
-        // 获取 ContentReview 节点的状态
-        const contentReviewProcess = processes?.find((p) => p.node_code === 'ContentReview')
-        const reviewStatus = contentReviewProcess?.status
+        console.log('[handleReviewAction] ApplicationReview branch, hasInitiatedReview=', hasInitiatedReview)
+        const nodeReadOnly = isNodeReadOnly?.('ApplicationReview') ?? false
+        const effectiveReadOnly = pageReadOnly || nodeReadOnly
 
-        // 1. 审核进行中（Pending）→ 不允许重复提交
-        if (hasInitiatedReview && reviewStatus === 'Pending') {
-          message.info(t('content.applyReview.alreadyInitiated'), 3)
-          return false
-        }
-
-        // 2. 审核已通过（Passed）→ 允许重新提交
-        if (hasInitiatedReview && reviewStatus === 'Passed') {
-          // 如果不是任务分配人，不显示确认按钮（通过 readOnly 控制）
-          // 是任务分配人，打开 ReviewModal（和第一次申请一样）
+        // ApplicationReview 总是打开 initiate 模式（发起审核）
+        // 如果已经发起过，显示只读状态
+        if (effectiveReadOnly) {
+          console.log('[handleReviewAction] ApplicationReview -> initiate mode (readOnly)')
           setReviewMode('initiate')
-          setReviewReadOnly(false)
+          setReviewReadOnly(true)
           setReviewOpen(true)
           return true
         }
 
-        // 3. 审核被拒绝（Rejected）或未审核 → 允许重新提交
-        // 校验是否已绑定许可证
         const check = checkLicenseBound(licenses, t)
         if (!check.valid) {
           message.error(check.message, 3)
           return false
         }
+        console.log('[handleReviewAction] ApplicationReview -> initiate mode (new)')
         setReviewMode('initiate')
         setReviewReadOnly(false)
         setReviewOpen(true)
         return true
       }
       if (normalizedKey === 'ContentReview') {
-        // 内容审批节点：先检查权限，无权限时以只读模式打开
+        console.log('[handleReviewAction] ContentReview branch')
         if (!contentId) {
           message.error(t('content.msg.invalidContentId'), 3)
           return false
         }
+        const nodeReadOnly = isNodeReadOnly?.('ContentReview') ?? false
+        const effectiveReadOnly = pageReadOnly || nodeReadOnly
+
+        if (effectiveReadOnly) {
+          setReviewMode('review')
+          setReviewReadOnly(true)
+          setReviewOpen(true)
+          return true
+        }
         try {
           const permissionResult = await checkReviewPermission(contentId)
           setReviewMode('review')
-          // 无审批权限时设为只读模式（可以查看流程但不能操作）
           setReviewReadOnly(!permissionResult.has_permission)
           setReviewOpen(true)
           return true
         } catch {
-          // 接口调用失败时，仍然以只读模式打开，让用户可以查看
           setReviewMode('review')
           setReviewReadOnly(true)
           setReviewOpen(true)
@@ -120,11 +126,89 @@ export function useReviewAndPublish(
         }
       }
       if (normalizedKey === 'PublishPlan') {
-        // 校验内容状态是否为 ReadyForPublish
-        if (contentStatus !== 'ReadyForPublish') {
-          message.error(t('content.publishPlan.statusNotReady'), 3)
+        console.log('[handleReviewAction] PublishPlan branch, contentId=', contentId, 'contentType=', contentType, 'contentStatus=', contentStatus)
+        if (pageReadOnly) {
+          console.log('[handleReviewAction] PublishPlan -> placeholder (pageReadOnly)')
+          setPlaceholderModal(label)
+          return true
+        }
+
+        // 【归档校验】节目单已归档时，校验归档产物是否已发布（与后端 create_publish_plan 规则一致）
+        // 必须放在状态门槛之前：归档回滚会将节目单置为 InProgress，状态门槛会先拦截导致归档校验不可达
+        if (contentId && contentType === 'SCHEDULE') {
+          try {
+            const archiveCheck = await checkArchivePublishStatus('Content', contentId)
+            if (!archiveCheck.can_publish) {
+              console.log('[handleReviewAction] PublishPlan -> archived content not published')
+              message.error(t('content.publishPlan.archivedContentNotPublished'), 5)
+              return false
+            }
+          } catch (err) {
+            console.log('[handleReviewAction] PublishPlan checkArchivePublishStatus error:', err)
+            // 校验失败时允许继续，由后端再次校验
+          }
+        }
+
+        const PUBLISH_READY_STATUSES = ['ReadyForPublish', 'Publishing', 'PublishFailed', 'Published', 'NoActiveLicense', 'Closed']
+        if (!PUBLISH_READY_STATUSES.includes(contentStatus || '')) {
+          const errorMsg = !contentStatus 
+            ? t('content.publishPlan.dataNotLoaded')
+            : t('content.publishPlan.statusNotReady')
+          console.log('[handleReviewAction] PublishPlan -> status not ready:', errorMsg)
+          message.error(errorMsg, 3)
           return false
         }
+
+        // 校验海报是否已发布（只对 SCHEDULE 和 CHANNEL 类型）
+        console.log('[handleReviewAction] PublishPlan checking pictures, contentType=', contentType)
+        if (contentId && contentType && ['SCHEDULE', 'CHANNEL'].includes(contentType)) {
+          try {
+            console.log('[handleReviewAction] PublishPlan calling checkPicturesPublishStatus...')
+            const checkResult = await checkPicturesPublishStatus('Content', contentId, contentType)
+            console.log('[handleReviewAction] PublishPlan checkResult=', checkResult)
+            if (!checkResult.can_publish) {
+              message.error(
+                t('content.publishPlan.picturesNotPublished', {
+                  unpublished: checkResult.unpublished_count,
+                  total: checkResult.total_count,
+                }),
+                5
+              )
+              return false
+            }
+          } catch (err) {
+            console.log('[handleReviewAction] PublishPlan checkPicturesPublishStatus error:', err)
+            // 校验失败时允许继续，由后端再次校验
+          }
+        } else {
+          console.log('[handleReviewAction] PublishPlan skipping picture check (not SCHEDULE/CHANNEL or missing contentType)')
+        }
+
+        // 父频道发布状态校验由后端 _validate_parent_published 统一处理
+        // 后端基于 ObjectPublishStatus.is_published（实际发布状态）判断，
+        // 而非 Content.status（内容生命周期状态），避免已发布但状态非 Published 的父级被误判
+
+        // 校验服务包是否已发布（只对 SCHEDULE 类型）
+        if (contentId && contentType === 'SCHEDULE') {
+          try {
+            const packageCheck = await checkPackagesPublishStatus(contentId)
+            if (!packageCheck.can_publish) {
+              message.error(
+                t('content.publishPlan.packagesNotPublished', {
+                  unpublished: packageCheck.unpublished_count,
+                  total: packageCheck.total_count,
+                }),
+                5
+              )
+              return false
+            }
+          } catch (err) {
+            console.log('[handleReviewAction] PublishPlan checkPackagesPublishStatus error:', err)
+            // 校验失败时允许继续，由后端再次校验
+          }
+        }
+
+        console.log('[handleReviewAction] PublishPlan -> opening modal')
         setPublishPlanOpen(true)
         return true
       }
@@ -132,7 +216,7 @@ export function useReviewAndPublish(
       setPlaceholderModal(label)
       return true
     },
-    [licenses, hasInitiatedReview, contentStatus, t, message, contentId]
+    [licenses, hasInitiatedReview, contentStatus, contentType, t, message, contentId, parentId, pageReadOnly, isNodeReadOnly, processes]
   )
 
   const openReview = useCallback((mode: 'initiate' | 'review', readOnly = false) => {
@@ -173,7 +257,6 @@ export function useReviewAndPublish(
       onSuccess?.()
     } catch (err: unknown) {
       if (isHandledError(err)) return
-      // 优先从 axios 响应中提取后端返回的具体错误消息
       const axiosError = err as { response?: { data?: { detail?: string } }; message?: string }
       const detail = axiosError.response?.data?.detail
       const msg = detail || (err instanceof Error ? err.message : String(err))

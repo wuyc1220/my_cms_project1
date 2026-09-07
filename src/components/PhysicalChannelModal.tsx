@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Button,
+  DatePicker,
   Form,
   InputNumber,
   Modal,
@@ -23,7 +24,6 @@ import {
   Space,
   Spin,
 } from 'antd'
-import { DeleteOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 import {
@@ -31,23 +31,29 @@ import {
   createPhysicalChannel,
   deletePhysicalChannel,
   getPhysicalChannelHistory,
-  savePhysicalChannelFieldValues,
 } from '../api/live'
 import { getDictTree } from '../api/dicts'
 import { getCustomFields } from '../api/customFields'
 import { getConfigs } from '../api/configs'
+import { getMultiLanguageOptions } from '../api/i18n'
 import TrimInput from './TrimInput'
+import CustomFieldControl from './CustomFieldControl'
+import PhysicalChannelTable from './PhysicalChannelTable'
+import { formatApiValue, getCustomFieldRules, getCustomFieldPlaceholder, getOptionLabel } from '../utils/customField'
 import type {
   PhysicalChannelListItem,
   PhysicalChannelCreatePayload,
   PhysicalChannelHistoryItem,
+  PhysicalChannelHistoryQueryParams,
 } from '../types/live'
 import type { DictNodeListItem } from '../types/dict'
 import type { CustomFieldListItem } from '../types/basic'
+import type { LanguageOption } from '../types/i18n'
 import { useI18n } from '../i18n/useI18n'
 import { useFormRules } from '../hooks/useFormRules'
 import { isHandledError } from '../api'
 import { useTablePagination } from '../hooks/useTablePagination'
+import { useSensitiveCheck } from '../hooks/useSensitiveCheck'
 import { FORM_MAX_LENGTH } from '../constants/form'
 
 
@@ -72,47 +78,6 @@ function extractDictOptions(
   return []
 }
 
-/** 根据自定义字段类型渲染对应输入组件 */
-function renderCustomFieldInput(field: CustomFieldListItem) {
-  const placeholder = field.tip ?? `Please enter ${field.field_name}`
-  if (field.field_type === 'select' || field.field_type === 'DropList') {
-    return (
-      <Select
-        showSearch
-        optionFilterProp="label"
-        allowClear
-        placeholder={placeholder}
-        options={field.options.map((o) => ({
-          label: o.names?.cn ?? o.names?.en ?? o.code,
-          value: o.code,
-        }))}
-        style={{ width: '100%' }}
-      />
-    )
-  }
-  if (field.field_type === 'textarea' || field.field_type === 'LongText') {
-    return (
-      <TrimInput.TextArea
-        rows={2}
-        placeholder={placeholder}
-      />
-    )
-  }
-  if (
-    field.field_type === 'number' ||
-    field.field_type === 'Integer' ||
-    field.field_type === 'Decimal'
-  ) {
-    return (
-      <InputNumber
-        style={{ width: '100%' }}
-        placeholder={placeholder}
-      />
-    )
-  }
-  return <TrimInput placeholder={placeholder} />
-}
-
 // ─── 组件 ──────────────────────────────────────────────────────────────────
 
 interface PhysicalChannelModalProps {
@@ -131,20 +96,23 @@ export default function PhysicalChannelModal({
   onSuccess,
 }: PhysicalChannelModalProps) {
   const { t } = useI18n()
+  const { checkSensitive } = useSensitiveCheck()
   const formRules = useFormRules()
   const [form] = Form.useForm()
   const [activeTab, setActiveTab] = useState(readOnly ? 'list' : 'add')
   const prevOpenRef = useRef(false)
 
-  // ── 字典 / 自定义字段 / 配置 ──
+  // ── 字典 / 自定义字段 / 配置 / 多语言 ──
   const [dictTree, setDictTree] = useState<DictNodeListItem[]>([])
   const [dictLoading, setDictLoading] = useState(false)
   const [customFields, setCustomFields] = useState<CustomFieldListItem[]>([])
+  const [languageOptions, setLanguageOptions] = useState<LanguageOption[]>([])
+  const [defaultLanguage, setDefaultLanguage] = useState<string>('')
   const [cfLoading, setCfLoading] = useState(false)
   const [deeplinkHint, setDeeplinkHint] = useState('')
 
   const mediaserviceOptions = useMemo(
-    () => extractDictOptions(dictTree, 'mediaservice'),
+    () => extractDictOptions(dictTree, 'Mediaservice'),
     [dictTree]
   )
   const definitionOptions = useMemo(
@@ -194,7 +162,7 @@ export default function PhysicalChannelModal({
   const [historyForm] = Form.useForm()
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyData, setHistoryData] = useState<PhysicalChannelHistoryItem[]>([])
-  const historyFiltersRef = useRef<{ processed_type?: string; processed_by?: string }>({})
+  const historyFiltersRef = useRef<PhysicalChannelHistoryQueryParams>({})
   const {
     pagination: historyPagination,
     updatePagination: updateHistoryPagination,
@@ -213,7 +181,7 @@ export default function PhysicalChannelModal({
     try {
       const tree = await getDictTree()
       setDictTree(tree)
-    } catch (err) {
+    } catch{
       // ignore
     } finally {
       setDictLoading(false)
@@ -230,7 +198,7 @@ export default function PhysicalChannelModal({
           f.belongings.includes('PhysicalChannel')
       )
       setCustomFields(fields)
-    } catch (err) {
+    } catch {
       // ignore
     } finally {
       setCfLoading(false)
@@ -246,7 +214,17 @@ export default function PhysicalChannelModal({
       if (res.items.length > 0 && res.items[0].config_value) {
         setDeeplinkHint(res.items[0].config_value)
       }
-    } catch (err) {
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  const loadLanguages = useCallback(async () => {
+    try {
+      const langs = await getMultiLanguageOptions()
+      setLanguageOptions(langs)
+      setDefaultLanguage(langs[0]?.code ?? '')
+    } catch {
       // ignore
     }
   }, [])
@@ -275,12 +253,12 @@ export default function PhysicalChannelModal({
   const loadHistoryData = useCallback(
     async (
       p: number,
-      ps?: number | { processed_type?: string; processed_by?: string },
-      params?: { processed_type?: string; processed_by?: string }
+      ps?: number | PhysicalChannelHistoryQueryParams,
+      params?: PhysicalChannelHistoryQueryParams
     ) => {
       setHistoryLoading(true)
       let pageSize: number
-      let filters: { processed_type?: string; processed_by?: string } | undefined
+      let filters: PhysicalChannelHistoryQueryParams | undefined
       if (typeof ps === 'object') {
         pageSize = historyPagination.pageSize
         filters = ps
@@ -312,6 +290,7 @@ export default function PhysicalChannelModal({
       void loadDicts()
       void loadCustomFields()
       void loadDeeplinkHint()
+      void loadLanguages()
       resetListPagination()
       resetHistoryPagination()
       historyFiltersRef.current = {}
@@ -328,6 +307,13 @@ export default function PhysicalChannelModal({
   const handleAddSubmit = async () => {
     try {
       const values = await form.validateFields()
+      // 自定义字段随创建一并提交，后端合并记录一条 Add 日志（避免单独记录 Update 日志）
+      const custom_fields = customFields
+        .map((f) => ({
+          custom_field_id: f.id,
+          value: formatApiValue(f.field_type, values[f.field_code]) || null,
+        }))
+        .filter((item) => item.value !== null && item.value !== '')
       const payload: PhysicalChannelCreatePayload = {
         mediaservice: values.mediaservice,
         definition: values.definition,
@@ -340,27 +326,18 @@ export default function PhysicalChannelModal({
         tstv_enable: values.tstv_enable,
         cutv_enable: values.cutv_enable,
         encryption: values.encryption,
+        custom_fields,
       }
-      const pc = await createPhysicalChannel(channelId, payload)
+      // 敏感词预校验：检查 payload 中的文本字段
+      const ok = await checkSensitive(payload as Record<string, unknown>)
+      if (!ok) return
 
-      // 保存自定义字段值
-      if (customFields.length > 0) {
-        const fieldValues = customFields
-          .map((f) => ({
-            custom_field_id: f.id,
-            value: values[`cf_${f.field_code}`] ?? null,
-          }))
-          .filter((item) => item.value !== null && item.value !== '')
-        if (fieldValues.length > 0) {
-          await savePhysicalChannelFieldValues(channelId, pc.id, fieldValues)
-        }
-      }
+      await createPhysicalChannel(channelId, payload)
 
       void message.success(t('physicalChannel.msg.createSuccess'))
       form.resetFields()
-      void loadListData(1)
       onSuccess?.()
-      setActiveTab('list')
+      onClose()
     } catch (err: unknown) {
       if (isHandledError(err)) return
       const detail = (err as { response?: { data?: { detail?: string } } })
@@ -398,9 +375,17 @@ export default function PhysicalChannelModal({
   // ── 历史查询 ──
   const handleHistorySearch = () => {
     const values = historyForm.getFieldsValue()
-    historyFiltersRef.current = values
+    const filters: PhysicalChannelHistoryQueryParams = {
+      processed_type: values.processed_type,
+      processed_by: values.processed_by,
+    }
+    if (values.processed_at && values.processed_at.length === 2) {
+      filters.processed_at_from = values.processed_at[0].startOf('day').format('YYYY-MM-DD 00:00:00')
+      filters.processed_at_to = values.processed_at[1].endOf('day').format('YYYY-MM-DD 23:59:59')
+    }
+    historyFiltersRef.current = filters
     resetHistoryPagination()
-    void loadHistoryData(1, values)
+    void loadHistoryData(1, filters)
   }
 
   const handleHistoryReset = () => {
@@ -412,127 +397,39 @@ export default function PhysicalChannelModal({
 
   // ── 列定义 ──
 
-  const listColumns: ColumnsType<PhysicalChannelListItem> = [
-    {
-      title: t('physicalChannel.col.mediaservice'),
-      dataIndex: 'mediaservice',
-      key: 'mediaservice',
-      width: 120,
-      render: (v?: string) => v ?? '—',
-    },
-    {
-      title: t('physicalChannel.col.definition'),
-      dataIndex: 'definition',
-      key: 'definition',
-      width: 100,
-      render: (v?: string) => v ?? '—',
-    },
-    {
-      title: t('physicalChannel.col.videoencode'),
-      dataIndex: 'videoencode',
-      key: 'videoencode',
-      width: 120,
-      render: (v?: string) => v ?? '—',
-    },
-    {
-      title: t('physicalChannel.col.bitrate'),
-      dataIndex: 'bitrate',
-      key: 'bitrate',
-      width: 100,
-      render: (v?: string) => v ?? '—',
-    },
-    {
-      title: t('physicalChannel.col.deeplinkChUrl'),
-      dataIndex: 'deeplink_ch_url',
-      key: 'deeplink_ch_url',
-      width: 180,
-      ellipsis: true,
-      render: (v?: string) => v ?? '—',
-    },
-    {
-      title: t('physicalChannel.col.shifttime'),
-      dataIndex: 'shifttime',
-      key: 'shifttime',
-      width: 100,
-      render: (v?: number) => v ?? 0,
-    },
-    {
-      title: t('physicalChannel.col.tvodSaveTime'),
-      dataIndex: 'tvod_save_time',
-      key: 'tvod_save_time',
-      width: 120,
-      render: (v?: number) => v ?? 0,
-    },
-    {
-      title: t('physicalChannel.col.tvodEnable'),
-      dataIndex: 'tvod_enable',
-      key: 'tvod_enable',
-      width: 100,
-      align: 'center',
-      render: (v?: boolean) => <Switch disabled checked={v ?? false} size="small" />,
-    },
-    {
-      title: t('physicalChannel.col.tstvEnable'),
-      dataIndex: 'tstv_enable',
-      key: 'tstv_enable',
-      width: 100,
-      align: 'center',
-      render: (v?: boolean) => <Switch disabled checked={v ?? false} size="small" />,
-    },
-    {
-      title: t('physicalChannel.col.cutvEnable'),
-      dataIndex: 'cutv_enable',
-      key: 'cutv_enable',
-      width: 100,
-      align: 'center',
-      render: (v?: boolean) => <Switch disabled checked={v ?? false} size="small" />,
-    },
-    {
-      title: t('physicalChannel.col.encryption'),
-      dataIndex: 'encryption',
-      key: 'encryption',
-      width: 100,
-      align: 'center',
-      render: (v?: boolean) => <Switch disabled checked={v ?? false} size="small" />,
-    },
-    {
-      title: t('common.action'),
-      key: 'action',
-      width: 80,
-      fixed: 'right',
-      hidden: readOnly,
-      render: (_, record) => (
-        <Button
-          type="text"
-          danger
-          icon={<DeleteOutlined />}
-          onClick={() => void handleDelete(record.id)}
-        />
-      ),
-    },
-  ]
-
   const historyColumns: ColumnsType<PhysicalChannelHistoryItem> = [
     {
       title: t('physicalChannel.col.mediaservice'),
       dataIndex: 'mediaservice',
       key: 'mediaservice',
       width: 120,
-      render: (v?: string) => v ?? '—',
+      render: (v?: string) => {
+        if (!v) return '—'
+        const opt = mediaserviceOptions.find((o) => o.value === v)
+        return opt?.label ?? v
+      },
     },
     {
       title: t('physicalChannel.col.definition'),
       dataIndex: 'definition',
       key: 'definition',
       width: 100,
-      render: (v?: string) => v ?? '—',
+      render: (v?: string) => {
+        if (!v) return '—'
+        const opt = definitionOptions.find((o) => o.value === v)
+        return opt?.label ?? v
+      },
     },
     {
       title: t('physicalChannel.col.videoencode'),
       dataIndex: 'videoencode',
       key: 'videoencode',
       width: 120,
-      render: (v?: string) => v ?? '—',
+      render: (v?: string) => {
+        if (!v) return '—'
+        const opt = videoencodeOptions.find((o) => o.value === v)
+        return opt?.label ?? v
+      },
     },
     {
       title: t('physicalChannel.col.bitrate'),
@@ -570,7 +467,7 @@ export default function PhysicalChannelModal({
       open={open}
       onCancel={onClose}
       footer={null}
-      width={900}
+      width={'60%'}
       destroyOnHidden
     >
       <Tabs
@@ -608,13 +505,18 @@ export default function PhysicalChannelModal({
                       <Form.Item
                         name="mediaservice"
                         label={t('physicalChannel.form.mediaservice')}
+                        rules={[
+                          {
+                            required: true,
+                            message: t('physicalChannel.form.mediaserviceRequired'),
+                          },
+                        ]}
                       >
                         <Select
                           showSearch
                           optionFilterProp="label"
                           placeholder={t('physicalChannel.placeholder.select')}
                           options={mediaserviceOptions}
-                          allowClear
                         />
                       </Form.Item>
                     </Col>
@@ -679,7 +581,7 @@ export default function PhysicalChannelModal({
                       <Form.Item
                         name="deeplink_ch_url"
                         label={t('physicalChannel.form.deeplinkChUrl')}
-                        rules={[formRules.maxLength(FORM_MAX_LENGTH.TEXT_AREA)]}
+                        rules={[formRules.maxLength(FORM_MAX_LENGTH.DEEPLINK_CH_URL)]}
                       >
                         <TrimInput.TextArea
                           rows={5}
@@ -714,7 +616,7 @@ export default function PhysicalChannelModal({
                         name="tstv_enable"
                         label={t('physicalChannel.form.tstvEnable')}
                         valuePropName="checked"
-                        initialValue={false}
+                        initialValue={true}
                       >
                         <Switch checkedChildren={t('common.yes')} unCheckedChildren={t('common.no')} />
                       </Form.Item>
@@ -730,26 +632,27 @@ export default function PhysicalChannelModal({
                     </Col>
                   </Row>
 
-                  {/* 自定义字段 */}
                   {customFields.length > 0 && (
                     <Row gutter={16}>
                       {customFields.map((field) => (
                         <Col span={8} key={field.field_code}>
                           <Form.Item
-                            name={`cf_${field.field_code}`}
+                            name={field.field_code}
                             label={field.field_name}
-                            rules={
-                              field.mandatory
-                                ? [
-                                    {
-                                      required: true,
-                                      message: t('physicalChannel.form.customFieldRequired').replace('{field}', field.field_name),
-                                    },
-                                  ]
-                                : undefined
-                            }
+                            rules={getCustomFieldRules(
+                              field,
+                              t('customField.validation.integerOnly'),
+                              t,
+                            )}
                           >
-                            {renderCustomFieldInput(field)}
+                            <CustomFieldControl
+                              fieldType={field.field_type}
+                              options={field.options.map((o) => ({
+                                value: o.code,
+                                label: getOptionLabel(o.names, defaultLanguage, languageOptions.map((l) => l.code)) || o.code,
+                              }))}
+                              placeholder={getCustomFieldPlaceholder(field, t)}
+                            />
                           </Form.Item>
                         </Col>
                       ))}
@@ -774,16 +677,15 @@ export default function PhysicalChannelModal({
             key: 'list',
             label: t('physicalChannel.tab.list'),
             children: (
-              <Table<PhysicalChannelListItem>
-                rowKey="id"
-                loading={listLoading}
-                columns={listColumns}
+              <PhysicalChannelTable
+                channelId={channelId}
                 dataSource={listData}
-                scroll={{ x: 1200 }}
-                pagination={listPaginationProps}
-                onChange={handleListTableChange}
+                loading={listLoading}
+                paginationProps={listPaginationProps}
+                onTableChange={handleListTableChange}
                 locale={{ emptyText: t('common.noData') }}
-                size="small"
+                showDelete={!readOnly}
+                onDelete={(id) => void handleDelete(id)}
               />
             ),
           },
@@ -793,42 +695,66 @@ export default function PhysicalChannelModal({
             children: (
               <>
                 <div style={{ marginBottom: 16 }}>
-                  <Form form={historyForm} layout="inline">
-                    <Form.Item
-                      name="processed_type"
-                      label={t('physicalChannel.col.processedType')}
-                    >
-                      <Select
-                        showSearch
-                        optionFilterProp="label"
-                        placeholder={t('physicalChannel.placeholder.select')}
-                        style={{ width: 200 }}
-                        allowClear
-                      >
-                        <Select.Option value="Add">{t('physicalChannel.history.processedType.add')}</Select.Option>
-                        <Select.Option value="Delete">{t('physicalChannel.history.processedType.delete')}</Select.Option>
-                      </Select>
-                    </Form.Item>
-                    <Form.Item
-                      name="processed_by"
-                      label={t('physicalChannel.col.processedBy')}
-                      rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}
-                    >
-                      <TrimInput
-                        placeholder={t('physicalChannel.placeholder.keyword')}
-                        style={{ width: 200 }}
-                      />
-                    </Form.Item>
-                    <Form.Item>
-                      <Space>
-                        <Button onClick={handleHistoryReset}>
-                          {t('physicalChannel.btn.reset')}
-                        </Button>
-                        <Button type="primary" onClick={handleHistorySearch}>
-                          {t('physicalChannel.btn.filter')}
-                        </Button>
-                      </Space>
-                    </Form.Item>
+
+                  <Form form={historyForm} layout="vertical">
+                    <Row gutter={16}>
+                      <Col span={6}>
+                        <Form.Item
+                          name="processed_type"
+                          label={t('physicalChannel.col.processedType')}
+                        >
+                          <Select
+                            showSearch
+                            optionFilterProp="label"
+                            placeholder={t('physicalChannel.placeholder.select')}
+                            style={{ width: '100%' }}
+                            allowClear
+                          >
+                            <Select.Option value="Add">{t('physicalChannel.history.processedType.add')}</Select.Option>
+                            <Select.Option value="Delete">{t('physicalChannel.history.processedType.delete')}</Select.Option>
+                          </Select>
+                        </Form.Item>
+                      </Col>
+                      <Col span={6}>
+                        <Form.Item
+                          name="processed_by"
+                          label={t('physicalChannel.col.processedBy')}
+                          rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}
+                        >
+                          <TrimInput
+                            placeholder={t('physicalChannel.placeholder.keyword')}
+                            style={{ width: '100%' }}
+                          />
+                        </Form.Item>
+                      </Col>
+                      <Col span={6}>
+                        <Form.Item
+                          name="processed_at"
+                          label={t('physicalChannel.col.processedAt')}
+                        >
+                          <DatePicker.RangePicker
+                            style={{ width: '100%' }}
+                            format="YYYY-MM-DD"
+                            placeholder={[t('common.placeholder.startTime'), t('common.placeholder.endTime')]}
+                          />
+                        </Form.Item>
+                      </Col>
+                      <Col span={6}>
+                        {/* label=" " 占位标签行高度，使按钮与输入框底部对齐 */}
+                        <Form.Item label=" " colon={false}>
+                          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                            <Space>
+                              <Button type="primary" onClick={handleHistorySearch}>
+                                {t('physicalChannel.btn.filter')}
+                              </Button>
+                              <Button onClick={handleHistoryReset}>
+                                {t('physicalChannel.btn.reset')}
+                              </Button>
+                            </Space>
+                          </div>
+                        </Form.Item>
+                      </Col>
+                    </Row>
                   </Form>
                 </div>
                 <Table<PhysicalChannelHistoryItem>

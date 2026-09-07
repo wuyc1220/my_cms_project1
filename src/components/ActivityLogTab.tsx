@@ -18,7 +18,7 @@ const ADD_TYPES = new Set([
   'SENSITIVE_WORD_CREATE', 'METADATA_SOURCE_CREATE', 'CRAWL_TASK_CREATE',
   'LICENSE_CONTENT_ADD', 'PACKAGE_CONTENT_ADD',
   'PHYSICAL_CHANNEL_CREATE', 'CHANNEL_METADATA_CREATE',
-  'POSTER_UPLOAD',
+  'POSTER_UPLOAD', 'SEASON_SERIES_INJECT',
 ])
 
 const DELETE_TYPES = new Set([
@@ -31,7 +31,7 @@ const DELETE_TYPES = new Set([
   'SENSITIVE_WORD_DELETE', 'METADATA_SOURCE_DELETE', 'CRAWL_TASK_DELETE',
   'CONTRACT_ATTACHMENT_DELETE', 'LICENSE_CONTENT_REMOVE', 'PACKAGE_CONTENT_REMOVE',
   'PHYSICAL_CHANNEL_DELETE', 'CHANNEL_METADATA_DELETE',
-  'POSTER_DELETE',
+  'POSTER_DELETE', 'SEASON_SERIES_REMOVE', 'EPISODE_REMOVE',
 ])
 
 const ATTACHED_TYPES = new Set([
@@ -43,9 +43,10 @@ const REVIEW_TYPES = new Set([
   'CONTENT_REVIEW_INITIATE', 'CONTENT_REVIEW_APPROVE', 'CONTENT_REVIEW_REJECT',
 ])
 
-const PUBLISHED_TYPES = new Set(['PUBLISH_NOW', 'PUBLISH_BATCH'])
-const UNPUBLISHED_TYPES = new Set(['UNPUBLISH_NOW', 'UNPUBLISH_BATCH'])
+const PUBLISHED_TYPES = new Set(['PUBLISH_NOW', 'PUBLISH_BATCH', 'PUBLISH_PLAN_EXECUTE'])
+const UNPUBLISHED_TYPES = new Set(['UNPUBLISH_NOW', 'UNPUBLISH_BATCH', 'UNPUBLISH_PLAN_EXECUTE'])
 const PLAN_TYPES = new Set(['PUBLISH_PLAN_CREATE', 'PUBLISH_PLAN_UPDATE', 'PUBLISH_PLAN_CANCEL'])
+const ARCHIVE_TYPES = new Set(['SCHEDULE_ARCHIVE'])
 
 function getTypeLabel(key: string, t: (key: string) => string): string {
   if (ADD_TYPES.has(key)) return t('history.type.add')
@@ -55,6 +56,7 @@ function getTypeLabel(key: string, t: (key: string) => string): string {
   if (PUBLISHED_TYPES.has(key)) return t('history.type.published')
   if (UNPUBLISHED_TYPES.has(key)) return t('history.type.unpublished')
   if (PLAN_TYPES.has(key)) return t('history.type.plan')
+  if (ARCHIVE_TYPES.has(key)) return t('history.type.archive')
   return t('history.type.update')
 }
 
@@ -66,6 +68,7 @@ function getTypeColor(key: string): string {
   if (PUBLISHED_TYPES.has(key)) return 'green'
   if (UNPUBLISHED_TYPES.has(key)) return 'red'
   if (PLAN_TYPES.has(key)) return 'blue'
+  if (ARCHIVE_TYPES.has(key)) return 'gold'
   return 'blue'
 }
 
@@ -172,8 +175,13 @@ export default function ActivityLogTab({ contentId, refreshVersion, mode = 'simp
       title: t('content.col.processedBy'),
       dataIndex: 'processed_by',
       key: 'processed_by',
-      width: 140,
-      render: (v?: string) => v ?? '—',
+      width: 180,
+      render: (_: unknown, record: ActivityLogListItem) => {
+        const display = record.processed_by_display_name
+        const username = record.processed_by
+        if (display && username) return `${display}(${username})`
+        return display || username || '—'
+      },
     },
     {
       title: t('content.col.processedType'),
@@ -202,8 +210,13 @@ export default function ActivityLogTab({ contentId, refreshVersion, mode = 'simp
       title: t('content.col.processedBy'),
       dataIndex: 'processed_by',
       key: 'processed_by',
-      width: 120,
-      render: (v?: string) => v ?? '—',
+      width: 180,
+      render: (_: unknown, record: ActivityLogListItem) => {
+        const display = record.processed_by_display_name
+        const username = record.processed_by
+        if (display && username) return `${display}(${username})`
+        return display || username || '—'
+      },
     },
     {
       title: t('content.col.processedType'),
@@ -235,7 +248,7 @@ export default function ActivityLogTab({ contentId, refreshVersion, mode = 'simp
       loading={loading}
       columns={columns}
       dataSource={data}
-      pagination={{ pageSize: 10, showQuickJumper: true, position: ['bottomCenter'] }}
+      pagination={{ pageSize: 10, showQuickJumper: true , placement: ['bottomCenter'] }}
       locale={{ emptyText: t('live.channel.emptyActivityLogs') }}
     />
   )

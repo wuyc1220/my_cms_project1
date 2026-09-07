@@ -7,6 +7,8 @@ import type {
   CastRoleMapListResponse,
   EntityFieldValueItem,
   EntityFieldValuesPayload,
+  EntityI18nItem,
+  EntityI18nPayload,
 } from '../types/basic'
 
 export const getCastRoleMaps = async (params: CastRoleMapQueryParams): Promise<CastRoleMapListResponse> => {
@@ -52,5 +54,18 @@ export const saveCastRoleMapFieldValues = async (
   payload: EntityFieldValuesPayload,
 ): Promise<EntityFieldValueItem[]> => {
   const response = await request.put<EntityFieldValueItem[]>(`/cast-role-maps/${mapId}/field-values`, payload)
+  return response.data
+}
+
+export const getCastRoleMapI18n = async (mapId: number): Promise<EntityI18nItem[]> => {
+  const response = await request.get<EntityI18nItem[]>(`/cast-role-maps/${mapId}/i18n`)
+  return response.data
+}
+
+export const saveCastRoleMapI18n = async (
+  mapId: number,
+  payload: EntityI18nPayload,
+): Promise<EntityI18nItem[]> => {
+  const response = await request.put<EntityI18nItem[]>(`/cast-role-maps/${mapId}/i18n`, payload)
   return response.data
 }

@@ -1,3 +1,7 @@
+/**
+ * 已弃用
+ */
+
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Button,
@@ -173,14 +177,14 @@ export default function ChannelMetadataModal({
         })
         setI18nValues(nextI18n)
 
-        // ✅ 从主表获取 genre_id 和 custom_tag_ids
-        const contentGenreId = contentDetail?.content?.genre_id ?? undefined
+        // ✅ 从主表获取 genre_ids 和 custom_tag_ids
+        const contentGenreIds = contentDetail?.content?.genre_ids ?? undefined
         const contentCustomTagIds = contentDetail?.content?.custom_tag_ids ?? []
 
         // 初始化表单
         form.setFieldsValue({
           channel_name: meta?.name ?? channelName,
-          genre_id: contentGenreId,  // ✅ 从主表获取
+          genre_ids: contentGenreIds,  // ✅ 从主表获取
           custom_tag_ids: contentCustomTagIds,  // ✅ 从主表获取
           channel_number: meta?.channel_number ?? undefined,
           description: meta?.description ?? '',
@@ -222,12 +226,12 @@ export default function ChannelMetadataModal({
       const values = await form.validateFields()
       setSaving(true)
 
-      // ✅ 分离 custom_tag_ids 和 genre_id，不保存到元数据表
-      const { custom_tag_ids, genre_id, ...otherValues } = values
+      // ✅ 分离 custom_tag_ids 和 genre_ids，不保存到元数据表
+      const { custom_tag_ids, genre_ids, ...otherValues } = values
 
       const payload = {
         name: otherValues.channel_name,
-        // genre_id 和 custom_tag_ids 已移除，不再保存到元数据表
+        // genre_ids 和 custom_tag_ids 已移除，不再保存到元数据表
         channel_number: otherValues.channel_number,
         description: otherValues.description || undefined,
         channel_type: otherValues.channel_type || undefined,
@@ -256,9 +260,9 @@ export default function ChannelMetadataModal({
         } as ChannelMetadataCreate)
       }
 
-      // ✅ 更新主表的 genre_id 和 custom_tag_ids
+      // ✅ 更新主表的 genre_ids 和 custom_tag_ids
       await updateContent(channelId, {
-        genre_id: genre_id,
+        genre_ids: genre_ids,
         custom_tag_ids: custom_tag_ids?.length ? custom_tag_ids : undefined,
       })
 
@@ -319,7 +323,7 @@ export default function ChannelMetadataModal({
   const defaultLang = languageOptions[0]?.code ?? ''
   const watchedChannelName = Form.useWatch('channel_name', form)
   const watchedDescription = Form.useWatch('description', form)
-  const watchedGenreId = Form.useWatch('genre_id', form)
+  const watchedGenreIds = Form.useWatch('genre_ids', form)
 
   useEffect(() => {
     if (!defaultLang || loading) return
@@ -335,14 +339,14 @@ export default function ChannelMetadataModal({
         langValues['description'] = String(watchedDescription)
         changed = true
       }
-      if (watchedGenreId !== undefined && watchedGenreId !== null) {
-        langValues['genre'] = String(watchedGenreId)
+      if (watchedGenreIds !== undefined && watchedGenreIds !== null) {
+        langValues['genre_ids'] = Array.isArray(watchedGenreIds) ? watchedGenreIds.join(',') : String(watchedGenreIds)
         changed = true
       }
       if (!changed) return prev
       return { ...prev, [defaultLang]: langValues }
     })
-  }, [watchedChannelName, watchedDescription, watchedGenreId, defaultLang, loading])
+  }, [watchedChannelName, watchedDescription, watchedGenreIds, defaultLang, loading])
 
   /* ── 自定义字段输入渲染 ─────────────────────────────────────────────────── */
   const renderCustomFieldInput = useCallback(
@@ -503,16 +507,17 @@ export default function ChannelMetadataModal({
           <Row gutter={16}>
             <Col span={8}>
               <Form.Item name="channel_number" label={t('metadata.channel.channelNumber')}>
-                <InputNumber style={{ width: '100%' }} min={0} />
+                <InputNumber style={{ width: '100%' }} min={0} max={2147483647} />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item
-                name="genre_id"
+                name="genre_ids"
                 label={t('metadata.channel.genre')}
                 rules={[{ required: true, message: t('metadata.channel.genreRequired') }]}
               >
                 <Select
+                  mode="multiple"
                   showSearch
                   optionFilterProp="label"
                   allowClear
@@ -537,7 +542,7 @@ export default function ChannelMetadataModal({
           <Row gutter={16}>
             <Col span={8}>
               <Form.Item name="status_flag" label={t('metadata.channel.status')} valuePropName="checked">
-                <Switch checkedChildren="YES" unCheckedChildren="NO" />
+                <Switch checkedChildren={t('common.yes')} unCheckedChildren={t('common.no')} />
               </Form.Item>
             </Col>
             <Col span={8}>
@@ -603,22 +608,22 @@ export default function ChannelMetadataModal({
           <Row gutter={16}>
             <Col span={6}>
               <Form.Item name="ppv_enable" label={t('metadata.channel.ppvEnable')} valuePropName="checked">
-                <Switch checkedChildren="YES" unCheckedChildren="NO" />
+                <Switch checkedChildren={t('common.yes')} unCheckedChildren={t('common.no')} />
               </Form.Item>
             </Col>
             <Col span={6}>
               <Form.Item name="npvr_enable" label={t('metadata.channel.npvrEnable')} valuePropName="checked">
-                <Switch checkedChildren="YES" unCheckedChildren="NO" />
+                <Switch checkedChildren={t('common.yes')} unCheckedChildren={t('common.no')} />
               </Form.Item>
             </Col>
             <Col span={6}>
               <Form.Item name="fingerprint_enable" label={t('metadata.channel.fingerprintEnable')} valuePropName="checked">
-                <Switch checkedChildren="YES" unCheckedChildren="NO" />
+                <Switch checkedChildren={t('common.yes')} unCheckedChildren={t('common.no')} />
               </Form.Item>
             </Col>
             <Col span={6}>
               <Form.Item name="watermark_enable" label={t('metadata.channel.watermarkEnable')} valuePropName="checked">
-                <Switch checkedChildren="YES" unCheckedChildren="NO" />
+                <Switch checkedChildren={t('common.yes')} unCheckedChildren={t('common.no')} />
               </Form.Item>
             </Col>
           </Row>

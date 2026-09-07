@@ -7,6 +7,8 @@ import {
   Button,
   Divider,
   Modal,
+  Pagination,
+  Popconfirm,
   Space,
   Table,
   Tooltip,
@@ -16,8 +18,10 @@ import { DeleteOutlined, MinusCircleOutlined, PlusOutlined } from '@ant-design/i
 import type { ColumnsType } from 'antd/es/table'
 import { getContractLicenses } from '../../api/contracts'
 import { getLicenseContents, addContentsToLicense, removeContentFromLicense, getAvailableContentsForLicense, getUnlicensedContents, deleteLicense } from '../../api/licenses'
+import { getDictTree } from '../../api/dicts'
 import TrimInput from '../TrimInput'
 import type { ContractListItem, LicenseSimpleItem, ContentForTradeItem } from '../../types/trade'
+import type { DictNodeListItem } from '../../types/dict'
 import type { PaginatedResponse } from '../../types/basic'
 import { PAGINATION_CONFIG } from '../../constants/pagination'
 import { useI18n } from '../../i18n/useI18n'
@@ -61,6 +65,13 @@ export default function AddContentModal({
   })
   const [availableLoading, setAvailableLoading] = useState(false)
   const [contentSearch, setContentSearch] = useState('')
+  const [licensePagination, setLicensePagination] = useState({
+    current: 1,
+    pageSize: PAGINATION_CONFIG.defaultPageSize,
+  })
+
+  // ServiceType 字典选项
+  const [serviceTypeOptions, setServiceTypeOptions] = useState<{ label: string; value: string }[]>([])
 
   // 新增内容弹窗状态
   const [createContentModalOpen, setCreateContentModalOpen] = useState(false)
@@ -75,10 +86,25 @@ export default function AddContentModal({
       setPendingAdd([])
       setLicenseSearch('')
       setContentSearch('')
+      setLicensePagination({ current: 1, pageSize: PAGINATION_CONFIG.defaultPageSize })
+      void loadServiceTypeOptions()
       void loadContractLicensesList(contract.id, undefined, true)
       void loadAvailableContentsList(null, 1, '')
     }
   }, [open, contract])
+
+  const loadServiceTypeOptions = async () => {
+    try {
+      const dicts = await getDictTree()
+      const svcRoot = dicts.find((d: DictNodeListItem) => d.code === 'ServiceType')
+      setServiceTypeOptions(
+        (svcRoot?.children ?? []).map((c: DictNodeListItem) => ({ label: c.name, value: c.code })),
+      )
+    } catch (err) {
+      if (isHandledError(err)) return
+      void message.error(t('license.msg.initFailed'), 5)
+    }
+  }
 
   const loadContractLicensesList = async (contractId: number, name?: string, autoSelect = false) => {
     try {
@@ -182,7 +208,7 @@ export default function AddContentModal({
     try {
       await removeContentFromLicense(selectedLicense.id, contentId)
       setLicenseContents((prev) => prev.filter((c) => c.id !== contentId))
-      void message.success(t('common.msg.saveSuccess'), 3)
+      void message.success(t('common.msg.removed'), 3)
       void loadAvailableContentsList(selectedLicense.id, availableContents.page, contentSearch)
       onSuccess?.()
     } catch (err) {
@@ -214,6 +240,7 @@ export default function AddContentModal({
 
   const handleLicenseSearch = () => {
     if (contract) {
+      setLicensePagination({ current: 1, pageSize: PAGINATION_CONFIG.defaultPageSize })
       void loadContractLicensesList(contract.id, licenseSearch || undefined)
     }
   }
@@ -262,13 +289,15 @@ export default function AddContentModal({
       fixed: 'right',
       width: 60,
       render: (_, row) => (
-        <Button
-          type="link"
-          size="small"
-          icon={<PlusOutlined />}
-          disabled={!selectedLicense}
-          onClick={() => handleQueueContent(row)}
-        />
+        <Tooltip title={t('common.add')}>
+          <Button
+            type="link"
+            size="small"
+            icon={<PlusOutlined />}
+            disabled={!selectedLicense}
+            onClick={() => handleQueueContent(row)}
+          />
+        </Tooltip>
       ),
     },
   ]
@@ -289,6 +318,10 @@ export default function AddContentModal({
       key: 'service_type',
       width: 90,
       ellipsis: { showTitle: false },
+      render: (val: string) => {
+        const label = serviceTypeOptions.find((o) => o.value === val)?.label ?? val
+        return <Tooltip title={label}><span>{label}</span></Tooltip>
+      },
     },
     {
       title: t('content.col.startDate'),
@@ -320,15 +353,21 @@ export default function AddContentModal({
             />
           </Tooltip>
           {canOperateLicense && (
-            <Tooltip title={t('common.delete')}>
-              <Button
-                type="link"
-                size="small"
-                icon={<DeleteOutlined />}
-                danger
-                onClick={() => void handleDeleteLicense(row)}
-              />
-            </Tooltip>
+            <Popconfirm
+              title={t('common.confirmDelete', { name: row.name })}
+              onConfirm={() => void handleDeleteLicense(row)}
+              okText={t('common.confirm')}
+              cancelText={t('common.cancel')}
+            >
+              <Tooltip title={t('common.delete')}>
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<DeleteOutlined />}
+                  danger
+                />
+              </Tooltip>
+            </Popconfirm>
           )}
         </Space>
       ),
@@ -393,7 +432,7 @@ export default function AddContentModal({
               </Button>
             )}
           </div>
-          <div style={{ flex: 1, minHeight: 0 }}>
+          <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
             <Table<ContentForTradeItem>
               rowKey="id"
               size="small"
@@ -402,16 +441,22 @@ export default function AddContentModal({
               dataSource={availableContents.items}
               scroll={{ y: 360 }}
               rootClassName="compact-table"
-              pagination={{
-                current: availableContents.page,
-                pageSize: availableContents.page_size,
-                total: availableContents.total,
-                size: 'small',
-                showTotal: (n) => t('pagination.total', { n }),
-                position: ['bottomCenter'],
-                onChange: (p, ps) =>
-                  void loadAvailableContentsList(selectedLicense?.id ?? null, p, contentSearch, ps),
-              }}
+              pagination={false}
+            />
+          </div>
+          <div style={{ paddingTop: 12, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
+            <Pagination
+              current={availableContents.page}
+              pageSize={availableContents.page_size}
+              total={availableContents.total}
+              size="small"
+              showSizeChanger
+              showQuickJumper
+              pageSizeOptions={PAGINATION_CONFIG.pageSizeOptions.map(String)}
+              showTotal={(n) => t('pagination.total', { n })}
+              onChange={(p, ps) =>
+                void loadAvailableContentsList(selectedLicense?.id ?? null, p, contentSearch, ps)
+              }
             />
           </div>
         </div>
@@ -448,7 +493,7 @@ export default function AddContentModal({
               </Button>
             )}
           </div>
-          <div style={{ flex: 1, minHeight: 0 }}>
+          <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
             <Table<LicenseSimpleItem>
               rowKey="id"
               size="small"
@@ -459,15 +504,21 @@ export default function AddContentModal({
               rowClassName={(row) =>
                 selectedLicense?.id === row.id ? 'ant-table-row-selected' : ''
               }
-              pagination={{
-                pageSize: 20,
-                size: 'small',
-                showSizeChanger: true,
-                pageSizeOptions: PAGINATION_CONFIG.pageSizeOptions.map(String),
-                showTotal: (n) => t('pagination.total', { n }),
-                position: ['bottomCenter'],
-              }}
+              pagination={false}
               locale={{ emptyText: t('contract.empty.noLicenses') }}
+            />
+          </div>
+          <div style={{ paddingTop: 12, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
+            <Pagination
+              current={licensePagination.current}
+              pageSize={licensePagination.pageSize}
+              total={contractLicenses.length}
+              size="small"
+              showSizeChanger
+              showQuickJumper
+              pageSizeOptions={PAGINATION_CONFIG.pageSizeOptions.map(String)}
+              showTotal={(n) => t('pagination.total', { n })}
+              onChange={(page, pageSize) => setLicensePagination({ current: page, pageSize })}
             />
           </div>
         </div>

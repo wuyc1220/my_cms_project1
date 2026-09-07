@@ -1,10 +1,11 @@
 import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ConfigProvider, App as AntApp } from 'antd'
-import { useAuthStore } from './stores/authStore'
+import { useAuthStore, getFirstMenuPath, hasMenuPath } from './stores/authStore'
 import Login from './pages/Login'
 import MainLayout from './layouts/MainLayout'
 import Home from './pages/home/Home'
+import NoPermission from './pages/NoPermission'
 import Placeholder from './pages/Placeholder'
 import UserManagement from './pages/system/UserManagement'
 import UserDetail from './pages/system/UserDetail'
@@ -65,6 +66,25 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
   return isLoggedIn ? <>{children}</> : <Navigate to="/login" replace />
 }
 
+/** 根路径重定向：进入用户菜单中第一个有权限的页面；无任何页面权限时提示 */
+function FirstMenuRedirect() {
+  const menus = useAuthStore((s) => s.menus)
+  const menusLoaded = useAuthStore((s) => s.menusLoaded)
+  if (!menusLoaded) return null
+  const firstPath = getFirstMenuPath(menus)
+  if (firstPath) return <Navigate to={firstPath} replace />
+  return <NoPermission />
+}
+
+/** 页面菜单权限守卫：无对应菜单权限时显示无权限提示 */
+function RequireMenuPath({ path, children }: { path: string; children: React.ReactNode }) {
+  const menus = useAuthStore((s) => s.menus)
+  const menusLoaded = useAuthStore((s) => s.menusLoaded)
+  if (!menusLoaded) return null
+  if (hasMenuPath(menus, path)) return <>{children}</>
+  return <NoPermission />
+}
+
 const placeholders: { path: string; titleKey: MessageKey }[] = [
   // /trade/contents 已实现，不再作为 placeholder
   // /live/channels /live/schedules /live/archives 已实现，不再作为 placeholder
@@ -102,7 +122,7 @@ export default function App() {
         },
         components: {
           Tooltip: {
-            maxWidth: 600,
+            maxWidth: 500,
           },
         },
       }}
@@ -119,8 +139,15 @@ export default function App() {
                 </PrivateRoute>
               }
             >
-            <Route index element={<Navigate to="/dashboard" replace />} />
-            <Route path="dashboard" element={<Home />} />
+            <Route index element={<FirstMenuRedirect />} />
+            <Route
+              path="dashboard"
+              element={
+                <RequireMenuPath path="/dashboard">
+                  <Home />
+                </RequireMenuPath>
+              }
+            />
             <Route path="basic/tags" element={<TagManagement />} />
             <Route path="basic/custom-tags" element={<CustomTagManagement />} />
             <Route path="basic/genres" element={<GenreManagement />} />

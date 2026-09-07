@@ -57,8 +57,13 @@ export default function StatusLogsTab({ contentId, refreshVersion }: StatusLogsT
       title: t('content.col.processedBy'),
       dataIndex: 'processed_by',
       key: 'processed_by',
-      width: 140,
-      render: (v?: string) => v ?? '—',
+      width: 180,
+      render: (_: unknown, record: StatusLogListItem) => {
+        const display = record.processed_by_display_name
+        const username = record.processed_by
+        if (display && username) return `${display}(${username})`
+        return display || username || '—'
+      },
     },
     {
       title: t('content.col.beforeStatus'),

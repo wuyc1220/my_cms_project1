@@ -11,7 +11,7 @@
  *  - 搜索区支持折叠/展开
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Badge,
@@ -52,9 +52,11 @@ import {
   batchDeleteContents,
   getWithoutLicenseContentCount,
   getSeriesSimple,
+  getSeasonsSimple,
   getChannelsSimple,
   getContentLicenses,
 } from '../../api/contents'
+import { checkContentAuthPermission } from '../../api/dataAuth'
 import { getLicenses } from '../../api/licenses'
 import {
   addContentsToLicense,
@@ -81,6 +83,7 @@ import { useI18n } from '../../i18n/useI18n'
 import { useTablePagination } from '../../hooks/useTablePagination'
 import { useSearchForm } from '../../hooks/useSearchForm'
 import { usePermission } from '../../hooks/usePermission'
+import { useContentAuthPermission } from '../../hooks/useContentAuthPermission'
 import { CreateLicenseModal, EditContentModal } from '../../components/ContentModals'
 import { isHandledError } from '../../api'
 import { useFormRules } from '../../hooks/useFormRules'
@@ -91,6 +94,7 @@ import { FORM_MAX_LENGTH } from '../../constants/form'
 
 const CONTENT_TYPES = [
   { label: 'MOVIE', value: 'MOVIE' },
+  { label: 'SEASON_SERIES', value: 'SEASON_SERIES' },
   { label: 'EPISODE', value: 'EPISODE' },
   { label: 'SEASON', value: 'SEASON' },
   { label: 'SERIES', value: 'SERIES' },
@@ -101,7 +105,7 @@ const CONTENT_TYPES = [
 // ─── 内部类型 ─────────────────────────────────────────────────────────────────
 
 interface SearchValues {
-  content_id?: number
+  external_id?: string
   title?: string
   content_types?: string[]
   statuses?: string[]
@@ -116,10 +120,11 @@ interface SearchValues {
 interface ContentFormValues {
   title: string
   content_type: string
-  genre_id?: number
+  genre_ids?: number[]
   custom_tag_ids?: number[]
   parent_id?: number
   sequence?: number
+  series_ordinal?: number
   series_type?: number
   volumn_count?: number
   season_details?: { series_ordinal: number; episode_count: number }[]
@@ -134,6 +139,9 @@ export default function ContentManagement() {
   const navigate = useNavigate()
   const formRules = useFormRules()
   const [itemForm] = Form.useForm<ContentFormValues>()
+
+  // 数据权限校验
+  const { checkAndNavigate: checkAndNavigateToDetail } = useContentAuthPermission()
 
   // 列表
   const [contents, setContents] = useState<ContentListItem[]>([])
@@ -169,9 +177,11 @@ export default function ContentManagement() {
   const [genreOptions, setGenreOptions] = useState<{ label: string; value: number }[]>([])
   const [customTagOptions, setCustomTagOptions] = useState<{ label: string; value: number }[]>([])
   const [seriesOptions, setSeriesOptions] = useState<ContentSimpleItem[]>([])
+  const [seasonOptions, setSeasonOptions] = useState<ContentSimpleItem[]>([])
   const [channelOptions, setChannelOptions] = useState<ContentSimpleItem[]>([])
   const [ingestStatusOptions, setIngestStatusOptions] = useState<{ label: string; value: string }[]>([])
   const [ingestStatusMap, setIngestStatusMap] = useState<Record<string, string>>({})
+  const [serviceTypeOptions, setServiceTypeOptions] = useState<{ label: string; value: string }[]>([])
 
   // Add License to Content 弹框
   const [licenseModalOpen, setLicenseModalOpen] = useState(false)
@@ -183,6 +193,7 @@ export default function ContentManagement() {
   const [licensePage, setLicensePage] = useState(1)
   const [linkedLicenses, setLinkedLicenses] = useState<ContentLicenseRef[]>([])
   const [pendingAddLicenses, setPendingAddLicenses] = useState<LicenseListItem[]>([])
+  const [pendingRemoveLicenses, setPendingRemoveLicenses] = useState<number[]>([]) // 待移除的许可证id
   const [licenseModalLoading, setLicenseModalLoading] = useState(false)
 
   // SEASON 明细行（受控）
@@ -208,6 +219,131 @@ export default function ContentManagement() {
   const canViewContent = hasPermission('menu.trade.contents.view') || hasPermission('menu.trade.contents.operate')
   const canOperateContent = hasPermission('menu.trade.contents.operate')
   const canOperateLicense = hasPermission('menu.trade.licenses.operate')
+
+  // ─── 数据加载函数（需在 hook 之前声明）────────────────────────────────────
+
+  const loadOptions = async () => {
+    try {
+      const langOptions = await getMultiLanguageOptions()
+      const defaultLang = langOptions.length > 0 ? langOptions[0].code : undefined
+      const langFilter = defaultLang ? [defaultLang] : undefined
+
+      const [genres, customTags, series, seasons, channels, providers, contracts, dicts] = await Promise.all([
+        getGenres({ page: 1, page_size: 500, languages: langFilter }),
+        getCustomTags({ page: 1, page_size: 500 }),
+        getSeriesSimple(),
+        getSeasonsSimple(),
+        getChannelsSimple(),
+        getProvidersSimple(),
+        getContractsSimple(),
+        getDictTree(),
+      ])
+      setGenreOptions(genres.items.map((g: GenreListItem) => ({ label: g.name, value: g.id })))
+      setCustomTagOptions(customTags.items.map((t: CustomTagListItem) => ({ label: t.name, value: t.id })))
+      setSeriesOptions(series)
+      setSeasonOptions(seasons)
+      setChannelOptions(channels)
+      setProviderOptions(providers)
+      setContractOptions(contracts)
+
+      const ingestRoot = dicts.find((d: DictNodeListItem) => d.code === 'Ingest_Status')
+      if (ingestRoot?.children) {
+        setIngestStatusOptions(ingestRoot.children.map((c: DictNodeListItem) => ({ label: c.name, value: c.code })))
+        const map: Record<string, string> = {}
+        ingestRoot.children.forEach((c: DictNodeListItem) => { map[c.code] = c.name })
+        setIngestStatusMap(map)
+      }
+
+      const svcRoot = dicts.find((d: DictNodeListItem) => d.code === 'ServiceType')
+      if (svcRoot?.children) {
+        setServiceTypeOptions(svcRoot.children.map((c: DictNodeListItem) => ({ label: c.name, value: c.code })))
+      }
+    } catch (err) {
+      if (isHandledError(err)) return
+      void message.error(t('trade.content.msg.initFailed'), 5)
+    }
+  }
+
+  const loadWithoutLicenseCount = async () => {
+    try {
+      const { count } = await getWithoutLicenseContentCount()
+      setWithoutLicenseCount(count)
+    } catch {
+      // 忽略，不影响主流程
+    }
+  }
+
+  const buildParams = (targetPage: number, targetPageSize: number, f: Record<string, unknown>, noLicense?: boolean, sortBy?: string | null, sortOrd?: 'ascend' | 'descend' | null) => ({
+    page: targetPage,
+    page_size: targetPageSize,
+    external_id: f.external_id as string | undefined,
+    title: f.title as string | undefined,
+    content_types: f.content_types as string[] | undefined,
+    statuses: f.statuses as string[] | undefined,
+    genre_ids: f.genre_ids as number[] | undefined,
+    custom_tag_ids: f.custom_tag_ids as number[] | undefined,
+    created_from: (f.created_range as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[0]?.startOf('day').format('YYYY-MM-DD'),
+    created_to: (f.created_range as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[1]?.endOf('day').format('YYYY-MM-DD'),
+    without_license: noLicense ?? withoutLicenseActive,
+    license_start_from: (f.license_start_range as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[0]?.startOf('day').format('YYYY-MM-DD'),
+    license_start_to: (f.license_start_range as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[1]?.endOf('day').format('YYYY-MM-DD'),
+    license_end_from: (f.license_end_range as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[0]?.startOf('day').format('YYYY-MM-DD'),
+    license_end_to: (f.license_end_range as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[1]?.endOf('day').format('YYYY-MM-DD'),
+    is_discarded: f.is_discarded as boolean | undefined,
+    sort_by: sortBy || 'created_at',
+    sort_order: sortOrd ? (sortOrd === 'ascend' ? 'asc' : 'desc') : 'desc',
+  })
+
+  const loadList = async (targetPage: number, targetPageSize: number, f: Record<string, unknown>, noLicense?: boolean, sortBy?: string | null, sortOrd?: 'ascend' | 'descend' | null) => {
+    // 数据集刷新后旧勾选失效，统一在此重置（覆盖新增/编辑/删除/关联/搜索/翻页等全部刷新路径）
+    setSelectedRowKeys([])
+    setLoading(true)
+    try {
+      const data = await getContents(buildParams(targetPage, targetPageSize, f, noLicense, sortBy, sortOrd))
+      setContents(data.items)
+      updatePagination(data)
+    } catch (err) {
+      if (isHandledError(err)) return
+      void message.error(t('trade.content.msg.loadFailed'), 5)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // ─── 使用 useSearchForm Hook ─────────────────────────────────────────────────
+
+  const {
+    form: searchForm,
+    expanded,
+    setExpanded,
+    showExpand,
+    handleSearch,
+    handleReset,
+  } = useSearchForm<SearchValues>({
+    fieldsCount: 11,
+    onSearch: (values) => {
+      setWithoutLicenseActive(false)
+      setFilters(values as Record<string, unknown>)
+      resetSort()
+      void loadList(1, pagination.pageSize, values as Record<string, unknown>, false, null, null)
+    },
+    onReset: () => {
+      setFilters({})
+      setWithoutLicenseActive(false)
+      resetSort()
+      void loadList(1, pagination.pageSize, {}, false, null, null)
+      void loadWithoutLicenseCount()
+    },
+  })
+
+  const handleWithoutLicense = useCallback(() => {
+    const next = !withoutLicenseActive
+    setWithoutLicenseActive(next)
+    resetSort()
+    const currentValues = searchForm.getFieldsValue() as Record<string, unknown>
+    void loadList(1, pagination.pageSize, currentValues, next, null, null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [withoutLicenseActive, searchForm])
 
   // ─── 搜索字段配置 ─────────────────────────────────────────────────────────────
 
@@ -235,7 +371,7 @@ export default function ContentManagement() {
       type: 'select',
       render: () => (
         <Badge count={withoutLicenseCount} size="medium" offset={[4, 0]} styles={{
-          root: { width: '100%' } // 或直接写样式
+          root: { width: '100%' }
         }}>
           <Button
             type={withoutLicenseActive ? 'primary' : 'default'}
@@ -248,9 +384,9 @@ export default function ContentManagement() {
       ),
     },
     {
-      name: 'content_id',
+      name: 'external_id',
       label: 'ID',
-      type: 'number',
+      type: 'input',
     },
     {
       name: 'genre_ids',
@@ -281,149 +417,43 @@ export default function ContentManagement() {
     },
     {
       name: 'is_discarded',
-      labelKey: 'trade.content.search.isDiscarded',
+      labelKey: 'common.col.deleted',
       type: 'select',
-      options: [
-        { label: '否', value: false },
-        { label: '是', value: true },
+       options: [
+        { label: t('common.no'), value: false },
+        { label: t('common.yes'), value: true },
       ],
       defaultValue: false,
     },
-  ], [genreOptions, customTagOptions, ingestStatusOptions, t, withoutLicenseActive, withoutLicenseCount])
-
-  // ─── 使用 useSearchForm Hook ─────────────────────────────────────────────────
-
-  const {
-    form: searchForm,
-    expanded,
-    setExpanded,
-    showExpand,
-    handleSearch,
-    handleReset,
-  } = useSearchForm<SearchValues>({
-    fieldsCount: searchFields.length,
-    onSearch: (values) => {
-      setWithoutLicenseActive(false)
-      setFilters(values as Record<string, unknown>)
-      resetSort()
-      void loadList(1, pagination.pageSize, values as Record<string, unknown>, false, null, null)
-    },
-    onReset: () => {
-      setFilters({})
-      setWithoutLicenseActive(false)
-      resetSort()
-      void loadList(1, pagination.pageSize, {}, false, null, null)
-      void loadWithoutLicenseCount()
-    },
-  })
+  ], [genreOptions, customTagOptions, ingestStatusOptions, t, withoutLicenseActive, withoutLicenseCount, handleWithoutLicense])
 
   // ─── 初始化 ─────────────────────────────────────────────────────────────────
 
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
     void loadOptions()
     void loadList(1, pagination.pageSize, {})
     void loadWithoutLicenseCount()
+    /* eslint-enable react-hooks/set-state-in-effect */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  const loadOptions = async () => {
-    try {
-      // 获取默认语言（Multi_Languages的第一种语言）
-      const langOptions = await getMultiLanguageOptions()
-      const defaultLang = langOptions.length > 0 ? langOptions[0].code : undefined
-      const langFilter = defaultLang ? [defaultLang] : undefined
-
-      const [genres, customTags, series, channels, providers, contracts, dicts] = await Promise.all([
-        getGenres({ page: 1, page_size: 500, languages: langFilter }),
-        getCustomTags({ page: 1, page_size: 500, languages: langFilter }),
-        getSeriesSimple(),
-        getChannelsSimple(),
-        getProvidersSimple(),
-        getContractsSimple(),
-        getDictTree(),
-      ])
-      setGenreOptions(genres.items.map((g: GenreListItem) => ({ label: g.name, value: g.id })))
-      setCustomTagOptions(customTags.items.map((t: CustomTagListItem) => ({ label: t.name, value: t.id })))
-      setSeriesOptions(series)
-      setChannelOptions(channels)
-      setProviderOptions(providers)
-      setContractOptions(contracts)
-
-      const ingestRoot = dicts.find((d: DictNodeListItem) => d.code === 'Ingest_Status')
-      if (ingestRoot?.children) {
-        setIngestStatusOptions(ingestRoot.children.map((c: DictNodeListItem) => ({ label: c.name, value: c.code })))
-        const map: Record<string, string> = {}
-        ingestRoot.children.forEach((c: DictNodeListItem) => { map[c.code] = c.name })
-        setIngestStatusMap(map)
-      }
-    } catch (err) {
-      if (isHandledError(err)) return
-      void message.error(t('trade.content.msg.initFailed'), 5)
-    }
-  }
-
-  const loadWithoutLicenseCount = async () => {
-    try {
-      const { count } = await getWithoutLicenseContentCount()
-      setWithoutLicenseCount(count)
-    } catch (err) {
-      // 忽略，不影响主流程
-    }
-  }
-
-  // ─── 列表加载 ─────────────────────────────────────────────────────────────────
-
-  const buildParams = (targetPage: number, targetPageSize: number, f: Record<string, unknown>, noLicense?: boolean, sortBy?: string | null, sortOrd?: 'ascend' | 'descend' | null) => ({
-    page: targetPage,
-    page_size: targetPageSize,
-    content_id: f.content_id as number | undefined,
-    title: f.title as string | undefined,
-    content_types: f.content_types as string[] | undefined,
-    statuses: f.statuses as string[] | undefined,
-    genre_ids: f.genre_ids as number[] | undefined,
-    custom_tag_ids: f.custom_tag_ids as number[] | undefined,
-    created_from: (f.created_range as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[0]?.format('YYYY-MM-DD'),
-    created_to: (f.created_range as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[1]?.format('YYYY-MM-DD'),
-    without_license: noLicense ?? withoutLicenseActive,
-    license_start_from: (f.license_start_range as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[0]?.format('YYYY-MM-DD'),
-    license_start_to: (f.license_start_range as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[1]?.format('YYYY-MM-DD'),
-    license_end_from: (f.license_end_range as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[0]?.format('YYYY-MM-DD'),
-    license_end_to: (f.license_end_range as [dayjs.Dayjs, dayjs.Dayjs] | undefined)?.[1]?.format('YYYY-MM-DD'),
-    is_discarded: f.is_discarded as boolean | undefined,
-    sort_by: sortBy ?? undefined,
-    sort_order: sortOrd ? (sortOrd === 'ascend' ? 'asc' : 'desc') : undefined,
-  })
-
-  const loadList = async (targetPage: number, targetPageSize: number, f: Record<string, unknown>, noLicense?: boolean, sortBy?: string | null, sortOrd?: 'ascend' | 'descend' | null) => {
-    setLoading(true)
-    try {
-      const data = await getContents(buildParams(targetPage, targetPageSize, f, noLicense, sortBy, sortOrd))
-      setContents(data.items)
-      updatePagination(data)
-    } catch (err) {
-      if (isHandledError(err)) return
-      void message.error(t('trade.content.msg.loadFailed'), 5)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-
-  const handleWithoutLicense = () => {
-    const next = !withoutLicenseActive
-    setWithoutLicenseActive(next)
-    resetSort()
-    // 从表单获取当前值，确保使用最新的搜索条件
-    const currentValues = searchForm.getFieldsValue() as Record<string, unknown>
-    void loadList(1, pagination.pageSize, currentValues, next, null, null)
-  }
-
 
   // ─── 新增弹框 ───────────────────────────────────────────────────────────
 
-  const openCreate = () => {
+  const openCreate = async () => {
     setSeasonRows([])
     itemForm.resetFields()
     setModalOpen(true)
+    try {
+      const [series, channels] = await Promise.all([
+        getSeriesSimple(),
+        getChannelsSimple(),
+      ])
+      setSeriesOptions(series)
+      setChannelOptions(channels)
+    } catch {
+      // 使用缓存数据
+    }
   }
 
   const openEdit = (record: ContentListItem) => {
@@ -450,8 +480,13 @@ export default function ContentManagement() {
       for (let i = 1; i <= volumnCount; i++) {
         rows.push({ series_ordinal: i, episode_count: 0 })
       }
-      setSeasonRows(rows)
+      if (JSON.stringify(seasonRows) !== JSON.stringify(rows)) {
+        /* eslint-disable react-hooks/set-state-in-effect */
+        setSeasonRows(rows)
+        /* eslint-enable react-hooks/set-state-in-effect */
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [volumnCount, currentType])
 
   const handleSubmit = async () => {
@@ -461,11 +496,12 @@ export default function ContentManagement() {
       const payload: ContentCreatePayload = {
         title: values.title,
         content_type: values.content_type,
-        genre_id: values.genre_id,
+        genre_ids: values.genre_ids,
         custom_tag_ids: values.custom_tag_ids,
         parent_id: values.parent_id,
         sequence: values.sequence,
-        series_type: values.series_type,
+        series_ordinal: values.series_ordinal,
+        series_type: values.content_type === 'SEASON_SERIES' ? 2 : values.series_type,
         volumn_count: values.volumn_count,
         season_details: currentType === 'SEASON' ? seasonRows : undefined,
         begin_time: values.begin_time?.toISOString(),
@@ -476,8 +512,13 @@ export default function ContentManagement() {
       await loadOptions()
       closeModal()
       void loadList(1, pagination.pageSize, filters)
-    } catch (err) {
-      // 错误已由拦截器处理
+    } catch (err: unknown) {
+      // 重名校验由后端统一裁决，命中时将错误标注到表单字段（对齐 UserManagement/RoleManagement 模式）
+      const error = err as { response?: { data?: { error_code?: string } } }
+      if (error.response?.data?.error_code === 'CONTENT_NAME_EXISTS') {
+        itemForm.setFields([{ name: 'title', errors: [t('trade.content.msg.nameExists')] }])
+      }
+      // 其他错误已由拦截器处理
     } finally {
       setModalLoading(false)
     }
@@ -493,7 +534,6 @@ export default function ContentManagement() {
     try {
       await deleteContent(record.id)
       void message.success(t('common.msg.deleted'), 3)
-      setSelectedRowKeys((prev) => prev.filter((key) => key !== record.id))
       void loadList(pagination.current, pagination.pageSize, filters)
       void loadWithoutLicenseCount()
     } catch (err) {
@@ -518,7 +558,6 @@ export default function ContentManagement() {
     try {
       const { deleted } = await batchDeleteContents(selectedRowKeys as number[])
       void message.success(t('trade.content.msg.batchDeleted', { count: deleted }), 3)
-      setSelectedRowKeys([])
       void loadList(pagination.current, pagination.pageSize, filters)
       void loadWithoutLicenseCount()
     } catch (err) {
@@ -548,6 +587,7 @@ export default function ContentManagement() {
     setAvailableLicenses([])
     setLinkedLicenses([])
     setPendingAddLicenses([])
+    setPendingRemoveLicenses([])
   }
 
   const loadAvailableLicenses = async (targetPage: number, f: Record<string, unknown>) => {
@@ -600,26 +640,24 @@ export default function ContentManagement() {
     setPendingAddLicenses((prev) => prev.filter((l) => l.id !== licenseId))
   }
 
-  const handleRemoveLicense = async (licRef: ContentLicenseRef) => {
-    if (!licenseModalContent) return
-    try {
-      await removeContentFromLicense(licRef.id, licenseModalContent.id)
-      setLinkedLicenses((prev) => prev.filter((l) => l.id !== licRef.id))
-      void message.success(t('common.msg.removed'), 3)
-    } catch (err) {
-      if (isHandledError(err)) return
-      void message.error(t('common.msg.removeFailed'), 5)
-    }
+  const handleRemoveLicense = (licRef: ContentLicenseRef) => {
+    // 仅本地标记为待移除，不调后端接口，提交时才统一处理
+    setPendingRemoveLicenses((prev) => [...prev, licRef.id])
+    setLinkedLicenses((prev) => prev.filter((l) => l.id !== licRef.id))
   }
 
   const handleLicenseModalConfirm = async () => {
-    if (pendingAddLicenses.length === 0) {
+    if (pendingAddLicenses.length === 0 && pendingRemoveLicenses.length === 0) {
       closeLicenseModal()
       return
     }
     setLicenseModalLoading(true)
     try {
-      // 批量添加所有待添加的许可证
+      // 先处理移除（防止新增的级联同步受旧数据干扰）
+      for (const licId of pendingRemoveLicenses) {
+        await removeContentFromLicense(licId, licenseModalContent!.id)
+      }
+      // 再处理新增
       for (const license of pendingAddLicenses) {
         await addContentsToLicense(license.id, { content_ids: [licenseModalContent!.id] })
       }
@@ -650,7 +688,7 @@ export default function ContentManagement() {
       setAssignTasks(taskData.items)
       setUserOptions(
         userData.items.map((u: UserListItem) => ({
-          label: u.display_name ? `${u.display_name}（${u.username}）` : u.username,
+          label: u.display_name ? `${u.display_name}(${u.username})` : u.username,
           value: u.id,
         })),
       )
@@ -662,7 +700,7 @@ export default function ContentManagement() {
           assignForm.setFieldsValue({ assignee_id: firstAssigneeId })
         }
       }
-    } catch (err) {
+    } catch {
       // 错误已由拦截器处理
     } finally {
       setAssignLoading(false)
@@ -700,6 +738,30 @@ export default function ContentManagement() {
     }
   }
 
+  const getContentDetailPath = (record: ContentListItem, options?: { mode?: string }) => {
+    const ct = record.content_type
+    const modeParam = options?.mode ? `?mode=${options.mode}&source=content_management` : '?source=content_management'
+    if (ct === 'CHANNEL') return `/live/channels/${record.id}${modeParam}`
+    if (ct === 'SCHEDULE') return `/live/schedules/${record.id}${modeParam}`
+    return `/contents/${record.id}${modeParam}`
+  }
+
+  // 点击内容名称跳转详情前的权限校验
+  const handleContentClick = useCallback(async (record: ContentListItem) => {
+    try {
+      const result = await checkContentAuthPermission(record.id)
+      if (!result.has_permission) {
+        message.warning(t('content.msg.noDataPermission'))
+        return
+      }
+      // 有权限，执行跳转
+      navigate(record.is_discarded ? getContentDetailPath(record) : getContentDetailPath(record, { mode: 'edit' }))
+    } catch (error) {
+      console.error('检查数据权限失败:', error)
+      message.error(t('content.msg.loadDetailFailed'))
+    }
+  }, [navigate, t])
+
   // ─── 表格列定义 ───────────────────────────────────────────────────────────────
 
   const columns: ColumnsType<ContentListItem> = [
@@ -709,13 +771,12 @@ export default function ContentManagement() {
       key: 'id',
       width: 70,
       fixed: 'left',
-      sorter: true,
-      sortOrder: sortField === 'id' ? sortOrder : null,
     },
     {
       title: t('content.col.contentName'),
       dataIndex: 'title',
       key: 'title',
+      width: 200,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'title' ? sortOrder : null,
@@ -723,7 +784,7 @@ export default function ContentManagement() {
         <Tooltip title={val}>
           <span
             style={{ color: '#1677ff', cursor: 'pointer' }}
-            onClick={() => navigate(record.is_discarded ? `/contents/${record.id}` : `/contents/${record.id}?mode=edit`)}
+            onClick={() => void handleContentClick(record)}
           >
             {val}
           </span>
@@ -827,7 +888,7 @@ export default function ContentManagement() {
                   type="link"
                   size="small"
                   icon={<InfoCircleOutlined />}
-                  onClick={() => navigate(`/trade/contents/${record.id}`)}
+                  onClick={() => void checkAndNavigateToDetail(record.id, `/trade/contents/${record.id}`)}
                 />
               </Tooltip>
             )
@@ -910,6 +971,10 @@ export default function ContentManagement() {
       dataIndex: 'service_type',
       key: 'service_type',
       width: 110,
+      render: (val: string) => {
+        const label = serviceTypeOptions.find((o) => o.value === val)?.label ?? val
+        return <Tooltip title={label}><span>{label}</span></Tooltip>
+      },
     },
     {
       title: t('content.col.startDate'),
@@ -926,20 +991,22 @@ export default function ContentManagement() {
       render: (v?: string) => v ?? '—',
     },
     {
-      title: '',
+      title: t('content.col.action'),
       key: 'action',
-      width: 50,
+      width: 60,
       render: (_, record) => {
         const isLinked = linkedLicenses.some((l) => l.id === record.id)
         const isPending = pendingAddLicenses.some((l) => l.id === record.id)
         return (
-          <Button
-            type="link"
-            size="small"
-            icon={<PlusOutlined />}
-            onClick={() => handleAddLicense(record)}
-            disabled={isLinked || isPending}
-          />
+          <Tooltip title={t('common.add')}>
+            <Button
+              type="link"
+              size="small"
+              icon={<PlusOutlined />}
+              onClick={() => handleAddLicense(record)}
+              disabled={isLinked || isPending}
+            />
+          </Tooltip>
         )
       },
     },
@@ -963,26 +1030,25 @@ export default function ContentManagement() {
 
       {/* 工具栏 */}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, gap: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16, gap: 8 }}>
         <div style={{ display: 'flex', gap: 8 }}>
-          {canOperateContent && selectedRowKeys.length > 0 && (
+          {canOperateContent && (
             <Popconfirm
               title={t('trade.content.form.batchDeleteConfirm', { count: selectedRowKeys.length })}
               onConfirm={() => void handleBatchDelete()}
+              disabled={selectedRowKeys.length === 0}
               okText={t('common.confirm')}
               cancelText={t('common.cancel')}
             >
-              <Button danger loading={deleteLoading} icon={<DeleteOutlined />}>
-                {t('trade.content.toolbar.batchDelete')} ({selectedRowKeys.length})
+              <Button danger disabled={selectedRowKeys.length === 0} loading={deleteLoading} icon={<DeleteOutlined />}>
+                {t('trade.content.toolbar.batchDelete')}{selectedRowKeys.length > 0 ? ` (${selectedRowKeys.length})` : ''}
               </Button>
             </Popconfirm>
           )}
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
           {canOperateContent && (
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              {t('trade.content.toolbar.newContent')}
-            </Button>
+              <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+                {t('trade.content.toolbar.newContent')}
+              </Button>
           )}
         </div>
       </div>
@@ -993,7 +1059,7 @@ export default function ContentManagement() {
         loading={loading}
         columns={columns}
         dataSource={contents}
-        scroll={{ x: 1300 }}
+        scroll={{ x: 1500 }}
         pagination={tablePaginationProps}
         onChange={handleTableChange}
         size="small"
@@ -1062,10 +1128,17 @@ export default function ContentManagement() {
 
             {/* Genre */}
             <Col span={12}>
-              <Form.Item name="genre_id" label={t('trade.col.genre')}>
+              <Form.Item
+                name="genre_ids"
+                label={t('trade.col.genre')}
+                rules={[{ required: true, message: t('trade.content.form.genreRequired') }]}
+              >
                 <Select
+                  mode="multiple"
                   allowClear
                   showSearch
+                  maxTagCount="responsive"
+                  maxTagTextLength={12}
                   placeholder={t('trade.content.search.genre')}
                   options={genreOptions}
                   filterOption={(input, opt) =>
@@ -1078,11 +1151,13 @@ export default function ContentManagement() {
 
             {/* Custom_Tags */}
             <Col span={12}>
-              <Form.Item name="custom_tag_ids" label={t('menu.basic.customTags')}>
+              <Form.Item name="custom_tag_ids" label={t('trade.content.col.customTags')}>
                 <Select
                   mode="multiple"
                   allowClear
                   showSearch
+                  maxTagCount="responsive"
+                  maxTagTextLength={12}
                   placeholder={t('metadata.channel.customTagsPlaceholder')}
                   options={customTagOptions}
                   filterOption={(input, opt) =>
@@ -1134,9 +1209,51 @@ export default function ContentManagement() {
                   label={t('trade.content.form.volumnCount')}
                   rules={[{ required: true, message: t('trade.content.form.episodeCountRequired') }]}
                 >
-                  <InputNumber min={1} max={999} placeholder={t('trade.content.form.episodeCountRequired')} style={{ width: '100%' }} />
+                  <InputNumber min={0} max={999} placeholder={t('trade.content.form.episodeCountRequired')} style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
+            )}
+
+            {/* ── SEASON_SERIES 专属字段 ────────────────────────────────── */}
+            {currentType === 'SEASON_SERIES' && (
+              <>
+                <Col span={12}>
+                  <Form.Item
+                    name="parent_id"
+                    label={t('trade.content.form.parentSeries')}
+                    rules={[{ required: true, message: t('trade.content.form.parentRequired') }]}
+                  >
+                    <Select
+                      showSearch
+                      allowClear
+                      placeholder={t('trade.content.form.parentRequired')}
+                      options={seasonOptions.map((s) => ({ label: s.title, value: s.id }))}
+                      filterOption={(input, opt) =>
+                        String(opt?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                      }
+                      style={{ width: '100%' }}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item
+                    name="series_ordinal"
+                    label={t('content.metadata.seriesOrdinal')}
+                    rules={[{ required: true, message: t('trade.content.form.seriesOrdinalRequired') }]}
+                  >
+                    <InputNumber min={1} max={999} placeholder={t('trade.content.form.seriesOrdinalRequired')} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item
+                    name="volumn_count"
+                    label={t('trade.content.form.volumnCount')}
+                    rules={[{ required: true, message: t('trade.content.form.episodeCountRequired') }]}
+                  >
+                    <InputNumber min={0} max={999} placeholder={t('trade.content.form.episodeCountRequired')} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+              </>
             )}
 
             {/* ── SEASON 专属字段 ────────────────────────────────── */}
@@ -1148,7 +1265,7 @@ export default function ContentManagement() {
                     label={t('trade.content.form.seasonCount')}
                     rules={[{ required: true, message: t('trade.content.form.seasonCountRequired') }]}
                   >
-                    <InputNumber min={1} max={50} placeholder={t('trade.content.form.seasonCountRequired')} style={{ width: 200 }} />
+                    <InputNumber min={0} max={50} placeholder={t('trade.content.form.seasonCountRequired')} style={{ width: 200 }} />
                   </Form.Item>
                 </Col>
                 {seasonRows.length > 0 && (
@@ -1263,63 +1380,82 @@ export default function ContentManagement() {
           <div style={{ flex: 1, minWidth: 0 }}>
             <Form
               form={licenseSearchForm}
-              layout="inline"
-              style={{ marginBottom: 12, flexWrap: 'wrap', gap: 8 }}
+              layout="vertical"
+              style={{ marginBottom: 12 }}
             >
-              <Form.Item name="provider_id" style={{ flex: '1 1 160px', marginBottom: 8 }}>
-                <Select
-                  allowClear
-                  showSearch
-                  placeholder={t('trade.content.search.providerPlaceholder')}
-                  options={providerOptions.map((p) => ({ label: p.name, value: p.id }))}
-                  filterOption={(input, opt) =>
-                    String(opt?.label ?? '').toLowerCase().includes(input.toLowerCase())
-                  }
-                  style={{ width: '100%' }}
-                />
-              </Form.Item>
-              <Form.Item name="contract_id" style={{ flex: '1 1 160px', marginBottom: 8 }}>
-                <Select
-                  allowClear
-                  showSearch
-                  placeholder={t('trade.content.search.contractPlaceholder')}
-                  options={contractOptions.map((c) => ({ label: c.name, value: c.id }))}
-                  filterOption={(input, opt) =>
-                    String(opt?.label ?? '').toLowerCase().includes(input.toLowerCase())
-                  }
-                  style={{ width: '100%' }}
-                />
-              </Form.Item>
-              <Form.Item name="name" style={{ flex: '1 1 160px', marginBottom: 8 }} rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
-                <TrimInput placeholder={t('trade.content.search.license')} style={{ width: '100%' }} />
-              </Form.Item>
-              <Form.Item style={{ marginBottom: 8 }}>
-                <Space>
-                  <Button
-                    type="primary"
-                    onClick={() => void loadAvailableLicenses(1, licenseSearchForm.getFieldsValue() as Record<string, unknown>)}
+              <Row gutter={12}>
+                <Col span={8}>
+                  <Form.Item
+                    name="provider_id"
+                    label={t('content.col.providerName')}
+                    style={{ marginBottom: 8 }}
                   >
-                    {t('common.search')}
-                  </Button>
-                  <Button
-                    onClick={() => {
-                      licenseSearchForm.resetFields()
-                      void loadAvailableLicenses(1, {})
-                    }}
+                    <Select
+                      allowClear
+                      showSearch
+                      placeholder={t('trade.content.search.providerPlaceholder')}
+                      options={providerOptions.map((p) => ({ label: p.name, value: p.id }))}
+                      filterOption={(input, opt) =>
+                        String(opt?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                      }
+                      style={{ width: '100%' }}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item
+                    name="contract_id"
+                    label={t('content.col.contractName')}
+                    style={{ marginBottom: 8 }}
                   >
-                    {t('common.reset')}
+                    <Select
+                      allowClear
+                      showSearch
+                      placeholder={t('trade.content.search.contractPlaceholder')}
+                      options={contractOptions.map((c) => ({ label: c.name, value: c.id }))}
+                      filterOption={(input, opt) =>
+                        String(opt?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                      }
+                      style={{ width: '100%' }}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item
+                    name="name"
+                    label={t('content.col.licenseName')}
+                    style={{ marginBottom: 8 }}
+                    rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}
+                  >
+                    <TrimInput placeholder={t('trade.content.search.license')} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Space>
+                <Button
+                  type="primary"
+                  onClick={() => void loadAvailableLicenses(1, licenseSearchForm.getFieldsValue() as Record<string, unknown>)}
+                >
+                  {t('common.search')}
+                </Button>
+                <Button
+                  onClick={() => {
+                    licenseSearchForm.resetFields()
+                    void loadAvailableLicenses(1, {})
+                  }}
+                >
+                  {t('common.reset')}
+                </Button>
+                {canOperateLicense && (
+                  <Button
+                    type="dashed"
+                    icon={<PlusOutlined />}
+                    onClick={() => setCreateLicenseModalOpen(true)}
+                  >
+                    {t('trade.addContent.newLicense')}
                   </Button>
-                  {canOperateLicense && (
-                    <Button
-                      type="dashed"
-                      icon={<PlusOutlined />}
-                      onClick={() => setCreateLicenseModalOpen(true)}
-                    >
-                      {t('trade.addContent.newLicense')}
-                    </Button>
-                  )}
-                </Space>
-              </Form.Item>
+                )}
+              </Space>
             </Form>
             <Table<LicenseListItem>
               rowKey="id"
@@ -1438,7 +1574,7 @@ export default function ContentManagement() {
           <div style={{ fontWeight: 500 }}>{assignRecord?.title ?? '—'}</div>
         </div>
         {assignLoading ? (
-          <div style={{ textAlign: 'center', padding: 24 }}>{t('common.loading') ?? 'Loading...'}</div>
+          <div style={{ textAlign: 'center', padding: 24 }}>{t('common.loading')}</div>
         ) : assignTasks.length === 0 ? (
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('trade.content.assign.noTask')} />
         ) : (

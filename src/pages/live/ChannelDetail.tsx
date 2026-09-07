@@ -20,12 +20,13 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Button,
   Col,
+  Dropdown,
   Empty,
   Image,
   Modal,
   Row,
+  Space,
   Spin,
-  Switch,
   Table,
   Tabs,
   Tag,
@@ -42,29 +43,30 @@ import {
   RightOutlined,
   WarningFilled,
 } from '@ant-design/icons'
-import type { ColumnsType } from 'antd/es/table'
-import { getContent, getContentLicenses } from '../../api/contents'
+import { getContent, getContentLicenses, getNodeStatus } from '../../api/contents'
+import type { NodeStatus } from '../../api/contents'
 import {
   getProcesses,
   getPhysicalChannels,
 } from '../../api/live'
-import { getCustomFields } from '../../api/customFields'
+import api, { isHandledError } from '../../api'
 import { getPictures } from '../../api/pictures'
 import { useI18n } from '../../i18n/useI18n'
 import { useTablePagination } from '../../hooks/useTablePagination'
 import { useWorkflowNodes } from '../../hooks/useWorkflowNodes'
 import { useReviewAndPublish } from '../../hooks/useReviewAndPublish'
-import { normalizeNodeCode, type OpStatus, analyzeNodeBatches, calculateOrderFromEdges, isStartOrEndNode } from '../../utils/workflow'
+import { normalizeNodeCode, type OpStatus, analyzeNodeBatches, findPrevPendingNodeName } from '../../utils/workflow'
 import { useTaskAssigneePermission } from '../../hooks/useTaskAssigneePermission'
+import { useNodeEditPermission } from '../../hooks/useNodeEditPermission'
 import { useAuthStore } from '../../stores/authStore'
 import ProcessesTab from '../../components/ProcessesTab'
 import LicenseTab from '../../components/LicenseTab'
 import StatusLogsTab from '../../components/StatusLogsTab'
 import ProcessedHistoryTab from '../../components/ProcessedHistoryTab'
-import ObjectIngestHistoryModal from '../../components/ObjectIngestHistoryModal'
 import PostersModal from '../../components/PostersModal'
 import ChannelScheduleTab from './ChannelScheduleTab'
 import PhysicalChannelModal from '../../components/PhysicalChannelModal'
+import PhysicalChannelTable from '../../components/PhysicalChannelTable'
 import PackageLinkModal from '../../components/PackageLinkModal'
 import CategoryLinkModal from '../../components/CategoryLinkModal'
 import MetadataModal from '../../components/MetadataModal'
@@ -79,9 +81,12 @@ import type {
   PhysicalChannelListItem,
   ProcessListItem,
 } from '../../types/live'
-import type { CustomFieldListItem } from '../../types/basic'
 import type { PictureItem } from '../../api/pictures'
+import { checkPicturesPublishStatus } from '../../api/pictures'
 import type { MessageKey } from '../../i18n/messages'
+import { getIngestHistories } from '../../api/ingestHistory'
+import type { IngestHistoryItem } from '../../types/ingestHistory'
+import dayjs from 'dayjs'
 
 const { Text } = Typography
 
@@ -331,6 +336,28 @@ export default function ChannelDetail() {
 
   // 注入历史弹框
   const [ingestHistoryModal, setIngestHistoryModal] = useState<{ open: boolean }>({ open: false })
+  const [ingestHistoryList, setIngestHistoryList] = useState<IngestHistoryItem[]>([])
+  const [ingestHistoryLoading, setIngestHistoryLoading] = useState(false)
+  const [ingestHistoryPagination, setIngestHistoryPagination] = useState({ current: 1, pageSize: 10, total: 0 })
+
+  const loadIngestHistory = useCallback(async (page: number, pageSize: number) => {
+    if (!channel) return
+    setIngestHistoryLoading(true)
+    try {
+      const res = await getIngestHistories({
+        entity_type: 'Content',
+        entity_id: channel.id,
+        page,
+        page_size: pageSize,
+      })
+      setIngestHistoryList(res.items)
+      setIngestHistoryPagination({ current: page, pageSize, total: res.total })
+    } catch (err) {
+      if (!isHandledError(err)) message.error(t('ingestHistory.msg.loadFailed'), 5)
+    } finally {
+      setIngestHistoryLoading(false)
+    }
+  }, [channel, t])
 
   // License Tab 数据
   const [licenses, setLicenses]           = useState<ContentLicenseRef[]>([])
@@ -350,9 +377,6 @@ export default function ChannelDetail() {
     },
   })
 
-  // Physical Channel 自定义字段
-  const [customFields, setCustomFields] = useState<CustomFieldListItem[]>([])
-
   // 操作按钮弹框状态
   const [postersOpen, setPostersOpen]           = useState(false)
   const [physicalChannelOpen, setPhysicalChannelOpen] = useState(false)
@@ -363,17 +387,14 @@ export default function ChannelDetail() {
   // 操作按钮状态检测所需数据
   const [hasInitiatedReview, setHasInitiatedReview] = useState(false)
 
-  // 操作按钮状态检测所需数据
-  const [_hasPackage, setHasPackage] = useState(false)
-  const [_hasCategory, setHasCategory] = useState(false)
-  const [hasReview, setHasReview] = useState(false)
-  const [_hasPublishPlan, setHasPublishPlan] = useState(false)
   const [processes, setProcesses] = useState<ProcessListItem[]>([])
+  const [nodeStatus, setNodeStatus] = useState<Record<string, NodeStatus>>({})
   const [statusDataVersion, setStatusDataVersion] = useState(0)
 
   // 发布计划回显状态
   const [localPublishPlanOpen, setLocalPublishPlanOpen] = useState(false)
   const [existingPlanTime, setExistingPlanTime] = useState<string | undefined>(undefined)
+  const [publishInfo, setPublishInfo] = useState<import('../../components/PublishPlanModal').PublishInfo | undefined>(undefined)
 
   // 任务指派人信息（权限校验用）
   const [taskAssignees, setTaskAssignees] = useState<ContentTaskAssignees | null>(null)
@@ -392,6 +413,29 @@ export default function ChannelDetail() {
     return isArrangementAssignee || isReviewL1Assignee || isReviewL2Assignee || isReviewL3Assignee
   }, [taskAssignees, user?.id, isAdmin])
 
+  const readOnly = useMemo(() => {
+    const modeIsEdit = mode === 'edit'
+    if (!modeIsEdit) return true
+    if (isAdmin) return false
+    return false
+  }, [mode, isAdmin])
+
+  // 节点级编辑权限判断
+  const nodeEditPermission = useNodeEditPermission({
+    taskAssignees,
+    isAdmin,
+    currentUserId: user?.id ?? null,
+    forceReadOnly: mode === 'view', // 已废弃频道强制只读，包括Admin
+  })
+
+  // 判断指定节点是否只读（用于弹框）
+  const isNodeReadOnlyMemo = useCallback(
+    (nodeCode: string) => {
+      return nodeEditPermission.isNodeReadOnly(nodeCode)
+    },
+    [nodeEditPermission]
+  )
+
   // 审核与发布计划 Hook（依赖 processes）
   const {
     reviewOpen,
@@ -404,10 +448,13 @@ export default function ChannelDetail() {
   } = useReviewAndPublish({
     contentId: channel?.id,
     contentStatus: channel?.status,
+    contentType: channel?.content_type,
     licenses,
     hasInitiatedReview,
-    processes,  // ✅ 传递流程列表
-    isTaskAssignee,  // 传递任务分配人权限
+    processes,
+    isTaskAssignee,
+    pageReadOnly: readOnly,
+    isNodeReadOnly: isNodeReadOnlyMemo,
     onSuccess: () => void refreshAfterOp(),
   })
 
@@ -420,7 +467,7 @@ export default function ChannelDetail() {
   } = useWorkflowNodes(channel?.content_type ?? 'CHANNEL')
 
   // 任务指派人权限校验
-  const { checkPermissionAsync, getNoPermissionMessage } = useTaskAssigneePermission({
+  const { checkPermissionAsync } = useTaskAssigneePermission({
     taskAssignees,
     contentId: channelId,
     enforceAssignment: true,
@@ -470,46 +517,31 @@ export default function ChannelDetail() {
 
     void (async () => {
       try {
-        const { getContentPackages } = await import('../../api/live')
-        const packagesResp = await getContentPackages(channelId)
-        setHasPackage(packagesResp.length > 0)
+        // 刷新内容详情（包含 content.status）
+        const detailResp = await getContent(channelId)
+        const detail = detailResp.content as unknown as ChannelDetailItem
+        setChannel(detail)
+        setTaskAssignees(detailResp.task_assignees)
       } catch (err) {
-        setHasPackage(false)
+        // 忽略错误
       }
 
       try {
-        const { getContentCategories } = await import('../../api/live')
-        const categoriesResp = await getContentCategories(channelId)
-        setHasCategory(categoriesResp.length > 0)
+        const ns = await getNodeStatus(channelId)
+        setNodeStatus(ns)
       } catch (err) {
-        setHasCategory(false)
+        setNodeStatus({})
       }
 
       try {
         const processesResp = await getProcesses(channelId)
         setProcesses(processesResp)
-        const anyReview = processesResp.find((p) => p.node_code === 'ContentReview')
-        setHasInitiatedReview(!!anyReview)
-        const passedReview = processesResp.find((p) => p.node_code === 'ContentReview' && p.status === 'Passed')
-        setHasReview(!!passedReview)
+        const applicationReview = processesResp.find((p) => p.node_code === 'ApplicationReview')
+        setHasInitiatedReview(!!applicationReview)
       } catch (err) {
         setHasInitiatedReview(false)
-        setHasReview(false)
       }
 
-      try {
-        const { getPublishes } = await import('../../api/publishes')
-        const publishesResp = await getPublishes({ page: 1, page_size: 100 })
-        const completedStatuses = ['plan', 'publishing', 'success']
-        const contentPublishes = publishesResp.items.filter(
-          (item) => item.entity_id === channelId && completedStatuses.includes(item.publish_status)
-        )
-        setHasPublishPlan(contentPublishes.length > 0)
-      } catch (err) {
-        setHasPublishPlan(false)
-      }
-
-      // 加载物理频道数据（用于判断 PhysicalChannel 节点状态）
       try {
         const res = await getPhysicalChannels(channelId, { page: 1, page_size: 1 })
         updatePhysicalChannelsPagination({ ...res, page: physicalChannelsPagination.current, page_size: physicalChannelsPagination.pageSize })
@@ -568,23 +600,15 @@ export default function ChannelDetail() {
     setPhysicalChannelsLoading(true)
     try {
       const ps = pageSize ?? physicalChannelsPagination.pageSize
-      const [res, cfRes] = await Promise.all([
-        getPhysicalChannels(channelId, { page, page_size: ps }),
-        getCustomFields({ page_size: 1000 }),
-      ])
+      const res = await getPhysicalChannels(channelId, { page, page_size: ps })
       setPhysicalChannels(res.items)
       updatePhysicalChannelsPagination(res)
       setPhysicalChannelsLoaded(true)
-
-      const fields = cfRes.items.filter(
-        (f) => f.belongings.includes('ALL') || f.belongings.includes('PhysicalChannel')
-      )
-      setCustomFields(fields)
     } catch (err) {
     } finally {
       setPhysicalChannelsLoading(false)
     }
-  }, [channelId, t, physicalChannelsPagination.pageSize, updatePhysicalChannelsPagination])
+  }, [channelId, physicalChannelsPagination.pageSize, updatePhysicalChannelsPagination])
 
   const handleTabChange = useCallback(
     (key: string) => {
@@ -599,7 +623,6 @@ export default function ChannelDetail() {
   // ── 操作成功后刷新数据 ─────────────────────────────────────────────────
   const refreshAfterOp = useCallback(async () => {
     try {
-      // 使用与初始化相同的 API，确保数据结构一致
       const detailResp = await getContent(channelId)
       const detail = detailResp.content as unknown as ChannelDetailItem
       setChannel(detail)
@@ -607,43 +630,34 @@ export default function ChannelDetail() {
     } catch (err) { /* ignore */ }
     setStatusDataVersion((v) => v + 1)
     void getPictures('channel', channelId).then(setPictures)
-  }, [channelId])
+    void loadPhysicalChannels(physicalChannelsPagination.current)
+  }, [channelId, loadPhysicalChannels, physicalChannelsPagination.current])
 
   // ── 操作按钮点击处理 ─────────────────────────────────────────────────────
-  // 判断是否只读：基于 arrangement 任务状态
-  const readOnly = useMemo(() => {
-    const modeIsEdit = mode === 'edit'
-    
-    // 如果 URL 不是 edit 模式,只读
-    if (!modeIsEdit) return true
-    
-    // ADMIN 用户永远不受限制
-    if (isAdmin) return false
-    
-    // 基于 arrangement 任务状态判断是否锁定
-    // 任务已完成(Completed) → 锁定(不允许编辑)
-    // 任务待处理/处理中(Pending/InProgress) → 允许编辑
-    const arrangementStatus = taskAssignees?.arrangement_task_status
-    if (arrangementStatus === 'Completed') {
-      return true
-    }
-    
-    return false
-  }, [mode, isAdmin, taskAssignees?.arrangement_task_status])
+
+  // 发布计划弹框的只读状态：使用节点级权限判断（与其他节点一致）
+  const publishPlanReadOnly = useMemo(() => {
+    return isNodeReadOnlyMemo('PublishPlan')
+  }, [isNodeReadOnlyMemo])
 
   const handleOpButtonClick = useCallback(
     async (key: string, label: string) => {
       const normalizedKey = normalizeNodeCode(key)
+      console.log('[handleOpButtonClick] key=', key, 'normalizedKey=', normalizedKey, 'hasInitiatedReview=', hasInitiatedReview)
 
-      // ContentReview 节点特殊处理：不在这里拦截权限，让 handleReviewAction 处理
-      // 非审批人可以以只读模式查看审批流程
-      if (normalizedKey !== 'ContentReview' && !readOnly) {
-        const { allowed, message: permissionMsg } = await checkPermissionAsync(key)
-        if (!allowed) {
-          void message.error(permissionMsg || getNoPermissionMessage(key), 5)
-          return
-        }
+      // 审核与发布相关节点：仅有查看权限的账号（非任务分配人且非Admin）禁止操作，提示无权限
+      // 分配人即使节点临时只读（如审核进行中）仍可打开只读弹框查看进度
+      if (
+        !isTaskAssignee &&
+        ['ApplicationReview', 'ContentReview', 'Review', 'PublishPlan'].includes(normalizedKey)
+      ) {
+        message.warning(t('common.msg.noPermission'), 3)
+        return
       }
+
+      // 节点级权限判断：不可编辑时直接打开弹框（只读模式）
+      // 不再拦截，有数据权限的用户都可以查看节点内容
+      // 弹框的只读状态由 isNodeReadOnlyMemo(nodeCode) 控制
       if (normalizedKey === 'Posters') {
         setPostersOpen(true)
         return
@@ -666,118 +680,61 @@ export default function ChannelDetail() {
         return
       }
       if (normalizedKey === 'PublishPlan') {
-        // 获取当前发布计划时间用于回显
+        console.log('[handleOpButtonClick] PublishPlan, channelId=', channelId, 'channel?.content_type=', channel?.content_type)
+        // 校验海报是否已发布（只对 SCHEDULE 和 CHANNEL 类型）
+        if (channelId && channel?.content_type && ['SCHEDULE', 'CHANNEL'].includes(channel.content_type)) {
+          try {
+            console.log('[handleOpButtonClick] PublishPlan checking pictures...')
+            const checkResult = await checkPicturesPublishStatus('Content', channelId, channel.content_type)
+            console.log('[handleOpButtonClick] PublishPlan checkResult=', checkResult)
+            if (!checkResult.can_publish) {
+              message.error(
+                t('content.publishPlan.picturesNotPublished', {
+                  unpublished: checkResult.unpublished_count,
+                  total: checkResult.total_count,
+                }),
+                5
+              )
+              return
+            }
+          } catch (err) {
+            console.log('[handleOpButtonClick] PublishPlan checkPicturesPublishStatus error:', err)
+          }
+        } else {
+          console.log('[handleOpButtonClick] PublishPlan skipping picture check')
+        }
+
         if (channelId) {
           try {
             const plan = await getCurrentPublishPlan('Content', channelId)
             setExistingPlanTime(plan?.scheduled_time)
+            if (plan) {
+              setPublishInfo({
+                publish_status: plan.publish_status,
+                publish_time: plan.publish_time,
+                unpublish_time: plan.unpublish_time,
+                task_type: plan.task_type,
+                execution_mode: plan.execution_mode,
+                scheduled_time: plan.scheduled_time,
+              })
+            } else {
+              setPublishInfo(undefined)
+            }
           } catch {
             setExistingPlanTime(undefined)
+            setPublishInfo(undefined)
           }
         }
         setLocalPublishPlanOpen(true)
         return
       }
-      await handleReviewAction(key, label)
+      // ApplicationReview、ContentReview 统一走 handleReviewAction
+      console.log('[handleOpButtonClick] calling handleReviewAction with key=', key)
+      const result = await handleReviewAction(key, label)
+      console.log('[handleOpButtonClick] handleReviewAction returned=', result)
     },
-    [handleReviewAction, checkPermissionAsync, readOnly, t, message],
+    [handleReviewAction, checkPermissionAsync, readOnly, t, message, isNodeReadOnlyMemo, channelId, hasInitiatedReview, isTaskAssignee],
   )
-
-  // ── 列定义 ─────────────────────────────────────────────────────────────────
-
-  const physicalChannelColumns: ColumnsType<PhysicalChannelListItem> = [
-    {
-      title: t('physicalChannel.col.mediaservice'),
-      dataIndex: 'mediaservice',
-      key: 'mediaservice',
-      width: 120,
-      render: (v?: string) => v ?? '—',
-    },
-    {
-      title: t('physicalChannel.col.definition'),
-      dataIndex: 'definition',
-      key: 'definition',
-      width: 100,
-      render: (v?: string) => v ?? '—',
-    },
-    {
-      title: t('physicalChannel.col.videoencode'),
-      dataIndex: 'videoencode',
-      key: 'videoencode',
-      width: 120,
-      render: (v?: string) => v ?? '—',
-    },
-    {
-      title: t('physicalChannel.col.bitrate'),
-      dataIndex: 'bitrate',
-      key: 'bitrate',
-      width: 100,
-      render: (v?: string) => v ?? '—',
-    },
-    {
-      title: t('physicalChannel.col.deeplinkChUrl'),
-      dataIndex: 'deeplink_ch_url',
-      key: 'deeplink_ch_url',
-      width: 160,
-      ellipsis: { showTitle: false },
-      render: (v?: string) => v ?? '—',
-    },
-    {
-      title: t('physicalChannel.col.shifttime'),
-      dataIndex: 'shifttime',
-      key: 'shifttime',
-      width: 100,
-      render: (v?: number) => v ?? '—',
-    },
-    {
-      title: t('physicalChannel.col.tvodSaveTime'),
-      dataIndex: 'tvod_save_time',
-      key: 'tvod_save_time',
-      width: 120,
-      render: (v?: number) => v ?? '—',
-    },
-    {
-      title: t('physicalChannel.col.tvodEnable'),
-      dataIndex: 'tvod_enable',
-      key: 'tvod_enable',
-      width: 100,
-      align: 'center',
-      render: (v?: boolean) => <Switch disabled checked={v ?? false} size="small" />,
-    },
-    {
-      title: t('physicalChannel.col.tstvEnable'),
-      dataIndex: 'tstv_enable',
-      key: 'tstv_enable',
-      width: 100,
-      align: 'center',
-      render: (v?: boolean) => <Switch disabled checked={v ?? false} size="small" />,
-    },
-    {
-      title: t('physicalChannel.col.cutvEnable'),
-      dataIndex: 'cutv_enable',
-      key: 'cutv_enable',
-      width: 100,
-      align: 'center',
-      render: (v?: boolean) => <Switch disabled checked={v ?? false} size="small" />,
-    },
-    {
-      title: t('physicalChannel.col.encryption'),
-      dataIndex: 'encryption',
-      key: 'encryption',
-      width: 100,
-      align: 'center',
-      render: (v?: boolean) => <Switch disabled checked={v ?? false} size="small" />,
-    },
-    ...customFields.map((field) => ({
-      title: field.field_name,
-      key: `cf_${field.field_code}`,
-      width: 120,
-      render: (_: unknown, record: PhysicalChannelListItem) => {
-        const val = record.field_values?.[field.field_code]
-        return val ?? '—'
-      },
-    })),
-  ]
 
   // ── Tab 项目构建 ──────────────────────────────────────────────────────────
 
@@ -806,15 +763,12 @@ export default function ChannelDetail() {
       key: 'physicalChannel',
       label: t('content.tab.physicalChannel'),
       children: (
-        <Table<PhysicalChannelListItem>
-          rowKey="id"
-          size="small"
-          loading={physicalChannelsLoading}
-          columns={physicalChannelColumns}
+        <PhysicalChannelTable
+          channelId={channelId}
           dataSource={physicalChannels}
-          scroll={{ x: 1200 }}
-          pagination={physicalChannelsPaginationProps}
-          onChange={handlePhysicalChannelsTableChange}
+          loading={physicalChannelsLoading}
+          paginationProps={physicalChannelsPaginationProps}
+          onTableChange={handlePhysicalChannelsTableChange}
           locale={{ emptyText: t('live.channel.emptyPhysicalChannels') }}
         />
       ),
@@ -858,33 +812,15 @@ export default function ChannelDetail() {
       ? [...new Set(licenses.flatMap((l) => l.platforms?.map((p) => p.platform) ?? []))]
       : []
 
-  const getOperationStatus = (key: string): OpStatus => {
+  const getOperationStatus = (key: string, mandatory?: boolean): OpStatus => {
     const normalizedKey = normalizeNodeCode(key)
-    switch (normalizedKey) {
-      case 'Metadata':
-        return processes.some((p) => p.node_code === 'Metadata' && p.status === 'Passed') ? 'completed' : 'pending'
-      case 'Posters':
-        return pictures.length > 0 ? 'completed' : 'pending'
-      // CHANNEL 类型的 InjectSubContent 节点对应 PhysicalChannel
-      case 'InjectSubContent':
-      case 'PhysicalChannel': {
-        const hasInjectSubContent = processes.some((p) => p.node_code === 'InjectSubContent' && p.status === 'Passed')
-        const hasPhysicalChannel = processes.some((p) => p.node_code === 'PhysicalChannel' && p.status === 'Passed')
-        return (hasInjectSubContent || hasPhysicalChannel) ? 'completed' : 'pending'
-      }
-      case 'Package':
-        return processes.some((p) => p.node_code === 'Package' && p.status === 'Passed') ? 'completed' : 'pending'
-      case 'Category':
-        return processes.some((p) => p.node_code === 'Category' && p.status === 'Passed') ? 'completed' : 'pending'
-      case 'ApplicationReview':
-        return processes.some((p) => p.node_code === 'ApplicationReview') ? 'completed' : 'pending'
-      case 'ContentReview':
-        return hasReview ? 'completed' : 'pending'
-      case 'PublishPlan':
-        return processes.some((p) => p.node_code === 'PublishPlan' && p.status === 'Passed') ? 'completed' : 'pending'
-      default:
-        return 'pending'
-    }
+    if (normalizedKey === 'Start' || normalizedKey === 'End') return 'completed'
+    const node = nodeStatus[normalizedKey]
+    if (!node) return 'pending'
+    if (node.completed) return 'completed'
+    // 必填节点 warning 视为未完成（pending，红叉）；非必填节点保持 warning（可选未完成）
+    if (node.warning && mandatory === false) return 'warning'
+    return 'pending'
   }
 
   const defaultButtons = [
@@ -928,26 +864,26 @@ export default function ChannelDetail() {
           {/* 中：频道基本信息 */}
           <Col flex="1" style={{ minWidth: 0 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 4 }}>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
+              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                <Text type="secondary" style={{ fontSize: 12, width:100, flexShrink: 0, whiteSpace: 'nowrap' }}>
                   {t('content.detail.contentName')}:{' '}
                 </Text>
-                <Text strong style={{ fontSize: 15 }}>{channel.title}</Text>
+                <Text strong style={{ fontSize: 15, wordBreak: 'break-all' }}>{channel.title}</Text>
               </div>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
+              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                <Text type="secondary" style={{ fontSize: 12, width: 100, flexShrink: 0, whiteSpace: 'nowrap' }}>
                   {t('content.detail.contentType')}:{' '}
                 </Text>
                 <Tag color="blue">{channel.content_type}</Tag>
               </div>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
+              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                <Text type="secondary" style={{ fontSize: 12, width: 100, flexShrink: 0, whiteSpace: 'nowrap' }}>
                   {t('content.detail.provider')}:{' '}
                 </Text>
-                <Text>{providerNames}</Text>
+                <Text style={{ wordBreak: 'break-all' }}>{providerNames}</Text>
               </div>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
+              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                <Text type="secondary" style={{ fontSize: 12, width: 100, flexShrink: 0, whiteSpace: 'nowrap' }}>
                   {t('content.detail.platform')}:{' '}
                 </Text>
                 {platformTags.length > 0 ? (
@@ -962,14 +898,23 @@ export default function ChannelDetail() {
                   <Text type="secondary">—</Text>
                 )}
               </div>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
+              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                <Text type="secondary" style={{ fontSize: 12, width: 100, flexShrink: 0, whiteSpace: 'nowrap' }}>
+                  {t('content.detail.genre')}:{' '}
+                </Text>
+                <Text style={{ wordBreak: 'break-all' }}>{channel.genre_name || '—'}</Text>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                <Text type="secondary" style={{ fontSize: 12, width: 100, flexShrink: 0, whiteSpace: 'nowrap' }}>
                   {t('content.detail.ingestStatus')}:{' '}
                 </Text>
                 <Tag
                   color={STATUS_COLOR[channel.status] ?? 'default'}
                   style={{ fontSize: 12, cursor: 'pointer' }}
-                  onClick={() => setIngestHistoryModal({ open: true })}
+                  onClick={() => {
+                    setIngestHistoryModal({ open: true })
+                    void loadIngestHistory(1, 10)
+                  }}
                 >
                   {channel.status}
                 </Tag>
@@ -993,7 +938,7 @@ export default function ChannelDetail() {
               {operationButtons.map((btn) => {
                 const key = btn.key
                 const label = btn.label
-                const status = getOperationStatus(key)
+                const status = getOperationStatus(key, btn.mandatory)
                 // 按钮始终可点击，点击时判断前置节点是否完成
                 const available = checkNodeAvailable(btn.id, getOperationStatus)
                 const statusIcon = (() => {
@@ -1002,65 +947,38 @@ export default function ChannelDetail() {
                   return <CloseCircleFilled style={{ color: '#ff4d4f', fontSize: 14 }} />
                 })()
                 return (
-                  <Tooltip
+                  <div
                     key={key}
-                    title={!available ? t('content.detail.nodeNotAvailable') : undefined}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      cursor: 'pointer',
+                      userSelect: 'none',
+                    }}
+                    onClick={() => {
+                      // 有数据权限就可以点击查看（只读模式），不检查前置节点
+                      // 编辑模式需要检查前置节点是否全部完成
+                      if (!isNodeReadOnlyMemo(key) && !available) {
+                        const nodeBatchMap = analyzeNodeBatches(workflowNodes, workflowEdges)
+                        const pendingName = findPrevPendingNodeName(btn.id, workflowNodes, workflowEdges, nodeBatchMap, getOperationStatus)
+                        message.warning(t('content.detail.prevNodeIncomplete', { name: pendingName ?? '' }), 3)
+                        return
+                      }
+                      handleOpButtonClick(key, label)
+                    }}
                   >
-                    <div
+                    {statusIcon}
+                    <Text
                       style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        cursor: 'pointer',
-                        userSelect: 'none',
-                      }}
-                      onClick={() => {
-                        if (readOnly || available) {
-                          handleOpButtonClick(key, label)
-                        } else {
-                          const orderMap = calculateOrderFromEdges(workflowNodes, workflowEdges)
-                          const sortedNodes = [...workflowNodes]
-                            .filter((n) => n.node_type !== 'parallel_box' && !isStartOrEndNode(n.node_code))
-                            .sort((a, b) => {
-                              const orderA = orderMap.get(a.id)
-                              const orderB = orderMap.get(b.id)
-                              if (orderA !== undefined && orderB !== undefined) {
-                                return orderA - orderB
-                              }
-                              return a.sequence - b.sequence
-                            })
-                          const nodeBatchMap = analyzeNodeBatches(workflowNodes, workflowEdges)
-                          const currentBatch = nodeBatchMap.get(btn.id)
-                          const prevBatchNodes = sortedNodes.filter(
-                            (node) => {
-                              const batch = nodeBatchMap.get(node.id)
-                              return batch !== undefined && currentBatch !== undefined && batch < currentBatch
-                            }
-                          )
-                          const firstPendingNode = prevBatchNodes.find(
-                            (node) => getOperationStatus(node.node_code) === 'pending'
-                          )
-                          if (firstPendingNode) {
-                            const pendingNodeName = firstPendingNode.node_name
-                            message.warning(t('content.detail.prevNodeIncomplete', { name: pendingNodeName }), 3)
-                          } else {
-                            message.warning(t('content.detail.nodeNotAvailable'), 3)
-                          }
-                        }
+                        color: '#1677ff',
+                        fontSize: 13,
+                        whiteSpace: 'nowrap',
                       }}
                     >
-                      {statusIcon}
-                      <Text
-                        style={{
-                          color: '#1677ff',
-                          fontSize: 13,
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {label}
-                      </Text>
-                    </div>
-                  </Tooltip>
+                      {label}
+                    </Text>
+                  </div>
                 )
               })}
             </div>
@@ -1068,14 +986,14 @@ export default function ChannelDetail() {
 
           {/* 最右：记录导航 */}
           <Col flex="0 0 auto" style={{ display: 'flex', alignItems: 'flex-start', paddingTop: 4 }}>
-            <Button.Group>
+            <Space.Compact>
               <Tooltip title={t('content.detail.prevRecord')}>
                 <Button icon={<LeftOutlined />} disabled={prevId === null} onClick={() => prevId !== null && goToRecord(prevId)} />
               </Tooltip>
               <Tooltip title={t('content.detail.nextRecord')}>
                 <Button icon={<RightOutlined />} disabled={nextId === null} onClick={() => nextId !== null && goToRecord(nextId)} />
               </Tooltip>
-            </Button.Group>
+            </Space.Compact>
           </Col>
         </Row>
       </div>
@@ -1100,7 +1018,7 @@ export default function ChannelDetail() {
             entityType="channel"
             entityId={channel.id}
             entityName={channel.title}
-            readOnly={readOnly}
+            readOnly={isNodeReadOnlyMemo('Posters')}
             onClose={() => {
               setPostersOpen(false)
               setStatusDataVersion((v) => v + 1)
@@ -1129,16 +1047,17 @@ export default function ChannelDetail() {
           <PhysicalChannelModal
             open={physicalChannelOpen}
             channelId={channel.id}
-            readOnly={readOnly}
+            readOnly={isNodeReadOnlyMemo('PhysicalChannel')}
             onClose={() => setPhysicalChannelOpen(false)}
-            onSuccess={() => { setPhysicalChannelOpen(false); void refreshAfterOp() }}
+            // onSuccess 仅刷新父页数据；新增成功后弹框内部自动关闭，删除后停留弹框内
+            onSuccess={() => void refreshAfterOp()}
           />
 
           <PackageLinkModal
             open={packageLinkOpen}
             contentId={channel.id}
             contentName={channel.title}
-            readOnly={readOnly}
+            readOnly={isNodeReadOnlyMemo('Package')}
             onClose={() => setPackageLinkOpen(false)}
             onSuccess={() => { setPackageLinkOpen(false); void refreshAfterOp() }}
           />
@@ -1147,7 +1066,7 @@ export default function ChannelDetail() {
             open={categoryLinkOpen}
             contentId={channel.id}
             contentName={channel.title}
-            readOnly={readOnly}
+            readOnly={isNodeReadOnlyMemo('Category')}
             onClose={() => setCategoryLinkOpen(false)}
             onSuccess={() => { setCategoryLinkOpen(false); void refreshAfterOp() }}
           />
@@ -1157,7 +1076,7 @@ export default function ChannelDetail() {
             contentId={channel.id}
             contentType={channel.content_type}
             contentName={channel.title}
-            readOnly={readOnly}
+            readOnly={isNodeReadOnlyMemo('Metadata')}
             onClose={() => setMetadataOpen(false)}
             onSuccess={() => { setMetadataOpen(false); void refreshAfterOp() }}
           />
@@ -1168,6 +1087,7 @@ export default function ChannelDetail() {
             contentName={channel.title}
             mode={reviewMode}
             readOnly={reviewReadOnly}
+            hasInitiatedReview={hasInitiatedReview}
             onClose={closeReview}
             onSuccess={() => { closeReview(); void refreshAfterOp() }}
           />
@@ -1176,10 +1096,13 @@ export default function ChannelDetail() {
             open={localPublishPlanOpen}
             contentId={channel?.id}
             contentName={channel?.title}
+            contentType={channel?.content_type ?? 'CHANNEL'}
             initialScheduledTime={existingPlanTime}
-            readOnly={readOnly}
-            onClose={() => { setLocalPublishPlanOpen(false); setExistingPlanTime(undefined) }}
-            onSuccess={() => { setLocalPublishPlanOpen(false); setExistingPlanTime(undefined); void refreshAfterOp() }}
+            publishInfo={publishInfo}
+            hasPublishHistory={!!publishInfo}
+            readOnly={publishPlanReadOnly}
+            onClose={() => { setLocalPublishPlanOpen(false); setExistingPlanTime(undefined); setPublishInfo(undefined) }}
+            onSuccess={() => { setLocalPublishPlanOpen(false); setExistingPlanTime(undefined); setPublishInfo(undefined); void refreshAfterOp() }}
           />
 
           <Modal
@@ -1210,15 +1133,129 @@ export default function ChannelDetail() {
       </Modal>
 
       {/* 注入历史弹框 */}
-      {channel && (
-        <ObjectIngestHistoryModal
-          open={ingestHistoryModal.open}
-          entityType="Content"
-          entityId={channel.id}
-          entityName={channel.title || `Channel #${channel.id}`}
-          onClose={() => setIngestHistoryModal({ open: false })}
+      <Modal
+        title={`${channel?.title || ''} - ${t('ingestHistory.title')}`}
+        open={ingestHistoryModal.open}
+        onCancel={() => setIngestHistoryModal({ open: false })}
+        width={1000}
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <Button type="primary" onClick={() => setIngestHistoryModal({ open: false })}>
+              {t('ingestHistory.btn.close')}
+            </Button>
+          </div>
+        }
+      >
+        <Table
+          rowKey="id"
+          dataSource={ingestHistoryList}
+          loading={ingestHistoryLoading}
+          size="small"
+          pagination={{
+            current: ingestHistoryPagination.current,
+            pageSize: ingestHistoryPagination.pageSize,
+            total: ingestHistoryPagination.total,
+            showSizeChanger: true,
+            showQuickJumper: true,
+            showTotal: (n: number) => t('pagination.total', { n }),
+            onChange: (page, pageSize) => void loadIngestHistory(page, pageSize),
+          }}
+          columns={[
+            { title: t('publish.ingestHistory.col.type'), dataIndex: 'entity_name', key: 'entity_name' },
+            {
+              title: t('publish.ingestHistory.col.createDate'),
+              dataIndex: 'create_date',
+              key: 'create_date',
+              render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
+            },
+            {
+              title: t('publish.ingestHistory.col.sendDate'),
+              dataIndex: 'send_date',
+              key: 'send_date',
+              render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
+            },
+            {
+              title: t('publish.ingestHistory.col.endDate'),
+              dataIndex: 'end_date',
+              key: 'end_date',
+              render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
+            },
+            {
+              title: t('publish.ingestHistory.col.status'),
+              dataIndex: 'status',
+              key: 'status',
+              render: (v) => (
+                <Tag color={v === 'success' ? 'success' : v === 'failure' ? 'error' : 'default'}>
+                  {v === 'success' ? t('publish.ingestHistory.status.success') : v === 'failure' ? t('publish.ingestHistory.status.failure') : v}
+                </Tag>
+              ),
+            },
+            {
+              title: t('publish.ingestHistory.col.getXml'),
+              key: 'getXml',
+              align: 'center',
+              render: (_, record: IngestHistoryItem) => {
+                const handleDownload = async (url: string, filename: string) => {
+                  try {
+                    // 如果 URL 以 /api/v1 开头，去掉前缀，因为 axios baseURL 已经包含 /api/v1
+                    const requestUrl = url.startsWith('/api/v1') ? url.slice(7) : url
+                    const response = await api.get(requestUrl, {
+                      responseType: 'blob',
+                    })
+                    const blob = new Blob([response.data])
+                    const link = document.createElement('a')
+                    link.href = URL.createObjectURL(blob)
+                    link.download = filename
+                    document.body.appendChild(link)
+                    link.click()
+                    document.body.removeChild(link)
+                    URL.revokeObjectURL(link.href)
+                  } catch (err) {
+                    if (!isHandledError(err)) message.error(t('publish.msg.downloadFailed'))
+                  }
+                }
+                const menuItems = []
+                if (record.ingest_xml_url) {
+                  menuItems.push({
+                    key: 'ingest',
+                    label: t('publish.ingestHistory.xml.ingest'),
+                    onClick: () => {
+                      const ingestUrl = record.ingest_xml_url!
+                      const urlParams = new URLSearchParams(ingestUrl.split('?')[1])
+                      const path = urlParams.get('path') || ''
+                      const filename = path.split('/').pop() || 'ingest.xml'
+                      void handleDownload(ingestUrl, filename)
+                    },
+                  })
+                }
+                if (record.result_xml_url) {
+                  menuItems.push({
+                    key: 'result',
+                    label: t('publish.ingestHistory.xml.result'),
+                    onClick: () => {
+                      const resultUrl = record.result_xml_url!
+                      const urlParams = new URLSearchParams(resultUrl.split('?')[1])
+                      const path = urlParams.get('path') || ''
+                      const filename = path.split('/').pop() || 'result.xml'
+                      void handleDownload(resultUrl, filename)
+                    },
+                  })
+                }
+                if (menuItems.length === 0) {
+                  return '—'
+                }
+                return (
+                  <Dropdown menu={{ items: menuItems }} placement="bottom">
+                    <Button type="link" size="small">
+                      {t('publish.ingestHistory.col.getXml')}
+                    </Button>
+                  </Dropdown>
+                )
+              },
+            },
+          ]}
         />
-      )}
+      </Modal>
     </div>
   )
 }

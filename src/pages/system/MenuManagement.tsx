@@ -2,7 +2,7 @@
  * 菜单管理页面
  * 树形表格展示菜单，支持增删改、排序调整、启用/禁用
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Button,
   Col,
@@ -56,6 +56,11 @@ export default function MenuManagement() {
   const [editingRecord, setEditingRecord] = useState<MenuItem | null>(null)
   const [iconNames] = useState(() => getAvailableIconNames())
 
+  const menuLabel = useCallback((item: MenuItem) => {
+    const translated = t(item.i18n_key as Parameters<typeof t>[0])
+    return translated === item.i18n_key ? item.name : translated
+  }, [t])
+
   // 加载菜单树
   const loadTree = async () => {
     setLoading(true)
@@ -80,14 +85,14 @@ export default function MenuManagement() {
       for (const item of items) {
         // 分组菜单（无 path）可作为父菜单
         if (!item.path) {
-          options.push({ label: t(item.i18n_key as Parameters<typeof t>[0]), value: item.id })
+          options.push({ label: menuLabel(item), value: item.id })
         }
         if (item.children?.length) walk(item.children)
       }
     }
     walk(treeData)
     return options
-  }, [treeData, t])
+  }, [treeData, menuLabel])
 
   // 打开新增弹窗
   const handleAdd = (parentId?: number) => {
@@ -197,7 +202,7 @@ export default function MenuManagement() {
       render: (_text: string, record: MenuItem) => (
         <span>
           {getIcon(record.icon)}{' '}
-          {t(record.i18n_key as Parameters<typeof t>[0])}
+          {menuLabel(record)}
         </span>
       ),
     },
@@ -316,7 +321,7 @@ export default function MenuManagement() {
         cancelText={t('common.cancel')}
         confirmLoading={submitting}
         width={700}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" initialValues={{ parent_id: null, sort_order: 0, status: true, is_external: false, menu_type: 'menu' }}>
           <Row gutter={16}>

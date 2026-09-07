@@ -16,6 +16,7 @@ export interface ScheduledTask {
   retry_count: number
 }
 
+
 export interface ExecutionLog {
   id: number
   execution_time: string
@@ -79,4 +80,15 @@ export const triggerScheduledTasks = async (
     }
     throw err
   }
+}
+
+export const updateScheduledTaskCron = async (
+  id: number,
+  cronExpression: string,
+): Promise<ScheduledTask> => {
+  const response = await request.put<ScheduledTask>(
+    `/scheduled-tasks/${id}/cron`,
+    { cron_expression: cronExpression },
+  )
+  return response.data
 }

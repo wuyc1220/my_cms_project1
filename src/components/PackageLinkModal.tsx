@@ -11,6 +11,7 @@ import {
   Button,
   Col,
   Empty,
+  Form,
   Modal,
   Row,
   Select,
@@ -318,7 +319,7 @@ export default function PackageLinkModal({
       onCancel={onClose}
       width={960}
       destroyOnHidden
-      maskClosable={false}
+      mask={{ closable: false }}
       footer={
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
           <Button onClick={onClose} disabled={submitting}>
@@ -333,74 +334,100 @@ export default function PackageLinkModal({
       }
     >
       {/* 搜索区域 */}
-      <Row gutter={16} style={{ marginBottom: 16 }} align="middle">
-        <Col span={4}>
-          <TrimInput
-            placeholder={t('common.placeholder.packageKeyword')}
-            value={searchName}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchName(e.target.value)}
-            onPressEnter={handleSearch}
-            allowClear
-          />
-        </Col>
-        <Col span={4}>
-          <Select
-            showSearch
-            optionFilterProp="label"
-            allowClear
-            placeholder={t('package.placeholder.type')}
-            value={searchType}
-            options={packageTypeOptions}
-            onChange={(val) => setSearchType(val)}
-            style={{ width: '100%' }}
-          />
-        </Col>
-        <Col span={4}>
-          <Select
-            showSearch
-            optionFilterProp="label"
-            mode="multiple"
-            allowClear
-            placeholder={t('package.placeholder.platform')}
-            value={searchPlatforms}
-            options={platformOptions}
-            onChange={(vals) => setSearchPlatforms(vals)}
-            style={{ width: '100%' }}
-            maxTagCount={1}
-          />
-        </Col>
-        <Col span={4}>
-          <Select
-            showSearch
-            optionFilterProp="label"
-            mode="multiple"
-            allowClear
-            placeholder={t('package.placeholder.ingestStatus')}
-            value={searchIngestStatuses}
-            options={ingestStatusOptions}
-            onChange={(vals) => setSearchIngestStatuses(vals)}
-            style={{ width: '100%' }}
-            maxTagCount={1}
-          />
-        </Col>
-        <Col span={4}>
-          <TrimInput
-            placeholder={t('package.placeholder.description')}
-            value={searchDescription}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchDescription(e.target.value)}
-            onPressEnter={handleSearch}
-            allowClear
-          />
-        </Col>
-        <Col span={4}>
-          <Space>
-            <Button onClick={handleReset}>{t('common.reset')}</Button>
-            <Button type="primary" onClick={handleSearch}>
-              {t('common.search')}
-            </Button>
-          </Space>
-        </Col>
-      </Row>
+      <Form layout="vertical" style={{ marginBottom: 16 }}>
+        <Row gutter={16}>
+          <Col span={8}>
+            <Form.Item label={t('package.col.name')}>
+              <TrimInput
+                placeholder={t('common.placeholder.packageKeyword')}
+                value={searchName}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchName(e.target.value)}
+                onPressEnter={handleSearch}
+                allowClear
+              />
+            </Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item label={t('package.col.type')}>
+              <Select
+                showSearch
+                optionFilterProp="label"
+                allowClear
+                placeholder={t('package.placeholder.type')}
+                value={searchType}
+                options={packageTypeOptions}
+                onChange={(val) => setSearchType(val)}
+                style={{ width: '100%' }}
+              />
+            </Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item label={t('package.col.platform')}>
+              <Select
+                showSearch
+                optionFilterProp="label"
+                mode="multiple"
+                allowClear
+                placeholder={t('package.placeholder.platform')}
+                value={searchPlatforms}
+                options={platformOptions}
+                onChange={(vals) => setSearchPlatforms(vals)}
+                style={{ width: '100%' }}
+                maxTagCount="responsive"
+                maxTagPlaceholder={(omitted) => (
+                  <Tooltip title={omitted.map((o) => String(o.label)).join(', ')}>
+                    <span>+{omitted.length} ...</span>
+                  </Tooltip>
+                )}
+              />
+            </Form.Item>
+          </Col>
+        </Row>
+        <Row gutter={16} align="bottom">
+          <Col span={8}>
+            <Form.Item label={t('package.col.ingestStatus')}>
+              <Select
+                showSearch
+                optionFilterProp="label"
+                mode="multiple"
+                allowClear
+                placeholder={t('package.placeholder.ingestStatus')}
+                value={searchIngestStatuses}
+                options={ingestStatusOptions}
+                onChange={(vals) => setSearchIngestStatuses(vals)}
+                style={{ width: '100%' }}
+                maxTagCount="responsive"
+                maxTagPlaceholder={(omitted) => (
+                  <Tooltip title={omitted.map((o) => String(o.label)).join(', ')}>
+                    <span>+{omitted.length} ...</span>
+                  </Tooltip>
+                )}
+              />
+            </Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item label={t('package.col.description')}>
+              <TrimInput
+                placeholder={t('package.placeholder.description')}
+                value={searchDescription}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchDescription(e.target.value)}
+                onPressEnter={handleSearch}
+                allowClear
+              />
+            </Form.Item>
+          </Col>
+          <Col span={8} style={{ textAlign: 'right' }}>
+            <Form.Item label=" ">
+              <Space>
+                <Button onClick={handleReset}>{t('common.reset')}</Button>
+                <Button type="primary" onClick={handleSearch}>
+                  {t('common.search')}
+                </Button>
+              </Space>
+            </Form.Item>
+          </Col>
+        </Row>
+      </Form>
 
       {/* 工具栏 */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
@@ -425,6 +452,10 @@ export default function PackageLinkModal({
           getCheckboxProps: () => ({ disabled: true }),
         } : {
           selectedRowKeys: selectedIds,
+          // 服务端分页时 dataSource 只包含当前页数据，
+          // 必须保留不在当前页的已选 key，否则勾选其他页时
+          // antd 会从 onChange 中过滤掉之前页的勾选，导致保存时误删已有关联
+          preserveSelectedRowKeys: true,
           onChange: (keys) => setSelectedIds(keys as number[]),
         }}
         pagination={tablePaginationProps}

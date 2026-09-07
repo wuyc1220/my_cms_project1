@@ -34,9 +34,8 @@ import { FORM_MAX_LENGTH } from '../../constants/form'
 
 const CONTENT_TYPES = [
   { label: 'MOVIE', value: 'MOVIE' },
-  { label: 'EPISODE', value: 'EPISODE' },
-  { label: 'SEASON', value: 'SEASON' },
   { label: 'SERIES', value: 'SERIES' },
+  { label: 'SEASON', value: 'SEASON' },
   { label: 'CHANNEL', value: 'CHANNEL' },
   { label: 'SCHEDULE', value: 'SCHEDULE' },
 ]
@@ -51,7 +50,7 @@ interface EditContentModalProps {
 interface ContentFormValues {
   title: string
   content_type: string
-  genre_id?: number
+  genre_ids?: number[]
   custom_tag_ids?: number[]
   parent_id?: number
   sequence?: number
@@ -77,6 +76,11 @@ export default function EditContentModal({
   const [customTagOptions, setCustomTagOptions] = useState<{ label: string; value: number }[]>([])
   const [seriesOptions, setSeriesOptions] = useState<ContentSimpleItem[]>([])
   const [channelOptions, setChannelOptions] = useState<ContentSimpleItem[]>([])
+  // 父级下拉兜底选项：当前父级被数据权限过滤掉时，用详情的 parent_title 保证显示名称而非 ID
+  const [parentFallback, setParentFallback] = useState<{ label: string; value: number } | null>(null)
+
+  const withParentFallback = (opts: { label: string; value: number }[]) =>
+    parentFallback && !opts.some((o) => o.value === parentFallback.value) ? [parentFallback, ...opts] : opts
 
   const currentType = Form.useWatch('content_type', form)
 
@@ -106,10 +110,15 @@ export default function EditContentModal({
     const loadDetail = async () => {
       try {
         const detail = await getContent(contentId)
+        setParentFallback(
+          detail.content.parent_id != null
+            ? { value: detail.content.parent_id, label: detail.content.parent_title ?? String(detail.content.parent_id) }
+            : null
+        )
         form.setFieldsValue({
           title: detail.content.title,
           content_type: detail.content.content_type,
-          genre_id: detail.content.genre_id,
+          genre_ids: detail.content.genre_ids,
           custom_tag_ids: detail.content.custom_tag_ids ?? [],
           parent_id: detail.content.parent_id,
           sequence: detail.content.sequence,
@@ -134,7 +143,7 @@ export default function EditContentModal({
     try {
       const payload: ContentUpdatePayload = {
         title: values.title,
-        genre_id: values.genre_id,
+        genre_ids: values.genre_ids,
         custom_tag_ids: values.custom_tag_ids,
         parent_id: values.parent_id,
         sequence: values.sequence,
@@ -145,9 +154,16 @@ export default function EditContentModal({
       void message.success(t('trade.content.msg.updated'), 3)
       onSuccess()
       closeModal()
-    } catch (err) {
-      if (isHandledError(err)) return
-      void message.error(t('common.msg.updateFailed'), 5)
+    } catch (err: unknown) {
+      // 重名校验由后端统一裁决，命中时将错误标注到表单字段（对齐 UserManagement/RoleManagement 模式）
+      const error = err as { response?: { data?: { error_code?: string } } }
+      if (error.response?.data?.error_code === 'CONTENT_NAME_EXISTS') {
+        form.setFields([{ name: 'title', errors: [t('trade.content.msg.nameExists')] }])
+      } else if (isHandledError(err)) {
+        return
+      } else {
+        void message.error(t('common.msg.updateFailed'), 5)
+      }
     } finally {
       setLoading(false)
     }
@@ -200,10 +216,17 @@ export default function EditContentModal({
           </Col>
 
           <Col span={12}>
-            <Form.Item name="genre_id" label={t('trade.col.genre')}>
+            <Form.Item
+              name="genre_ids"
+              label={t('trade.col.genre')}
+              rules={[{ required: true, message: t('trade.content.form.genreRequired') }]}
+            >
               <Select
+                mode="multiple"
                 allowClear
                 showSearch
+                maxTagCount="responsive"
+                maxTagTextLength={12}
                 placeholder={t('trade.content.search.genre')}
                 options={genreOptions}
                 filterOption={(input, opt) =>
@@ -215,11 +238,13 @@ export default function EditContentModal({
           </Col>
 
           <Col span={12}>
-            <Form.Item name="custom_tag_ids" label={t('menu.basic.customTags')}>
+            <Form.Item name="custom_tag_ids" label={t('common.col.customTags')}>
               <Select
                 mode="multiple"
                 allowClear
                 showSearch
+                maxTagCount="responsive"
+                maxTagTextLength={12}
                 placeholder={t('metadata.channel.customTagsPlaceholder')}
                 options={customTagOptions}
                 filterOption={(input, opt) =>
@@ -242,7 +267,7 @@ export default function EditContentModal({
                     showSearch
                     allowClear
                     placeholder={t('trade.content.form.parentRequired')}
-                    options={seriesOptions.map((s) => ({ label: s.title, value: s.id }))}
+                    options={withParentFallback(seriesOptions.map((s) => ({ label: s.title, value: s.id })))}
                     filterOption={(input, opt) =>
                       String(opt?.label ?? '').toLowerCase().includes(input.toLowerCase())
                     }
@@ -269,7 +294,7 @@ export default function EditContentModal({
                 label={t('trade.content.form.volumnCount')}
                 rules={[{ required: true, message: t('trade.content.form.episodeCountRequired') }]}
               >
-                <InputNumber min={1} max={999} disabled placeholder={t('trade.content.form.episodeCountRequired')} style={{ width: '100%' }} />
+                <InputNumber min={0} max={999} disabled placeholder={t('trade.content.form.episodeCountRequired')} style={{ width: '100%' }} />
               </Form.Item>
             </Col>
           )}
@@ -281,7 +306,7 @@ export default function EditContentModal({
                 label={t('trade.content.form.seasonCount')}
                 rules={[{ required: true, message: t('trade.content.form.seasonCountRequired') }]}
               >
-                <InputNumber min={1} max={50} disabled placeholder={t('trade.content.form.seasonCountRequired')} style={{ width: 200 }} />
+                <InputNumber min={0} max={50} disabled placeholder={t('trade.content.form.seasonCountRequired')} style={{ width: 200 }} />
               </Form.Item>
             </Col>
           )}
@@ -298,7 +323,7 @@ export default function EditContentModal({
                     showSearch
                     allowClear
                     placeholder={t('trade.content.form.channelRequired')}
-                    options={channelOptions.map((c) => ({ label: c.title, value: c.id }))}
+                    options={withParentFallback(channelOptions.map((c) => ({ label: c.title, value: c.id })))}
                     filterOption={(input, opt) =>
                       String(opt?.label ?? '').toLowerCase().includes(input.toLowerCase())
                     }

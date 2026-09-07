@@ -36,9 +36,9 @@ import { FORM_MAX_LENGTH } from '../../constants/form'
 
 const CONTENT_TYPES = [
   { label: 'MOVIE', value: 'MOVIE' },
-  { label: 'EPISODE', value: 'EPISODE' },
-  { label: 'SEASON', value: 'SEASON' },
   { label: 'SERIES', value: 'SERIES' },
+  { label: 'SEASON_SERIES', value: 'SEASON_SERIES' },
+  { label: 'SEASON', value: 'SEASON' },
   { label: 'CHANNEL', value: 'CHANNEL' },
   { label: 'SCHEDULE', value: 'SCHEDULE' },
 ]
@@ -58,7 +58,7 @@ interface CreateContentModalProps {
 interface ContentFormValues {
   title: string
   content_type: string
-  genre_id?: number
+  genre_ids?: number[]
   custom_tag_ids?: number[]
   parent_id?: number
   sequence?: number
@@ -145,11 +145,11 @@ export default function CreateContentModal({
       const payload: ContentCreatePayload = {
         title: values.title,
         content_type: values.content_type,
-        genre_id: values.genre_id,
+        genre_ids: values.genre_ids,
         custom_tag_ids: values.custom_tag_ids,
         parent_id: values.parent_id,
         sequence: values.sequence,
-        series_type: values.series_type,
+        series_type: values.content_type === 'SEASON_SERIES' ? 2 : values.series_type,
         volumn_count: values.volumn_count,
         season_details: currentType === 'SEASON' ? seasonRows : undefined,
         begin_time: values.begin_time?.toISOString(),
@@ -234,8 +234,13 @@ export default function CreateContentModal({
 
           {/* Genre */}
           <Col span={12}>
-            <Form.Item name="genre_id" label={t('trade.col.genre')}>
+            <Form.Item
+              name="genre_ids"
+              label={t('trade.col.genre')}
+              rules={[{ required: true, message: t('trade.content.form.genreRequired') }]}
+            >
               <Select
+                mode="multiple"
                 allowClear
                 showSearch
                 placeholder={t('trade.content.search.genre')}
@@ -250,7 +255,7 @@ export default function CreateContentModal({
 
           {/* Custom_Tags */}
           <Col span={12}>
-            <Form.Item name="custom_tag_ids" label={t('menu.basic.customTags')}>
+            <Form.Item name="custom_tag_ids" label={t('common.col.customTags')}>
               <Select
                 mode="multiple"
                 allowClear
@@ -298,15 +303,15 @@ export default function CreateContentModal({
             </>
           )}
 
-          {/* ── SERIES 专属字段 ────────────────────────────────── */}
-          {currentType === 'SERIES' && (
+          {/* ── SERIES / SEASON_SERIES 专属字段 ────────────────────────────────── */}
+          {(currentType === 'SERIES' || currentType === 'SEASON_SERIES') && (
             <Col span={12}>
               <Form.Item
                 name="volumn_count"
                 label={t('trade.content.form.volumnCount')}
                 rules={[{ required: true, message: t('trade.content.form.episodeCountRequired') }]}
               >
-                <InputNumber min={1} max={999} placeholder={t('trade.content.form.episodeCountRequired')} style={{ width: '100%' }} />
+                <InputNumber min={0} max={999} placeholder={t('trade.content.form.episodeCountRequired')} style={{ width: '100%' }} />
               </Form.Item>
             </Col>
           )}
@@ -320,7 +325,7 @@ export default function CreateContentModal({
                   label={t('trade.content.form.seasonCount')}
                   rules={[{ required: true, message: t('trade.content.form.seasonCountRequired') }]}
                 >
-                  <InputNumber min={1} max={50} placeholder={t('trade.content.form.seasonCountRequired')} style={{ width: 200 }} />
+                  <InputNumber min={0} max={50} placeholder={t('trade.content.form.seasonCountRequired')} style={{ width: 200 }} />
                 </Form.Item>
               </Col>
               {seasonRows.length > 0 && (
@@ -395,7 +400,19 @@ export default function CreateContentModal({
                 <Form.Item
                   name="end_time"
                   label={t('trade.content.form.endTime')}
-                  rules={[{ required: true, message: t('trade.content.form.endTimeRequired') }]}
+                  dependencies={['begin_time']}
+                  rules={[
+                    { required: true, message: t('trade.content.form.endTimeRequired') },
+                    ({ getFieldValue }) => ({
+                      validator(_, value) {
+                        const beginTime = getFieldValue('begin_time')
+                        if (!value || !beginTime || value.isAfter(beginTime)) {
+                          return Promise.resolve()
+                        }
+                        return Promise.reject(new Error(t('trade.content.form.endTimeAfterBegin')))
+                      },
+                    }),
+                  ]}
                 >
                   <DatePicker showTime style={{ width: '100%' }} />
                 </Form.Item>

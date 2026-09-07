@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
-import { Spin, message, Button } from 'antd'
-import { SettingOutlined } from '@ant-design/icons'
+import { Spin, message, Button, Result } from 'antd'
+import { SettingOutlined, ReloadOutlined } from '@ant-design/icons'
 import type {
   DashboardData,
   UserDashboardConfig,
@@ -8,7 +8,7 @@ import type {
   StatusConfigItem,
   PieDataItem,
 } from '../../types/dashboard'
-import { COMPUTED_STATUS_ITEMS, MODULE_CODES } from '../../types/dashboard'
+import { MODULE_CODES, TASK_MODULE_CODES } from '../../types/dashboard'
 import { getDashboardData, getDashboardConfig } from '../../api/dashboard'
 import PublishedStats from './components/PublishedStats'
 import ContentStatusCount from './components/ContentStatusCount'
@@ -21,58 +21,43 @@ import NotAssignedTasksTable from './components/NotAssignedTasksTable'
 import CustomizeModal from './components/CustomizeModal'
 import { useI18n } from '../../i18n/useI18n'
 import { isHandledError } from '../../api'
-import { useAuthStore } from '../../stores/authStore'
-
-const TASK_MODULE_CODES: Set<string> = new Set([
-  MODULE_CODES.TASK_COMPLETION_STATS,
-  MODULE_CODES.TASK_STATUS_COUNT,
-  MODULE_CODES.TASK_ASSIGNED_TABLE,
-  MODULE_CODES.NOT_ASSIGNED_TASKS,
-])
+import { usePermission } from '../../hooks/usePermission'
 
 
 const Home: React.FC = () => {
   const { t } = useI18n()
-  const user = useAuthStore((s) => s.user)
-  const roleCodes = (user?.role_codes || []).map((c) => c.toUpperCase())
-  const isAdmin = roleCodes.includes('ADMIN')
-  const hasTaskAssign = roleCodes.includes('TASK_ASSIGN')
-  const canSeeTaskModules = isAdmin || hasTaskAssign
+  const { isAdmin, hasPermission } = usePermission()
 
   const [loading, setLoading] = useState(true)
   const [data, setData] = useState<DashboardData | null>(null)
   const [config, setConfig] = useState<UserDashboardConfig | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
+  const [loadError, setLoadError] = useState(false)
 
-  const mergeComputedStatuses = (config: StatusConfigItem[]): StatusConfigItem[] => {
-    const existingCodes = new Set(config.map((s) => s.code))
-    const merged = [...config]
-    for (const item of COMPUTED_STATUS_ITEMS) {
-      if (!existingCodes.has(item.code)) {
-        merged.push({ ...item, sort_order: merged.length + 1 })
-      }
-    }
-    return merged
-  }
+  // 前端权限快照兜底（数据未到达前避免首屏闪现模块）
+  // 显隐口径：仅有 view 权限不显示，需 operate 权限才显示
+  const localCanSeeTaskModules =
+    isAdmin ||
+    hasPermission('menu.business.tasks.operate')
+  // 以后端实时权限为准：每次加载看板都重新校验，权限变更后刷新即生效
+  const canSeeTaskModules = data?.can_see_task_modules ?? localCanSeeTaskModules
 
   // 加载看板数据和配置
   const loadData = useCallback(async () => {
     setLoading(true)
+    setLoadError(false)
     try {
       const [dashboardData, dashboardConfig] = await Promise.all([
         getDashboardData(),
         getDashboardConfig(),
       ])
       setData(dashboardData)
-
-      const mergedConfig = {
-        ...dashboardConfig,
-        content_status_config: mergeComputedStatuses(dashboardConfig.content_status_config),
-      }
-      setConfig(mergedConfig)
+      setConfig(dashboardConfig)
     } catch (error) {
-      if (isHandledError(error)) return
-      message.error(t('dashboard.loadFailed'))
+      setLoadError(true)
+      if (!isHandledError(error)) {
+        message.error(t('dashboard.loadFailed'))
+      }
     } finally {
       setLoading(false)
     }
@@ -91,18 +76,22 @@ const Home: React.FC = () => {
       .sort((a: ModuleConfigItem, b: ModuleConfigItem) => a.sort_order - b.sort_order)
   }, [config, canSeeTaskModules])
 
-  // 根据配置过滤状态
+  // 根据配置过滤状态（按 sort_order 排序，与弹窗拖拽顺序一致）
   const visibleStatuses = useMemo(() => {
     if (!config?.content_status_config) return []
     return config.content_status_config
       .filter((s) => s.visible)
+      .sort((a, b) => a.sort_order - b.sort_order)
       .map((s) => s.code)
   }, [config])
 
-  // 根据配置过滤题材
+  // 根据配置过滤题材（按 sort_order 排序，与弹窗拖拽顺序一致）
   const visibleGenres = useMemo(() => {
     if (!config?.content_genre_config) return []
-    return config.content_genre_config.filter((g) => g.visible).map((g) => g.name)
+    return config.content_genre_config
+      .filter((g) => g.visible)
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((g) => g.name)
   }, [config])
 
   // 渲染模块
@@ -160,6 +149,26 @@ const Home: React.FC = () => {
     )
   }
 
+  if (loadError) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '100px' }}>
+        <Result
+          status="warning"
+          title={t('dashboard.loadFailed')}
+          extra={
+            <Button
+              type="primary"
+              icon={<ReloadOutlined />}
+              onClick={() => loadData()}
+            >
+              {t('common.refresh')}
+            </Button>
+          }
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="main-container">
       {/* 设置按钮 - 在第一个卡片上方右侧 */}
@@ -184,6 +193,7 @@ const Home: React.FC = () => {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         onConfigChange={loadData}
+        canSeeTaskModules={canSeeTaskModules}
       />
     </div>
   )

@@ -36,10 +36,11 @@ import {
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
-import * as XLSX from 'xlsx'
 import { useI18n } from '../i18n/useI18n'
+import { FORM_MAX_LENGTH } from '../constants/form'
+import { useFormRules } from '../hooks/useFormRules'
 import { useAuthStore } from '../stores/authStore'
-import { createContent, deleteContent, getContentChildren, batchImportContents } from '../api/contents'
+import { createContent, deleteContent, getContentChildren, batchImportContents, downloadImportTemplate, parseExcelFile } from '../api/contents'
 import { getAuthUsers } from '../api/dataAuth'
 import { getEpisodeHistory } from '../api/episodeHistory'
 import type { EpisodeHistoryItem } from '../api/episodeHistory'
@@ -67,6 +68,7 @@ export default function SeasonSeriesInjectModal({
   readOnly = false,
 }: Props) {
   const { t } = useI18n()
+  const formRules = useFormRules()
   const navigate = useNavigate()
   const { user: currentUser } = useAuthStore()
   const [form] = Form.useForm()
@@ -89,7 +91,7 @@ export default function SeasonSeriesInjectModal({
   const loadList = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await getContentChildren(parentId, 'SERIES')
+      const res = await getContentChildren(parentId, 'SEASON_SERIES')
       setItems(res.items)
     } catch (err) {
       if (isHandledError(err)) return
@@ -104,7 +106,7 @@ export default function SeasonSeriesInjectModal({
     try {
       const users = await getAuthUsers()
       const options = users.map((u: UserSimpleItem) => ({
-        label: u.display_name ? `${u.display_name}（${u.username}）` : u.username,
+        label: u.display_name ? `${u.display_name}(${u.username})` : u.username,
         value: u.id,
       }))
       setUserOptions(options)
@@ -123,8 +125,8 @@ export default function SeasonSeriesInjectModal({
     setHistoryLoading(true)
     try {
       const res = await getEpisodeHistory(parentId, params)
-      // 过滤出 SERIES 类型的历史记录
-      const seriesHistory = res.items.filter(item => item.content_type === 'SERIES')
+      // 过滤出 SEASON_SERIES 类型的历史记录
+      const seriesHistory = res.items.filter(item => item.content_type === 'SEASON_SERIES')
       setHistoryItems(seriesHistory)
     } catch (err) {
       if (isHandledError(err)) return
@@ -173,7 +175,7 @@ export default function SeasonSeriesInjectModal({
     try {
       await createContent({
         title: values.title,
-        content_type: 'SERIES',
+        content_type: 'SEASON_SERIES',
         parent_id: parentId,
         series_type: 2,
         series_ordinal: values.series_ordinal,
@@ -213,53 +215,41 @@ export default function SeasonSeriesInjectModal({
     setSubmitting(true)
     try {
       const file = fileList[0].originFileObj || fileList[0]
-      const data = await file.arrayBuffer()
-      const workbook = XLSX.read(data, { type: 'array' })
-      const sheetName = workbook.SheetNames[0]
-      const worksheet = workbook.Sheets[sheetName]
-      const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as unknown[][]
-
-      // 跳过表头，从第二行开始
-      const dataRows = rows.slice(1)
-
+      
+      // 调用后端解析 Excel
+      const parseResult = await parseExcelFile('SERIES', file)
+      
       // 校验数据
       const errors: string[] = []
       const validRows: Array<{ title: string; series_ordinal: number; assignee_id?: number }> = []
 
-      for (let i = 0; i < dataRows.length; i++) {
-        const row = dataRows[i]
-        const rowNum = i + 2 // Excel 行号（从 1 开始，加上表头）
-
-        if (!row || !row[0]) continue // 跳过空行
-
-        const title = String(row[0]).trim()
-        const seriesOrdinal = row[1] ? Number(row[1]) : null
-        const assignee = row[2] ? String(row[2]).trim() : undefined
+      for (const item of parseResult.items) {
+        const rowNum = item.row
 
         // 校验必填字段
-        if (!title) {
+        if (!item.title) {
           errors.push(t('content.seasonSeries.importErrorDetail', { row: rowNum, error: 'Series Name is required' }))
           continue
         }
 
-        if (!seriesOrdinal || seriesOrdinal < 1) {
+        if (!item.series_ordinal || item.series_ordinal < 1) {
           errors.push(t('content.seasonSeries.importErrorDetail', { row: rowNum, error: 'Series Ordinal must be a positive number' }))
           continue
         }
 
         // 查找负责人 ID
         let assigneeId: number | undefined
-        if (assignee) {
-          const foundUser = userOptions.find(u => u.label.includes(assignee) || String(u.value) === assignee)
+        if (item.assignee) {
+          const foundUser = userOptions.find(u => u.label.includes(item.assignee!) || String(u.value) === item.assignee)
           if (foundUser) {
             assigneeId = foundUser.value
           } else {
-            errors.push(t('content.seasonSeries.importErrorDetail', { row: rowNum, error: `Assignee "${assignee}" not found` }))
+            errors.push(t('content.seasonSeries.importErrorDetail', { row: rowNum, error: `Assignee "${item.assignee}" not found` }))
             continue
           }
         }
 
-        validRows.push({ title, series_ordinal: seriesOrdinal, assignee_id: assigneeId })
+        validRows.push({ title: item.title, series_ordinal: item.series_ordinal, assignee_id: assigneeId })
       }
 
       // 如果有错误，显示错误信息
@@ -291,7 +281,7 @@ export default function SeasonSeriesInjectModal({
         parent_id: parentId,
         items: validRows.map((row) => ({
           title: row.title,
-          content_type: 'SERIES' as const,
+          content_type: 'SEASON_SERIES' as const,
           series_type: 2,
           series_ordinal: row.series_ordinal,
           assignee_id: row.assignee_id,
@@ -313,7 +303,7 @@ export default function SeasonSeriesInjectModal({
           content: (
             <div>
               <div>{t('content.seasonSeries.importTotal', { total: validRows.length })}，{t('content.seasonSeries.importSuccess_count', { success: result.success_count })}，{t('content.seasonSeries.importFailed_count', { failed: result.failed_count })}</div>
-              <p style={{ color: '#999', marginTop: 8 }}>所有操作在同一个事务中，失败已整体回滚</p>
+              <p style={{ color: '#999', marginTop: 8 }}>{t('common.msg.txRollbackHint')}</p>
               {failedErrors.length > 0 && (
                 <ul style={{ maxHeight: 200, overflow: 'auto', margin: '8px 0', paddingLeft: 20 }}>
                   {failedErrors.slice(0, 10).map((err, idx) => (
@@ -337,31 +327,14 @@ export default function SeasonSeriesInjectModal({
   }
 
   // 下载模板
-  const handleDownloadTemplate = () => {
-    const headers = [
-      t('content.seasonSeries.templateHeader1'),
-      t('content.seasonSeries.templateHeader2'),
-      t('content.seasonSeries.templateHeader3'),
-    ]
-
-    // 示例数据
-    const exampleData = [
-      ['Series 1', 1, 'admin'],
-      ['Series 2', 2, 'admin'],
-    ]
-
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...exampleData])
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Series')
-
-    // 设置列宽
-    ws['!cols'] = [
-      { wch: 30 }, // Series Name
-      { wch: 15 }, // Series Ordinal
-      { wch: 20 }, // Assignee
-    ]
-
-    XLSX.writeFile(wb, t('content.seasonSeries.templateFileName'))
+  const handleDownloadTemplate = async () => {
+    try {
+      await downloadImportTemplate('SERIES', t('content.seasonSeries.templateFileName'))
+    } catch (err) {
+      if (!isHandledError(err)) {
+        message.error(t('common.downloadFailed'))
+      }
+    }
   }
 
   // History 表格列定义
@@ -377,7 +350,7 @@ export default function SeasonSeriesInjectModal({
       dataIndex: 'content_type',
       key: 'content_type',
       width: 120,
-      render: () => 'SERIES',
+      render: () => 'SEASON_SERIES',
     },
     {
       title: t('content.col.seriesOrdinal'),
@@ -427,26 +400,26 @@ export default function SeasonSeriesInjectModal({
       dataIndex: 'content_type',
       key: 'content_type',
       width: 120,
-      render: () => 'SERIES',
+      render: () => 'SEASON_SERIES',
     },
     {
       title: t('content.col.startDateTime'),
-      dataIndex: 'begin_time',
-      key: 'begin_time',
+      dataIndex: 'task_start_time',
+      key: 'task_start_time',
       width: 160,
-      render: (v?: string) => v ?? '—',
+      render: (v?: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '—',
     },
     {
       title: t('content.col.endDateTime'),
-      dataIndex: 'end_time',
-      key: 'end_time',
+      dataIndex: 'task_end_time',
+      key: 'task_end_time',
       width: 160,
-      render: (v?: string) => v ?? '—',
+      render: (v?: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '—',
     },
     {
       title: t('content.col.assigned'),
-      dataIndex: 'assigned',
-      key: 'assigned',
+      dataIndex: 'assignee_name',
+      key: 'assignee_name',
       width: 120,
       render: (v?: string) => v ?? '—',
     },
@@ -516,7 +489,7 @@ export default function SeasonSeriesInjectModal({
             columns={columns}
             dataSource={items}
             scroll={{ x: 900 }}
-            pagination={{ pageSize: 10, showQuickJumper: true, position: ['bottomCenter'] }}
+            pagination={{ pageSize: 10, showQuickJumper: true , placement: ['bottomCenter'] }}
             locale={{ emptyText: t('content.seasonSeries.noData') }}
             size="small"
           />
@@ -537,7 +510,15 @@ export default function SeasonSeriesInjectModal({
                       <span>{t('content.seasonSeries.batchAdd')}</span>
                       <Switch
                         checked={batchAdd}
-                        onChange={(v) => { setBatchAdd(v); form.resetFields(); setFileList([]) }}
+                        onChange={(v) => {
+                          setBatchAdd(v)
+                          form.resetFields()
+                          setFileList([])
+                          // 恢复默认 Assign To 为当前登录用户
+                          if (currentUser?.id) {
+                            form.setFieldsValue({ assignee_id: currentUser.id })
+                          }
+                        }}
                         checkedChildren="✓"
                         unCheckedChildren="×"
                       />
@@ -561,7 +542,7 @@ export default function SeasonSeriesInjectModal({
                           </Col>
                           <Col span={12}>
                             <Form.Item label={t('content.seasonSeries.contentType')}>
-                              <TrimInput value="SERIES" disabled />
+                              <TrimInput value="SEASON_SERIES" disabled />
                             </Form.Item>
                           </Col>
                           <Col span={12}>
@@ -679,7 +660,7 @@ export default function SeasonSeriesInjectModal({
                   columns={columns}
                   dataSource={items}
                   scroll={{ x: 900 }}
-                  pagination={{ pageSize: 10, showQuickJumper: true, position: ['bottomCenter'] }}
+                  pagination={{ pageSize: 10, showQuickJumper: true , placement: ['bottomCenter'] }}
                   locale={{ emptyText: t('content.seasonSeries.noData') }}
                   size="small"
                 />
@@ -702,6 +683,7 @@ export default function SeasonSeriesInjectModal({
                         <Form.Item
                           name="content_name"
                           label={t('content.col.contentName')}
+                          rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}
                         >
                           <Input placeholder={t('common.placeholder.enter')} />
                         </Form.Item>
@@ -725,6 +707,7 @@ export default function SeasonSeriesInjectModal({
                         <Form.Item
                           name="processed_by"
                           label={t('content.col.processedBy')}
+                          rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}
                         >
                           <Input placeholder={t('common.placeholder.enter')} />
                         </Form.Item>
@@ -753,7 +736,7 @@ export default function SeasonSeriesInjectModal({
                   columns={historyColumns}
                   dataSource={historyItems}
                   scroll={{ x: 700 }}
-                  pagination={{ pageSize: 10, showQuickJumper: true, position: ['bottomCenter'] }}
+                  pagination={{ pageSize: 10, showQuickJumper: true , placement: ['bottomCenter'] }}
                   locale={{ emptyText: t('content.seasonSeries.noHistory') }}
                   size="small"
                 />

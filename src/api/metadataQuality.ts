@@ -16,7 +16,7 @@ export interface MetadataQualityIssue {
   content_id: number
   content_name: string
   content_type: string
-  issue_type: 'missing' | 'format' | 'invalid'
+  issue_type: 'missing' | 'format' | 'invalid' | 'sensitive' | 'authorization'
   field_name: string
   severity: 'critical' | 'medium' | 'minor'
   expected_value: string

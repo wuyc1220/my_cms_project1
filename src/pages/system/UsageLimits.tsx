@@ -155,6 +155,7 @@ export default function UsageLimits() {
               }))
             }}
             min={-1}
+            max={999999999}
             step={1}
             style={{ width: 280 }}
           />

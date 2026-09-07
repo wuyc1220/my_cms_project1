@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Modal, Table, Checkbox, Button, Space, message } from 'antd'
+import { useState, useEffect, useRef } from 'react'
+import { Modal, Table, Checkbox, Button, Space, Tooltip, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
   ArrowUpOutlined,
@@ -12,27 +12,41 @@ import type {
   GenreConfigItem,
   UserDashboardConfig,
 } from '../../../types/dashboard'
-import {
-  COMPUTED_STATUS_ITEMS,
-} from '../../../types/dashboard'
+import { MODULE_CODES, TASK_MODULE_CODES } from '../../../types/dashboard'
 import {
   getDashboardConfig,
   updateDashboardConfig,
 } from '../../../api/dashboard'
 import { useI18n } from '../../../i18n/useI18n'
+import type { MessageKey } from '../../../i18n/messages'
 import { isHandledError } from '../../../api'
+
+// 模块 code → i18n key 映射（与看板卡片标题同一翻译来源，name 字段仅作兜底显示）
+const MODULE_I18N_KEYS: Record<string, MessageKey> = {
+  [MODULE_CODES.PUBLISHED_STATS]: 'dashboard.contentPublishedStats',
+  [MODULE_CODES.CONTENT_STATUS_COUNT]: 'dashboard.contentStatusCount',
+  [MODULE_CODES.GENRE_STATUS_TABLE]: 'dashboard.genreStatusTable',
+  [MODULE_CODES.ASSIGNED_TO_ME]: 'dashboard.assignedToMe',
+  [MODULE_CODES.TASK_COMPLETION_STATS]: 'dashboard.taskCompletionStats',
+  [MODULE_CODES.TASK_STATUS_COUNT]: 'dashboard.taskStatusCount',
+  [MODULE_CODES.TASK_ASSIGNED_TABLE]: 'dashboard.taskAssignedTable',
+  [MODULE_CODES.NOT_ASSIGNED_TASKS]: 'dashboard.notAssignedTasks',
+}
 
 
 interface CustomizeModalProps {
   open: boolean
   onClose: () => void
   onConfigChange: () => void
+  /** 是否可见任务相关模块（无权限时自定义弹窗中隐藏这些模块） */
+  canSeeTaskModules: boolean
 }
 
 const CustomizeModal: React.FC<CustomizeModalProps> = ({
   open,
   onClose,
   onConfigChange,
+  canSeeTaskModules,
 }) => {
   const { t } = useI18n()
   const [loading, setLoading] = useState(false)
@@ -40,6 +54,8 @@ const CustomizeModal: React.FC<CustomizeModalProps> = ({
   const [moduleConfig, setModuleConfig] = useState<ModuleConfigItem[]>([])
   const [statusConfig, setStatusConfig] = useState<StatusConfigItem[]>([])
   const [genreConfig, setGenreConfig] = useState<GenreConfigItem[]>([])
+  // 暂存被权限过滤的任务模块原始配置，保存时原样合并回去，避免破坏用户配置
+  const hiddenTaskModulesRef = useRef<ModuleConfigItem[]>([])
 
   // 拖拽状态
   const [moduleDragIndex, setModuleDragIndex] = useState<number | null>(null)
@@ -51,17 +67,23 @@ const CustomizeModal: React.FC<CustomizeModalProps> = ({
     if (open) {
       loadConfig()
     }
-  }, [open])
+  }, [open, canSeeTaskModules])
 
   const loadConfig = async () => {
     setLoading(true)
     try {
       const config: UserDashboardConfig = await getDashboardConfig()
-      setModuleConfig(config.module_config)
+      // 无任务权限时隐藏任务模块（暂存原始配置，保存时原样回传）
+      const allModules = config.module_config
+      if (canSeeTaskModules) {
+        hiddenTaskModulesRef.current = []
+        setModuleConfig(allModules)
+      } else {
+        hiddenTaskModulesRef.current = allModules.filter((m) => TASK_MODULE_CODES.has(m.code))
+        setModuleConfig(allModules.filter((m) => !TASK_MODULE_CODES.has(m.code)))
+      }
       setGenreConfig(config.content_genre_config)
-
-      const mergedStatusConfig = mergeComputedStatuses(config.content_status_config)
-      setStatusConfig(mergedStatusConfig)
+      setStatusConfig(config.content_status_config)
     } catch (error) {
       if (isHandledError(error)) return
       message.error(t('dashboard.loadConfigFailed'))
@@ -70,23 +92,13 @@ const CustomizeModal: React.FC<CustomizeModalProps> = ({
     }
   }
 
-  const mergeComputedStatuses = (config: StatusConfigItem[]): StatusConfigItem[] => {
-    const existingCodes = new Set(config.map((s) => s.code))
-    const merged = [...config]
-    for (const item of COMPUTED_STATUS_ITEMS) {
-      if (!existingCodes.has(item.code)) {
-        merged.push({ ...item, sort_order: merged.length + 1 })
-      }
-    }
-    return merged
-  }
-
-  // 保存配置
+  // 保存配置（无权限被隐藏的任务模块原样合并回传，不破坏用户原有配置）
   const handleSave = async () => {
     setSaving(true)
     try {
+      const mergedModules = [...moduleConfig, ...hiddenTaskModulesRef.current]
       await updateDashboardConfig({
-        module_config: moduleConfig,
+        module_config: mergedModules,
         content_status_config: statusConfig,
         content_genre_config: genreConfig,
       })
@@ -198,31 +210,35 @@ const CustomizeModal: React.FC<CustomizeModalProps> = ({
       title: t('dashboard.moduleName'),
       dataIndex: 'name',
       key: 'name',
+      render: (_, record) => {
+        const i18nKey = MODULE_I18N_KEYS[record.code]
+        return i18nKey ? t(i18nKey) : record.name
+      },
     },
     {
       title: t('dashboard.action'),
       key: 'action',
-      width: 220,
+      width: 120,
       render: (_: unknown, __: unknown, index: number) => (
-        <Space>
-          <Button
-            type="link"
-            size="small"
-            icon={<ArrowUpOutlined />}
-            disabled={index === 0}
-            onClick={() => moveUp(index, moduleConfig, setModuleConfig)}
-          >
-            {t('dashboard.moveUp')}
-          </Button>
-          <Button
-            type="link"
-            size="small"
-            icon={<ArrowDownOutlined />}
-            disabled={index === moduleConfig.length - 1}
-            onClick={() => moveDown(index, moduleConfig, setModuleConfig)}
-          >
-            {t('dashboard.moveDown')}
-          </Button>
+        <Space size={0}>
+          <Tooltip title={t('dashboard.moveUp')}>
+            <Button
+              type="link"
+              size="small"
+              icon={<ArrowUpOutlined />}
+              disabled={index === 0}
+              onClick={() => moveUp(index, moduleConfig, setModuleConfig)}
+            />
+          </Tooltip>
+          <Tooltip title={t('dashboard.moveDown')}>
+            <Button
+              type="link"
+              size="small"
+              icon={<ArrowDownOutlined />}
+              disabled={index === moduleConfig.length - 1}
+              onClick={() => moveDown(index, moduleConfig, setModuleConfig)}
+            />
+          </Tooltip>
           <HolderOutlined style={{ cursor: 'grab', color: '#999', marginLeft: 8 }} />
         </Space>
       ),
@@ -251,27 +267,27 @@ const CustomizeModal: React.FC<CustomizeModalProps> = ({
     {
       title: t('dashboard.action'),
       key: 'action',
-      width: 260,
+      width: 120,
       render: (_: unknown, __: unknown, index: number) => (
-        <Space>
-          <Button
-            type="link"
-            size="small"
-            icon={<ArrowUpOutlined />}
-            disabled={index === 0}
-            onClick={() => moveUp(index, statusConfig, setStatusConfig)}
-          >
-            {t('dashboard.moveUp')}
-          </Button>
-          <Button
-            type="link"
-            size="small"
-            icon={<ArrowDownOutlined />}
-            disabled={index === statusConfig.length - 1}
-            onClick={() => moveDown(index, statusConfig, setStatusConfig)}
-          >
-            {t('dashboard.moveDown')}
-          </Button>
+        <Space size={0}>
+          <Tooltip title={t('dashboard.moveUp')}>
+            <Button
+              type="link"
+              size="small"
+              icon={<ArrowUpOutlined />}
+              disabled={index === 0}
+              onClick={() => moveUp(index, statusConfig, setStatusConfig)}
+            />
+          </Tooltip>
+          <Tooltip title={t('dashboard.moveDown')}>
+            <Button
+              type="link"
+              size="small"
+              icon={<ArrowDownOutlined />}
+              disabled={index === statusConfig.length - 1}
+              onClick={() => moveDown(index, statusConfig, setStatusConfig)}
+            />
+          </Tooltip>
           <HolderOutlined style={{ cursor: 'grab', color: '#999', marginLeft: 8 }} />
         </Space>
       ),
@@ -299,27 +315,27 @@ const CustomizeModal: React.FC<CustomizeModalProps> = ({
     {
       title: t('dashboard.action'),
       key: 'action',
-      width: 220,
+      width: 120,
       render: (_: unknown, __: unknown, index: number) => (
-        <Space>
-          <Button
-            type="link"
-            size="small"
-            icon={<ArrowUpOutlined />}
-            disabled={index === 0}
-            onClick={() => moveUp(index, genreConfig, setGenreConfig)}
-          >
-            {t('dashboard.moveUp')}
-          </Button>
-          <Button
-            type="link"
-            size="small"
-            icon={<ArrowDownOutlined />}
-            disabled={index === genreConfig.length - 1}
-            onClick={() => moveDown(index, genreConfig, setGenreConfig)}
-          >
-            {t('dashboard.moveDown')}
-          </Button>
+        <Space size={0}>
+          <Tooltip title={t('dashboard.moveUp')}>
+            <Button
+              type="link"
+              size="small"
+              icon={<ArrowUpOutlined />}
+              disabled={index === 0}
+              onClick={() => moveUp(index, genreConfig, setGenreConfig)}
+            />
+          </Tooltip>
+          <Tooltip title={t('dashboard.moveDown')}>
+            <Button
+              type="link"
+              size="small"
+              icon={<ArrowDownOutlined />}
+              disabled={index === genreConfig.length - 1}
+              onClick={() => moveDown(index, genreConfig, setGenreConfig)}
+            />
+          </Tooltip>
           <HolderOutlined style={{ cursor: 'grab', color: '#999', marginLeft: 8 }} />
         </Space>
       ),

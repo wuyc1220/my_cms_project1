@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Form, Button, Card, Typography, Row, Col, message } from 'antd'
 import { useNavigate, Navigate } from 'react-router-dom'
 import { login as loginApi, getCaptcha } from '../api/auth'
-import { useAuthStore } from '../stores/authStore'
+import { useAuthStore, getFirstMenuPath } from '../stores/authStore'
 import { useI18n } from '../i18n/useI18n'
 import { isHandledError } from '../api'
 import TrimInput from '../components/TrimInput'
@@ -18,7 +18,7 @@ interface LoginFormValues {
 
 export default function Login() {
   const navigate = useNavigate()
-  const { isLoggedIn, login, loadCurrentUser } = useAuthStore()
+  const { isLoggedIn, login, loadCurrentUser, logout } = useAuthStore()
   const { t } = useI18n()
   const [captchaId, setCaptchaId] = useState('')
   const [captchaImage, setCaptchaImage] = useState<string | undefined>(undefined)
@@ -55,6 +55,7 @@ export default function Login() {
     }
   }, [captchaImage])
 
+  // 已登录用户访问 /login 时，交由首页重定向逻辑跳转到第一个有权限的页面
   if (isLoggedIn) return <Navigate to="/" replace />
 
   const handleSubmit = async (values: LoginFormValues) => {
@@ -72,16 +73,21 @@ export default function Login() {
         display_name: data.display_name,
         status: 'active',
         role_codes: [],
-        force_change_password: data.force_change_password,
       })
-      void loadCurrentUser()
-
-      // 检查是否需要强制修改密码
-      if (data.force_change_password) {
-        navigate('/', { replace: true, state: { forceChangePassword: true } })
-      } else {
-        navigate('/', { replace: true })
+      await loadCurrentUser()
+      await useAuthStore.getState().loadMenus()
+      const { menus, menusLoaded } = useAuthStore.getState()
+      const firstPath = getFirstMenuPath(menus)
+      if (menusLoaded && !firstPath) {
+        // 未分配任何页面菜单权限：提示并留在登录页
+        void message.error(t('login.noMenuPermission'))
+        logout()
+        void fetchCaptcha()
+        form.setFieldValue('captcha', '')
+        return
       }
+      // 有权限则进入第一个页面；菜单加载失败时进入首页由重定向逻辑兜底重试
+      navigate(firstPath || '/', { replace: true })
     } catch (err) {
       if (!isHandledError(err)) {
         const error = err as { response?: { data?: { detail?: string } } }

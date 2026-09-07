@@ -35,6 +35,8 @@ export interface SearchFieldConfig {
   disabled?: boolean
   /** 日期范围是否包含时间选择（用于 dateRange） */
   showTime?: boolean
+  /** 自定义栅格跨度（默认 6，带时间的 RangePicker 建议 12） */
+  colSpan?: number
   /** 自定义渲染 */
   render?: (field: SearchFieldConfig) => React.ReactNode
 }

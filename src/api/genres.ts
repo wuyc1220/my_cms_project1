@@ -17,7 +17,7 @@ export const getGenres = async (params: GenreQueryParams): Promise<PaginatedResp
     sort_order: params.sort_order || undefined,
   }
   if (params.languages?.length) {
-    query.languages = params.languages.join(',')
+    query.languages = params.languages
   }
   const response = await request.get<PaginatedResponse<GenreListItem>>('/genres/', { params: query })
   return response.data

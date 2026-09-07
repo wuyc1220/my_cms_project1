@@ -9,72 +9,74 @@
  *  - 列表列：Checkbox / Poster / Content Name / Content Type / Ingest Status /
  *            Genre / Type / Category / Package / Provider /
  *            License Start / License End / Takedown Date / Publish Date / Action
- *  - Action：详情（i）/ 编辑（笔图标）/ 海报管理（图片图标）— 点击海报管理打开 PostersModal
+ *  - Action：详情（i）/ 编辑（笔图标）
  *  - 操作按钮：Excel Export（占位）/ Excel Import（占位）
  *  - 搜索区超过 2 行时默认折叠
  *
- * 海报规格 Belonging 映射：
- *  - MOVIE / EPISODE → entityType = "program"（匹配 PosterSize.belongings 含 "Program"）
- *  - SERIES / SEASON → entityType = "series"（匹配 PosterSize.belongings 含 "Series"）
+
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
   Button,
   Col,
   Image,
+  Modal,
   Row,
   Select,
   Space,
-  Table,
   Tag,
   Tooltip,
+  Upload,
   message,
 } from 'antd'
+import type { UploadFile } from 'antd'
 import {
   DownloadOutlined,
   EditOutlined,
+  FileExcelOutlined,
   InfoCircleOutlined,
   PictureOutlined,
   UploadOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
-import { getVodContents } from '../../api/vod'
+import { getVodContents, exportVodContentsExcel, importVodContentsExcel, downloadVodTemplate } from '../../api/vod'
+import type { VodImportResultPayload } from '../../api/vod'
 import { getGenres } from '../../api/genres'
+import { getDictTree } from '../../api/dicts'
+import type { DictNodeListItem } from '../../types/dict'
+import { getMultiLanguageOptions } from '../../api/i18n'
 import { getProvidersSimple } from '../../api/providers'
-import PostersModal from '../../components/PostersModal'
+import { getPackages } from '../../api/packages'
+import { getCustomTags } from '../../api/customTags'
+import { getContentTypes } from '../../api/contentTypes'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
+import { EditContentModal } from '../../components/ContentModals'
 import type { VodContentListItem, VodContentQueryParams } from '../../types/content'
-import type { GenreListItem } from '../../types/basic'
+import type { GenreListItem, CustomTagListItem, ContentTypeListItem } from '../../types/basic'
+import type { PackageListItem } from '../../types/package'
 import type { SearchFieldConfig } from '../../types/searchForm'
 import { useI18n } from '../../i18n/useI18n'
 import { useTablePagination } from '../../hooks/useTablePagination'
 import { useSearchForm } from '../../hooks/useSearchForm'
 import { usePermission } from '../../hooks/usePermission'
+import { isHandledError } from '../../api'
 
 // ─── 常量 ────────────────────────────────────────────────────────────────────
 
 const VOD_CONTENT_TYPES = [
   { label: 'MOVIE', value: 'MOVIE' },
+  { label: 'SEASON_SERIES', value: 'SEASON_SERIES' },
   { label: 'SEASON', value: 'SEASON' },
   { label: 'SERIES', value: 'SERIES' },
   { label: 'EPISODE', value: 'EPISODE' },
 ]
 
-const INGEST_STATUS_OPTIONS = [
-  { label: 'None', value: 'None' },
-  { label: 'WaitingForMaterials', value: 'WaitingForMaterials' },
-  { label: 'InProgress', value: 'InProgress' },
-  { label: 'ReadyForPublish', value: 'ReadyForPublish' },
-  { label: 'Publishing', value: 'Publishing' },
-  { label: 'Published', value: 'Published' },
-  { label: 'PublishFailed', value: 'PublishFailed' },
-  { label: 'NoActiveLicense', value: 'NoActiveLicense' },
-  { label: 'Expired', value: 'Expired' },
-  { label: 'Closed', value: 'Closed' },
-]
+// 注意：不包含 Expired（计算状态，无对应存储状态，筛选恒为空）
+// Ingest Status 选项与名称映射由 Ingest_Status 字典动态加载（与 ContentManagement 一致）
 
 const STATUS_COLOR: Record<string, string> = {
   Published: 'success',
@@ -89,27 +91,23 @@ const STATUS_COLOR: Record<string, string> = {
   None: 'default',
 }
 
-/**
- * 根据 content_type 计算海报规格的 Belonging 类型。
- *  - MOVIE / EPISODE → "program"（PosterSize belongings 中的 "Program"）
- *  - SERIES / SEASON → "series"（PosterSize belongings 中的 "Series"）
- */
-function resolveEntityType(contentType: string): string {
-  if (contentType === 'MOVIE' || contentType === 'EPISODE') return 'program'
-  return 'series'
-}
-
 // ─── 搜索表单值类型 ────────────────────────────────────────────────────────────
 
 interface SearchValues {
   title?: string
   statuses?: string[]
   content_types?: string[]
-  genre_id?: number
-  provider_id?: number
-  package_name?: string
+  genre_ids?: number[]
+  custom_tag_ids?: number[]
+  deleted?: string
+  type_ids?: number[]
+  category_name?: string
+  package_ids?: number[]
+  provider_ids?: number[]
   license_start_range?: [dayjs.Dayjs, dayjs.Dayjs]
   license_end_range?: [dayjs.Dayjs, dayjs.Dayjs]
+  unpublish_range?: [dayjs.Dayjs, dayjs.Dayjs]
+  publish_range?: [dayjs.Dayjs, dayjs.Dayjs]
 }
 
 // ─── 主组件 ───────────────────────────────────────────────────────────────────
@@ -120,7 +118,10 @@ export default function VodContents() {
   const location = useLocation()
   const { hasPermission } = usePermission()
   const canOperate = hasPermission('menu.vod.contents.operate')
-  const locationState = location.state as { filters?: { contentType?: string[]; ingestStatus?: string; license_end_from?: string; license_end_to?: string } } | undefined
+  const locationState = location.state as { filters?: { contentType?: string[]; genre?: string[]; ingestStatus?: string; deleted?: string; license_end_from?: string; license_end_to?: string } } | undefined
+
+  // 保存从首页传递的题材名称，等待 genreOptions 加载后转换为 ID
+  const pendingGenreRef = useRef<string[] | null>(null)
 
   // 列表数据
   const [contents, setContents] = useState<VodContentListItem[]>([])
@@ -134,20 +135,27 @@ export default function VodContents() {
   // 批量选择
   const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([])
 
-  // 下拉候选项
   const [genreOptions, setGenreOptions] = useState<{ label: string; value: number }[]>([])
   const [providerOptions, setProviderOptions] = useState<{ label: string; value: number }[]>([])
-
-  // 海报管理弹框
-  const [postersOpen, setPostersOpen] = useState(false)
-  const [postersTarget, setPostersTarget] = useState<{
-    id: number
-    title: string
-    entityType: string
-  } | null>(null)
+  const [packageOptions, setPackageOptions] = useState<{ label: string; value: number }[]>([])
+  const [customTagOptions, setCustomTagOptions] = useState<{ label: string; value: number }[]>([])
+  const [typeOptions, setTypeOptions] = useState<{ label: string; value: number }[]>([])
+  const [ingestStatusOptions, setIngestStatusOptions] = useState<{ label: string; value: string }[]>([])
+  const [ingestStatusMap, setIngestStatusMap] = useState<Record<string, string>>({})
 
   // 海报 blob URL 映射（content_id -> blob_url）
   const [posterBlobUrls, setPosterBlobUrls] = useState<Record<number, string>>({})
+  const blobUrlRefs = useRef<Set<string>>(new Set())
+
+  // 编辑弹框
+  const [editModalOpen, setEditModalOpen] = useState(false)
+  const [editContentId, setEditContentId] = useState<number | null>(null)
+
+  // 导出/导入状态
+  const [exporting, setExporting] = useState(false)
+  const [importModalOpen, setImportModalOpen] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [importFileList, setImportFileList] = useState<UploadFile[]>([])
 
   // ─── 搜索字段配置 ───────────────────────────────────────────────────────────
 
@@ -162,7 +170,7 @@ export default function VodContents() {
       name: 'statuses',
       labelKey: 'common.col.ingestStatus',
       type: 'multiSelect',
-      options: INGEST_STATUS_OPTIONS,
+      options: ingestStatusOptions,
     },
     {
       name: 'content_types',
@@ -171,11 +179,12 @@ export default function VodContents() {
       options: VOD_CONTENT_TYPES,
     },
     {
-      name: 'genre_id',
+      name: 'genre_ids',
       labelKey: 'common.col.genre',
-      type: 'select',
+      type: 'multiSelect',
       render: () => (
         <Select
+          mode="multiple"
           placeholder={t('common.placeholder.select')}
           options={genreOptions}
           allowClear
@@ -188,31 +197,81 @@ export default function VodContents() {
       ),
     },
     {
-      name: '_type',
-      labelKey: 'common.col.type',
-      type: 'select',
-      placeholderKey: 'common.placeholder.selectComingSoon',
-      disabled: true,
-    },
-    {
-      name: '_category',
-      labelKey: 'common.col.category',
-      type: 'select',
-      placeholderKey: 'common.placeholder.selectComingSoon',
-      disabled: true,
-    },
-    {
-      name: 'package_name',
-      labelKey: 'common.col.package',
-      type: 'input',
-      placeholderKey: 'common.placeholder.packageKeyword',
-    },
-    {
-      name: 'provider_id',
-      labelKey: 'common.col.provider',
-      type: 'select',
+      name: 'custom_tag_ids',
+      labelKey: 'common.col.customTags',
+      type: 'multiSelect',
       render: () => (
         <Select
+          mode="multiple"
+          placeholder={t('common.placeholder.select')}
+          options={customTagOptions}
+          allowClear
+          showSearch
+          filterOption={(input, option) =>
+            (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+          }
+          style={{ width: '100%' }}
+        />
+      ),
+    },
+    {
+      name: 'deleted',
+      labelKey: 'common.col.deleted',
+      type: 'select',
+      options: [
+        { label: t('common.no'), value: 'NO' },
+        { label: t('common.yes'), value: 'YES' },
+      ],
+    },
+    {
+      name: 'type_ids',
+      labelKey: 'common.col.type',
+      type: 'multiSelect',
+      render: () => (
+        <Select
+          mode="multiple"
+          placeholder={t('common.placeholder.select')}
+          options={typeOptions}
+          allowClear
+          showSearch
+          filterOption={(input, option) =>
+            (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+          }
+          style={{ width: '100%' }}
+        />
+      ),
+    },
+    {
+      name: 'category_name',
+      labelKey: 'common.col.category',
+      type: 'input',
+      placeholderKey: 'common.placeholder.keyword',
+    },
+    {
+      name: 'package_ids',
+      labelKey: 'common.col.package',
+      type: 'multiSelect',
+      render: () => (
+        <Select
+          mode="multiple"
+          placeholder={t('common.placeholder.select')}
+          options={packageOptions}
+          allowClear
+          showSearch
+          filterOption={(input, option) =>
+            (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+          }
+          style={{ width: '100%' }}
+        />
+      ),
+    },
+    {
+      name: 'provider_ids',
+      labelKey: 'common.col.provider',
+      type: 'multiSelect',
+      render: () => (
+        <Select
+          mode="multiple"
           placeholder={t('common.placeholder.select')}
           options={providerOptions}
           allowClear
@@ -235,18 +294,16 @@ export default function VodContents() {
       type: 'dateRange',
     },
     {
-      name: '_takedown_range',
-      labelKey: 'common.col.takedownDate',
-      type: 'dateRange',
-      disabled: true,
-    },
-    {
-      name: '_publish_range',
+      name: 'publish_range',
       labelKey: 'common.col.publishDate',
       type: 'dateRange',
-      disabled: true,
     },
-  ], [genreOptions, providerOptions, t])
+    {
+      name: 'unpublish_range',
+      labelKey: 'common.col.unpublishDate',
+      type: 'dateRange',
+    },
+  ], [genreOptions, customTagOptions, typeOptions, packageOptions, providerOptions, ingestStatusOptions, t])
 
   // ─── 使用 useSearchForm Hook ─────────────────────────────────────────────────
 
@@ -261,14 +318,21 @@ export default function VodContents() {
     handleReset,
   } = useSearchForm<SearchValues>({
     fieldsCount: searchFields.length,
+    defaultValues: {
+      deleted: 'NO',
+    },
     onSearch: async (values) => {
       const params: VodContentQueryParams = {}
       if (values.title) params.title = values.title
       if (values.statuses?.length) params.statuses = values.statuses
       if (values.content_types?.length) params.content_types = values.content_types
-      if (values.genre_id) params.genre_id = values.genre_id
-      if (values.provider_id) params.provider_id = values.provider_id
-      if (values.package_name) params.package_name = values.package_name
+      if (values.genre_ids?.length) params.genre_ids = values.genre_ids
+      if (values.custom_tag_ids?.length) params.custom_tag_ids = values.custom_tag_ids
+      if (values.deleted) params.deleted = values.deleted
+      if (values.type_ids?.length) params.type_ids = values.type_ids
+      if (values.category_name) params.category_name = values.category_name
+      if (values.package_ids?.length) params.package_ids = values.package_ids
+      if (values.provider_ids?.length) params.provider_ids = values.provider_ids
       if (values.license_start_range?.[0]) {
         params.license_start_from = values.license_start_range[0].format('YYYY-MM-DD')
         params.license_start_to = values.license_start_range[1].format('YYYY-MM-DD')
@@ -276,6 +340,14 @@ export default function VodContents() {
       if (values.license_end_range?.[0]) {
         params.license_end_from = values.license_end_range[0].format('YYYY-MM-DD')
         params.license_end_to = values.license_end_range[1].format('YYYY-MM-DD')
+      }
+      if (values.unpublish_range?.[0]) {
+        params.unpublish_from = values.unpublish_range[0].format('YYYY-MM-DD')
+        params.unpublish_to = values.unpublish_range[1].format('YYYY-MM-DD')
+      }
+      if (values.publish_range?.[0]) {
+        params.publish_from = values.publish_range[0].format('YYYY-MM-DD')
+        params.publish_to = values.publish_range[1].format('YYYY-MM-DD')
       }
       setFilters(params)
       resetSort()
@@ -294,7 +366,7 @@ export default function VodContents() {
 
   useEffect(() => {
     if (locationState?.filters) {
-      const { contentType, ingestStatus, license_end_from, license_end_to } = locationState.filters
+      const { contentType, genre, ingestStatus, deleted, license_end_from, license_end_to } = locationState.filters
       const initialValues: SearchValues = {}
       if (contentType?.length) {
         initialValues.content_types = contentType
@@ -302,8 +374,24 @@ export default function VodContents() {
       if (ingestStatus) {
         initialValues.statuses = [ingestStatus]
       }
+      if (deleted) {
+        initialValues.deleted = deleted
+      }
       if (license_end_from && license_end_to) {
         initialValues.license_end_range = [dayjs(license_end_from), dayjs(license_end_to)]
+      }
+      // 处理题材：如果 genreOptions 已加载，则直接转换；否则保存到 ref 等待后续处理
+      let genrePending = false
+      if (genre?.length) {
+        if (genreOptions.length > 0) {
+          const genreIds = genre.map(g => genreOptions.find(opt => opt.label === g)?.value).filter((v): v is number => v !== undefined)
+          if (genreIds.length) {
+            initialValues.genre_ids = genreIds
+          }
+        } else {
+          pendingGenreRef.current = genre
+          genrePending = true
+        }
       }
       // 设置表单初始值
       searchForm.setFieldsValue(initialValues)
@@ -315,47 +403,125 @@ export default function VodContents() {
       if (initialValues.statuses?.length) {
         params.statuses = initialValues.statuses
       }
+      if (initialValues.genre_ids?.length) {
+        params.genre_ids = initialValues.genre_ids
+      }
+      if (deleted) {
+        params.deleted = deleted
+      }
       if (license_end_from && license_end_to) {
         params.license_end_from = license_end_from
         params.license_end_to = license_end_to
       }
       setFilters(params)
+      // 题材待解析时跳过本次加载，等 genreOptions 加载后由 pendingGenreRef 统一处理，
+      // 避免发出无 genre_ids 的请求与后续带 genre_ids 的请求产生竞态导致结果被覆盖
+      if (genrePending) {
+        navigate(location.pathname, { replace: true })
+        return
+      }
       void loadList(1, pagination.pageSize, params, null, null)
       // 清除 location state，避免刷新页面时重复应用
       navigate(location.pathname, { replace: true })
     }
-  }, [locationState])
+  }, [locationState, genreOptions])
 
   // ─── 初始化 ───────────────────────────────────────────────────────────────
 
   useEffect(() => {
     void loadOptions()
     if (!locationState?.filters) {
-      void loadList(1, pagination.pageSize, {}, null, null)
+      // 设置默认值
+      searchForm.setFieldsValue({ deleted: 'NO' })
+      // 使用默认值进行搜索
+      const params: VodContentQueryParams = { deleted: 'NO' }
+      setFilters(params)
+      void loadList(1, pagination.pageSize, params, null, null)
     }
   }, [])
 
   // 清理 blob URL，避免内存泄漏
-  useEffect(() => {
-    return () => {
-      Object.values(posterBlobUrls).forEach((url) => {
-        if (url) URL.revokeObjectURL(url)
-      })
-    }
+  const revokeAllBlobUrls = useCallback(() => {
+    blobUrlRefs.current.forEach((url) => URL.revokeObjectURL(url))
+    blobUrlRefs.current.clear()
   }, [])
+
+  useEffect(() => {
+    return () => { revokeAllBlobUrls() }
+  }, [revokeAllBlobUrls])
 
   const loadOptions = async () => {
     try {
-      const [genres, providers] = await Promise.all([
-        getGenres({ page: 1, page_size: 500 }),
+      const langOptions = await getMultiLanguageOptions()
+      const defaultLang = langOptions.length > 0 ? langOptions[0].code : undefined
+      const langFilter = defaultLang ? [defaultLang] : undefined
+      const [genres, providers, packages, customTags, types, dicts] = await Promise.all([
+        getGenres({ page: 1, page_size: 500, languages: langFilter }),
         getProvidersSimple(),
+        getPackages({ page: 1, page_size: 500 }),
+        getCustomTags({ page: 1, page_size: 500 }),
+        getContentTypes({ page: 1, page_size: 500 }),
+        getDictTree(),
       ])
       setGenreOptions(genres.items.map((g: GenreListItem) => ({ label: g.name, value: g.id })))
       setProviderOptions(providers.map((p) => ({ label: p.name, value: p.id })))
+      setPackageOptions(packages.items.map((p: PackageListItem) => ({ label: p.name, value: p.id })))
+      setCustomTagOptions(customTags.items.map((ct: CustomTagListItem) => ({ label: ct.name, value: ct.id })))
+      setTypeOptions(types.items.map((t: ContentTypeListItem) => ({ label: t.name, value: t.id })))
+
+      const ingestRoot = dicts.find((d: DictNodeListItem) => d.code === 'Ingest_Status')
+      if (ingestRoot?.children) {
+        setIngestStatusOptions(ingestRoot.children.map((c: DictNodeListItem) => ({ label: c.name, value: c.code })))
+        const map: Record<string, string> = {}
+        ingestRoot.children.forEach((c: DictNodeListItem) => { map[c.code] = c.name })
+        setIngestStatusMap(map)
+      }
     } catch (err) {
       // 不阻塞主流程
     }
   }
+
+  // ─── 处理待处理的题材（genreOptions 加载完成后）────────────────────────────
+
+  useEffect(() => {
+    if (pendingGenreRef.current?.length && genreOptions.length > 0) {
+      const genreIds = pendingGenreRef.current.map(g => genreOptions.find(opt => opt.label === g)?.value).filter((v): v is number => v !== undefined)
+      if (genreIds.length) {
+        // 设置表单值
+        searchForm.setFieldsValue({ genre_ids: genreIds })
+        // 更新 filters 并重新搜索
+        setFilters(prev => {
+          const newFilters = { ...prev, genre_ids: genreIds }
+          void loadList(1, pagination.pageSize, newFilters, null, null)
+          return newFilters
+        })
+      }
+      pendingGenreRef.current = null
+    }
+  }, [genreOptions])
+
+  // 异步加载海报 blob URL（不阻塞列表 loading，参考 CastManagement 的实现）
+  const fetchPosterBlobUrls = useCallback(async (items: VodContentListItem[]) => {
+    const token = localStorage.getItem('token')
+    const entries = await Promise.all(
+      items.filter((item) => item.poster_url).map(async (item) => {
+        try {
+          const resp = await fetch(item.poster_url!, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          })
+          if (!resp.ok) return null
+          const blobUrl = URL.createObjectURL(await resp.blob())
+          blobUrlRefs.current.add(blobUrl)
+          return [item.id, blobUrl] as const
+        } catch {
+          return null
+        }
+      }),
+    )
+    const map: Record<number, string> = {}
+    entries.forEach((entry) => { if (entry) map[entry[0]] = entry[1] })
+    setPosterBlobUrls(map)
+  }, [])
 
   const loadList = async (page: number, pageSize: number, params: VodContentQueryParams, nextSortField?: string | null, nextSortOrder?: 'ascend' | 'descend' | null) => {
     setLoading(true)
@@ -369,27 +535,9 @@ export default function VodContents() {
       })
       setContents(res.items)
       updatePagination(res)
-
-      // 加载海报 blob URL（参考 ContentDetailPage 的实现）
-      const token = localStorage.getItem('token')
-      const blobUrlMap: Record<number, string> = {}
-      await Promise.all(
-        res.items.map(async (item) => {
-          if (item.poster_url) {
-            try {
-              const resp = await fetch(item.poster_url, {
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
-              })
-              if (resp.ok) {
-                blobUrlMap[item.id] = URL.createObjectURL(await resp.blob())
-              }
-            } catch (err) {
-              // 忽略单个海报加载失败
-            }
-          }
-        })
-      )
-      setPosterBlobUrls(blobUrlMap)
+      revokeAllBlobUrls()
+      // 异步加载海报，不阻塞表格 loading，海报加载完成后渐进显示
+      void fetchPosterBlobUrls(res.items)
     } catch (err) {
       // 错误已由 API 拦截器统一处理
     } finally {
@@ -398,15 +546,100 @@ export default function VodContents() {
   }
 
 
-  // ─── 打开海报管理弹框 ───────────────────────────────────────────────────────
+  // ─── 导出处理 ───────────────────────────────────────────────────────────────
 
-  const openPosters = (record: VodContentListItem) => {
-    setPostersTarget({
-      id: record.id,
-      title: record.title,
-      entityType: resolveEntityType(record.content_type),
-    })
-    setPostersOpen(true)
+  const handleExport = async () => {
+    if (selectedRowKeys.length === 0) return
+    setExporting(true)
+    try {
+      const blob = await exportVodContentsExcel(selectedRowKeys)
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `VOD_Contents_${dayjs().format('YYYYMMDDHHmmss')}.xlsx`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
+      void message.success(t('vod.msg.exportSuccess'))
+    } catch (err) {
+      if (isHandledError(err)) return
+      void message.error(t('vod.msg.exportFailed'))
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  // ─── 导入处理 ───────────────────────────────────────────────────────────────
+
+  const handleDownloadTemplate = async () => {
+    try {
+      const blob = await downloadVodTemplate()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'VOD_Import_Template.xlsx'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
+      void message.success(t('vod.msg.templateDownloaded'))
+    } catch (err) {
+      if (isHandledError(err)) return
+      void message.error(t('vod.msg.templateDownloadFailed'))
+    }
+  }
+
+  const handleImport = async (file: File) => {
+    if (!canOperate) return
+    setImporting(true)
+    try {
+      const result = await importVodContentsExcel(file)
+      handleImportResult(result)
+    } catch (err: unknown) {
+      if (isHandledError(err)) return
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      void message.error(detail || t('vod.msg.importFailed'), 5)
+    } finally {
+      setImporting(false)
+      setImportFileList([])
+    }
+  }
+
+  const handleImportResult = (result: VodImportResultPayload) => {
+    const skippedInfo = result.skipped ? `, ${t('vod.msg.importSkipped', { skipped: result.skipped })}` : ''
+    if (result.errors && result.errors.length > 0) {
+      const errorLines = result.errors
+        .map((e) => e.errors.map((msg) => t('vod.msg.importValidationErrorDetail', { row: e.row, error: msg })).join('\n'))
+        .join('\n')
+      Modal.warning({
+        title: t('vod.msg.importValidationError'),
+        width: 640,
+        content: (
+          <div style={{ whiteSpace: 'pre-wrap', maxHeight: 400, overflow: 'auto' }}>
+            <div>
+              {t('vod.msg.importSuccess')} (total: {result.total}, created: {result.created}, updated: {result.updated}{skippedInfo})
+            </div>
+            <div style={{ marginTop: 8, color: '#ff4d4f' }}>{errorLines}</div>
+          </div>
+        ),
+      })
+    } else {
+      void message.success(
+        `${t('vod.msg.importSuccess')} (total: ${result.total}, created: ${result.created}, updated: ${result.updated}${skippedInfo})`,
+      )
+    }
+    void loadList(pagination.current, pagination.pageSize, filters, sortField, sortOrder)
+    setImportModalOpen(false)
+  }
+
+  const getContentDetailPath = (record: VodContentListItem, options?: { mode?: string }) => {
+    const ct = record.content_type
+    const params = new URLSearchParams({ source: 'vod_management' })
+    if (options?.mode) params.set('mode', options.mode)
+    if (ct === 'CHANNEL') return `/live/channels/${record.id}?${params.toString()}`
+    if (ct === 'SCHEDULE') return `/live/schedules/${record.id}?${params.toString()}`
+    return `/contents/${record.id}?${params.toString()}`
   }
 
   // ─── 列定义 ───────────────────────────────────────────────────────────────
@@ -424,8 +657,8 @@ export default function VodContents() {
             src={blobUrl}
             width={40}
             height={56}
-            style={{ objectFit: 'cover', borderRadius: 4 }}
-            preview={false}
+            style={{ objectFit: 'cover', borderRadius: 4, cursor: 'pointer' }}
+            preview
           />
         ) : (
           <div
@@ -439,10 +672,8 @@ export default function VodContents() {
               borderRadius: 4,
               color: '#d9d9d9',
               fontSize: 20,
-              cursor: 'pointer',
               border: '1px dashed #d9d9d9',
             }}
-            onClick={() => openPosters(record)}
           >
             <PictureOutlined />
           </div>
@@ -461,7 +692,7 @@ export default function VodContents() {
         <Tooltip title={title}>
           <a
             style={{ fontWeight: 500 }}
-            onClick={() => navigate(`/trade/contents/${record.id}`)}
+            onClick={() => navigate(getContentDetailPath(record, { mode: record.is_discarded ? undefined : 'edit' }))}
           >
             {title}
           </a>
@@ -487,8 +718,8 @@ export default function VodContents() {
       sorter: true,
       sortOrder: sortField === 'status' ? sortOrder : null,
       render: (v: string) => (
-        <Tooltip title={v}>
-          <Tag color={STATUS_COLOR[v] ?? 'default'}>{v}</Tag>
+        <Tooltip title={ingestStatusMap[v] ?? v}>
+          <Tag color={STATUS_COLOR[v] ?? 'default'}>{ingestStatusMap[v] ?? v}</Tag>
         </Tooltip>
       ),
     },
@@ -501,6 +732,17 @@ export default function VodContents() {
       sorter: true,
       sortOrder: sortField === 'genre_name' ? sortOrder : null,
       render: (v?: string) => <Tooltip title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>,
+    },
+    {
+      title: t('common.col.customTags'),
+      dataIndex: 'custom_tag_names',
+      key: 'custom_tag_names',
+      width: 160,
+      ellipsis: { showTitle: false },
+      render: (names?: string[]) => {
+        const text = names?.length ? names.join(', ') : '—'
+        return <Tooltip title={text}><span>{text}</span></Tooltip>
+      },
     },
     {
       title: t('common.col.type'),
@@ -530,17 +772,6 @@ export default function VodContents() {
       },
     },
     {
-      title: t('common.col.provider'),
-      dataIndex: 'provider_names',
-      key: 'provider_names',
-      width: 160,
-      ellipsis: { showTitle: false },
-      render: (names: string[]) => {
-        const text = names.length ? names.join(', ') : '—'
-        return <Tooltip title={text}><span>{text}</span></Tooltip>
-      },
-    },
-    {
       title: t('common.col.licenseStart'),
       dataIndex: 'license_start',
       key: 'license_start',
@@ -561,25 +792,20 @@ export default function VodContents() {
       render: (v?: string) => <Tooltip title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>,
     },
     {
-      title: t('common.col.takedownDate'),
-      dataIndex: 'takedown_date',
-      key: 'takedown_date',
-      width: 130,
+      title: t('common.col.provider'),
+      dataIndex: 'provider_names',
+      key: 'provider_names',
+      width: 160,
       ellipsis: { showTitle: false },
-      render: (v?: string) => <Tooltip title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>,
-    },
-    {
-      title: t('common.col.publishDate'),
-      dataIndex: 'publish_date',
-      key: 'publish_date',
-      width: 120,
-      ellipsis: { showTitle: false },
-      render: (v?: string) => <Tooltip title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>,
+      render: (names: string[]) => {
+        const text = names.length ? names.join(', ') : '—'
+        return <Tooltip title={text}><span>{text}</span></Tooltip>
+      },
     },
     {
       title: t('common.action'),
       key: 'action',
-      width: 100,
+      width: 120,
       fixed: 'right',
       render: (_, record) => (
         <Space size={0}>
@@ -588,27 +814,15 @@ export default function VodContents() {
               type="link"
               size="small"
               icon={<InfoCircleOutlined />}
-              onClick={() => navigate(`/contents/${record.id}`)}
+              onClick={() => navigate(`/trade/contents/${record.id}`)}
             />
           </Tooltip>
           {canOperate && (
             <Tooltip title={t('common.edit')}>
-              <Button
-                type="link"
-                size="small"
-                icon={<EditOutlined />}
-                onClick={() => navigate(`/contents/${record.id}?mode=edit`)}
-              />
+              <Button type="link" size="small" icon={<EditOutlined />}
+                onClick={() => { setEditContentId(record.id); setEditModalOpen(true) }} />
             </Tooltip>
           )}
-          <Tooltip title={t('common.tooltip.posterManagement')}>
-            <Button
-              type="link"
-              size="small"
-              icon={<PictureOutlined />}
-              onClick={() => openPosters(record)}
-            />
-          </Tooltip>
         </Space>
       ),
     },
@@ -636,14 +850,16 @@ export default function VodContents() {
           <Space>
             <Button
               icon={<DownloadOutlined />}
-              onClick={() => void message.info(t('vod.msg.exportSoon'))}
+              loading={exporting}
+              disabled={selectedRowKeys.length === 0}
+              onClick={handleExport}
             >
               {t('common.btn.excelExport')}
             </Button>
             {canOperate && (
               <Button
                 icon={<UploadOutlined />}
-                onClick={() => void message.info(t('vod.msg.importSoon'))}
+                onClick={() => setImportModalOpen(true)}
               >
                 {t('common.btn.excelImport')}
               </Button>
@@ -652,13 +868,13 @@ export default function VodContents() {
         </Col>
       </Row>
 
-      <Table<VodContentListItem>
+      <ResizableTable<VodContentListItem>
         rowKey="id"
         size="small"
         columns={columns}
         dataSource={contents}
         loading={loading}
-        scroll={{ x: 1860, y: 550 }}
+        scroll={{ x: 1800, y: 550 }}
         onChange={handleTableChange}
         rowSelection={{
           type: 'checkbox',
@@ -669,20 +885,69 @@ export default function VodContents() {
         pagination={tablePaginationProps}
       />
 
-      {/* 海报管理弹框 */}
-      {postersTarget && (
-        <PostersModal
-          open={postersOpen}
-          entityType={postersTarget.entityType}
-          entityId={postersTarget.id}
-          entityName={postersTarget.title}
-          readOnly={!canOperate}
-          onClose={() => {
-            setPostersOpen(false)
-            setPostersTarget(null)
-          }}
-        />
-      )}
+      {/* 导入弹框 */}
+      <Modal
+        title={t('vod.importModal.title')}
+        open={importModalOpen}
+        onCancel={() => setImportModalOpen(false)}
+        footer={null}
+        destroyOnHidden
+        width={560}
+      >
+        <div style={{ padding: '24px 0' }}>
+          <div style={{ marginBottom: 24, padding: 16, background: '#f5f5f5', borderRadius: 6 }}>
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>
+              <FileExcelOutlined style={{ marginRight: 8, color: '#52c41a' }} />
+              {t('vod.importModal.templateSectionTitle')}
+            </div>
+            <div style={{ fontSize: 12, color: '#666', marginBottom: 12 }}>
+              {t('vod.importModal.templateSectionDesc')}
+            </div>
+            <Button
+              icon={<DownloadOutlined />}
+              onClick={handleDownloadTemplate}
+              size="small"
+            >
+              {t('common.btn.downloadTemplate')}
+            </Button>
+          </div>
+          <div>
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>
+              <UploadOutlined style={{ marginRight: 8, color: '#1890ff' }} />
+              {t('vod.importModal.uploadSectionTitle')}
+            </div>
+            <Upload
+              accept=".xlsx,.xls"
+              fileList={importFileList}
+              maxCount={1}
+              showUploadList={false}
+              beforeUpload={() => false}
+              onChange={({ file }) => {
+                // antd v6: beforeUpload 返回 false 时, file 已经是原生 File 对象
+                const f = file as unknown as File
+                if (!f.name) return
+                setImportFileList([file])
+                void handleImport(f)
+              }}
+            >
+              <Button icon={<UploadOutlined />} loading={importing}>
+                {importing ? t('vod.importModal.importing') : t('vod.importModal.chooseFileButton')}
+              </Button>
+            </Upload>
+            <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>
+              {t('vod.importModal.fileFormatHint')}
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 编辑内容弹窗 */}
+      <EditContentModal
+        open={editModalOpen}
+        contentId={editContentId}
+        onClose={() => { setEditModalOpen(false); setEditContentId(null) }}
+        onSuccess={() => { setEditModalOpen(false); setEditContentId(null); void loadList(pagination.current, pagination.pageSize, filters) }}
+      />
     </div>
   )
 }

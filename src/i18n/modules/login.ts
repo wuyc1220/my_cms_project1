@@ -10,6 +10,7 @@ export const cnLogin = {
   'login.captchaError': '获取验证码失败',
   'login.submit': '登录',
   'login.failed': '登录失败',
+  'login.noMenuPermission': '您的账号没有菜单权限，请联系管理员。',
 } as const
 
 export const enLogin = {
@@ -24,4 +25,5 @@ export const enLogin = {
   'login.captchaError': 'Failed to get captcha',
   'login.submit': 'Login',
   'login.failed': 'Login failed',
+  'login.noMenuPermission': 'Your account has no menu permissions. Please contact the administrator.',
 } as const

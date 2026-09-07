@@ -150,19 +150,34 @@ export default function EditLicenseModal({
   }
 
   const togglePlatform = (platform: string) => {
-    setCheckedPlatforms((prev) => {
-      const next = prev.includes(platform)
-        ? prev.filter((p) => p !== platform)
-        : [...prev, platform]
-      syncPlatformItemsToForm(next, platformRights)
-      return next
-    })
+    const isRemoving = checkedPlatforms.includes(platform)
+    const nextPlatforms = isRemoving
+      ? checkedPlatforms.filter((p) => p !== platform)
+      : [...checkedPlatforms, platform]
+
+    setCheckedPlatforms(nextPlatforms)
+
+    if (isRemoving) {
+      // 取消勾选平台时，同时关闭广告权利
+      const nextRights = { ...platformRights, [platform]: false }
+      setPlatformRights(nextRights)
+      syncPlatformItemsToForm(nextPlatforms, nextRights)
+    } else {
+      syncPlatformItemsToForm(nextPlatforms, platformRights)
+    }
   }
 
   const handleSelectAll = (checked: boolean) => {
     const next = checked ? platformOptions.map((o) => o.value) : []
     setCheckedPlatforms(next)
-    syncPlatformItemsToForm(next, platformRights)
+    if (!checked) {
+      // 全不选时，清除所有广告权利
+      const nextRights: Record<string, boolean> = {}
+      setPlatformRights(nextRights)
+      syncPlatformItemsToForm(next, nextRights)
+    } else {
+      syncPlatformItemsToForm(next, platformRights)
+    }
   }
 
   const toggleAdRights = (platform: string, checked: boolean) => {

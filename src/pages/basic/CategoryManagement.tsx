@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import {
   Button,
   Col,
-  DatePicker,
   Form,
   InputNumber,
   Modal,
@@ -15,7 +14,6 @@ import {
   Table,
   Tabs,
   Tag,
-  TimePicker,
   Tooltip,
   message,
 } from 'antd'
@@ -31,12 +29,15 @@ import {
   reorderCategoryContents,
   saveCategoryFieldValues,
   saveCategoryI18n,
+  syncCategories,
   updateCategory,
 } from '../../api/categories'
-import type { CategoryContentRow } from '../../api/categories'
+import type { CategoryContentRow, CategorySyncResponse } from '../../api/categories'
 import { getCustomFields } from '../../api/customFields'
 import { getDictTree } from '../../api/dicts'
 import { getMultiLanguageOptions } from '../../api/i18n'
+import { getFieldOptionLabel, formatApiValue, getCustomFieldPlaceholder, validateCustomFields as validateCustomFieldsUtil, clearFieldError } from '../../utils/customField'
+import CustomFieldControl from '../../components/CustomFieldControl'
 import CategoryIngestHistoryModal from '../../components/CategoryIngestHistoryModal'
 import PostersModal from '../../components/PostersModal'
 import SearchForm from '../../components/SearchForm'
@@ -50,7 +51,6 @@ import type {
 } from '../../types/basic'
 import type { DictNodeListItem } from '../../types/dict'
 import type { LanguageOption } from '../../types/i18n'
-import dayjs from 'dayjs'
 import type { SearchFieldConfig } from '../../types/searchForm'
 import { useI18n } from '../../i18n/useI18n'
 import { useSearchForm } from '../../hooks/useSearchForm'
@@ -86,6 +86,7 @@ interface ModalState {
   record: CategoryRow | null
   parentId: number | null
   platform: string | null
+  parentName: string | null
 }
 
 interface PlatformRow {
@@ -107,21 +108,7 @@ type TreeRow = PlatformRow | CategoryRow
 type FieldValueMap = Record<number, string>
 type I18nValueMap = Record<string, Record<string, string>>
 
-const CLOSED_MODAL: ModalState = { open: false, mode: 'createRoot', record: null, parentId: null, platform: null }
-
-const isMultiSelectField = (fieldType: string) => fieldType === 'DropList_multiple'
-const isSelectField = (fieldType: string) => fieldType === 'DropList' || fieldType === 'DropList_multiple'
-const isLongTextField = (fieldType: string) => fieldType === 'LongText'
-const isNumberField = (fieldType: string) => fieldType === 'Integer' || fieldType === 'Decimal'
-const isDateField = (fieldType: string) => fieldType === 'Date'
-const isTimeField = (fieldType: string) => fieldType === 'Time'
-const isDateTimeField = (fieldType: string) => fieldType === 'Date+Time'
-
-const getFieldOptionLabel = (field: CustomFieldListItem, optionCode: string, preferredLanguage?: string) => {
-  const option = field.options.find((item) => item.code === optionCode)
-  if (!option) return optionCode
-  return option.names[preferredLanguage ?? ''] ?? option.names.default ?? Object.values(option.names)[0] ?? option.code
-}
+const CLOSED_MODAL: ModalState = { open: false, mode: 'createRoot', record: null, parentId: null, platform: null, parentName: null }
 
 const getPlatformLabel = (platform: string, options: { label: string; value: string }[]) => {
   return options.find((item) => item.value === platform)?.label ?? platform
@@ -169,7 +156,7 @@ const buildPlatformTree = (
 }
 
 export default function CategoryManagement() {
-  const { t, language } = useI18n()
+  const { t } = useI18n()
   const navigate = useNavigate()
   const formRules = useFormRules()
   const [itemForm] = Form.useForm<FormValues>()
@@ -186,6 +173,7 @@ export default function CategoryManagement() {
   const [fieldValues, setFieldValues] = useState<FieldValueMap>({})
   const [i18nValues, setI18nValues] = useState<I18nValueMap>({})
   const defaultLang = languageOptions[0]?.code ?? ''
+  const languageOrder = useMemo(() => languageOptions.map((l) => l.code), [languageOptions])
   const otherLanguageOptions = useMemo(() => languageOptions.filter((l) => l.code !== defaultLang), [languageOptions, defaultLang])
   const [activeLang, setActiveLang] = useState('')
   const [contentOrderModal, setContentOrderModal] = useState<{ open: boolean; record: CategoryRow | null }>({ open: false, record: null })
@@ -197,7 +185,7 @@ export default function CategoryManagement() {
   const [historyModal, setHistoryModal] = useState<{ open: boolean; record: CategoryRow | null }>({ open: false, record: null })
   const [syncing, setSyncing] = useState(false)
   const [activeTab, setActiveTab] = useState('main')
-  const [customFieldErrors, setCustomFieldErrors] = useState<Record<number, string>>({})
+  const [customFieldErrors, setCustomFieldErrors] = useState<Record<number, Record<string, string>>>({})
   const { hasPermission } = usePermission()
   const canView = hasPermission('menu.basic.categories.view') || hasPermission('menu.basic.categories.operate')
   const canOperate = hasPermission('menu.basic.categories.operate')
@@ -292,10 +280,10 @@ export default function CategoryManagement() {
       setPlatformOptions((platformRoot?.children ?? []).map((item: DictNodeListItem) => ({ label: item.name, value: item.code })))
       setCategoryTypeOptions((typeRoot?.children ?? []).map((item: DictNodeListItem) => ({ label: item.name, value: item.code })))
       setIngestStatusOptions([
-        { label: 'none', value: 'none' },
-        { label: 'processing', value: 'processing' },
-        { label: 'success', value: 'success' },
-        { label: 'failure', value: 'failure' },
+        { label: t('common.ingestStatus.none'), value: 'none' },
+        { label: t('common.ingestStatus.processing'), value: 'processing' },
+        { label: t('common.ingestStatus.success'), value: 'success' },
+        { label: t('common.ingestStatus.failure'), value: 'failure' },
       ])
       setLanguageOptions(langs)
       setActiveLang(langs.length > 1 ? langs[1].code : (langs[0]?.code ?? ''))
@@ -321,22 +309,33 @@ export default function CategoryManagement() {
     resetExtraState()
     setCustomFieldErrors({})
     if (mode === 'createRoot') {
-      setModal({ open: true, mode, record: null, parentId: null, platform: record?.platform ?? null })
+      setModal({ open: true, mode, record: null, parentId: null, platform: record?.platform ?? null, parentName: null })
       // 使用 setTimeout 确保 Modal 和 Form 已经渲染完成后再设置值
       setTimeout(() => {
-        itemForm.setFieldsValue({ platform: record?.platform, sequence: 1, vod_count: 0, status: false })
+        itemForm.setFieldsValue({ platform: record?.platform, sequence: 1, vod_count: 0, status: false, category_type: '0' })
       }, 0)
       return
     }
     if (mode === 'createChild' && record) {
-      setModal({ open: true, mode, record, parentId: record.id, platform: record.platform })
+      setModal({ open: true, mode, record, parentId: record.id, platform: record.platform, parentName: record.name })
       setTimeout(() => {
-        itemForm.setFieldsValue({ platform: record.platform, sequence: 1, vod_count: 0, status: false })
+        itemForm.setFieldsValue({ platform: record.platform, sequence: 1, vod_count: 0, status: false, category_type: '0' })
       }, 0)
       return
     }
     if (mode === 'edit' && record) {
-      setModal({ open: true, mode, record, parentId: record.parent_id, platform: record.platform })
+      const findParentName = (nodes: CategoryListItem[], parentId: number): string | null => {
+        for (const node of nodes) {
+          if (node.id === parentId) return node.name
+          if (node.children?.length) {
+            const found = findParentName(node.children, parentId)
+            if (found) return found
+          }
+        }
+        return null
+      }
+      const parentName = record.parent_id ? findParentName(tree, record.parent_id) : null
+      setModal({ open: true, mode, record, parentId: record.parent_id, platform: record.platform, parentName })
       // 使用 setTimeout 确保 Modal 和 Form 已经渲染完成后再设置值
       setTimeout(() => {
         itemForm.setFieldsValue({
@@ -384,8 +383,8 @@ export default function CategoryManagement() {
     itemForm.resetFields()
     resetExtraState()
     setCustomFieldErrors({})
-    itemForm.setFieldsValue({ platform, sequence: 1, vod_count: 0, status: false })
-    setModal({ open: true, mode: 'createRoot', record: null, parentId: null, platform })
+    itemForm.setFieldsValue({ platform, sequence: 1, vod_count: 0, status: false, category_type: '0' })
+    setModal({ open: true, mode: 'createRoot', record: null, parentId: null, platform, parentName: null })
   }
 
   const closeModal = () => {
@@ -398,14 +397,7 @@ export default function CategoryManagement() {
 
   const updateFieldValue = (fieldId: number, value: string) => {
     setFieldValues((prev) => ({ ...prev, [fieldId]: value }))
-    setCustomFieldErrors((prev) => {
-      if (prev[fieldId]) {
-        const next = { ...prev }
-        delete next[fieldId]
-        return next
-      }
-      return prev
-    })
+    setCustomFieldErrors((prev) => clearFieldError(prev, fieldId, '_main'))
   }
 
   const updateI18nValue = (language: string, fieldName: string, value: string) => {
@@ -418,14 +410,7 @@ export default function CategoryManagement() {
     }))
     const field = customFieldItems.find((f) => f.field_code === fieldName && f.multi_language)
     if (field) {
-      setCustomFieldErrors((prev) => {
-        if (prev[field.id]) {
-          const next = { ...prev }
-          delete next[field.id]
-          return next
-        }
-        return prev
-      })
+      setCustomFieldErrors((prev) => clearFieldError(prev, field.id, language))
     }
   }
 
@@ -434,25 +419,6 @@ export default function CategoryManagement() {
       ...prev,
       [language]: {},
     }))
-  }
-
-  const validateCustomFields = () => {
-    const errors: Record<number, string> = {}
-    for (const field of customFieldItems) {
-      if (!field.mandatory) continue
-      if (field.multi_language) {
-        const hasValue = Object.values(i18nValues).some((langMap) => (langMap[field.field_code] ?? '').trim())
-        if (!hasValue) {
-          errors[field.id] = language === 'cn' ? `请填写${field.field_name}` : `Please fill in ${field.field_name}`
-        }
-      } else {
-        if (!(fieldValues[field.id] ?? '').trim()) {
-          errors[field.id] = language === 'cn' ? `请填写${field.field_name}` : `Please fill in ${field.field_name}`
-        }
-      }
-    }
-    setCustomFieldErrors(errors)
-    return Object.keys(errors).length === 0
   }
 
   const buildFieldValuePayload = (): EntityFieldValueItem[] => {
@@ -465,19 +431,25 @@ export default function CategoryManagement() {
   const handleSubmit = async () => {
     const mainFieldNames = ['platform', 'name', 'sequence', 'vod_count', 'category_type', 'description', 'jump_category_code', 'status']
 
+    const doValidateCustomFields = () => {
+      const errors = validateCustomFieldsUtil(customFieldItems, fieldValues, i18nValues, t, defaultLang)
+      setCustomFieldErrors(errors)
+      return Object.values(errors).every((langErrors) => Object.keys(langErrors).length === 0)
+    }
+
     const validateCurrentTab = () => {
       if (activeTab === 'main') {
         return itemForm.validateFields(mainFieldNames).then(() => true, () => false)
       }
       if (activeTab === 'custom-fields') {
-        return Promise.resolve(validateCustomFields())
+        return Promise.resolve(doValidateCustomFields())
       }
       return Promise.resolve(true)
     }
 
     const validateOtherTab = () => {
       if (activeTab === 'main') {
-        if (!validateCustomFields()) return Promise.resolve('custom-fields')
+        if (!doValidateCustomFields()) return Promise.resolve('custom-fields')
         return Promise.resolve(null)
       }
       if (activeTab === 'custom-fields') {
@@ -645,7 +617,7 @@ export default function CategoryManagement() {
     return ids
   }
 
-  // 模拟同步：将当前所有栏目的 ingest_status 批量更新为 success
+  // 将选中栏目的 Category 同步给业务系统（生成 C2 ADI XML）
   const handleSync = async () => {
     const ids = flattenCategoryIds(tree)
     if (ids.length === 0) {
@@ -654,8 +626,12 @@ export default function CategoryManagement() {
     }
     setSyncing(true)
     try {
-      await Promise.all(ids.map((id) => updateCategory(id, { ingest_status: 'success' })))
-      void message.success(t('category.msg.syncComplete', { count: ids.length }), 3)
+      const result: CategorySyncResponse = await syncCategories({ category_ids: ids })
+      if (result.success) {
+        void message.success(t('category.msg.syncSuccess'), 3)
+      } else {
+        void message.error(result.message, 5)
+      }
       void loadTree(filters)
     } catch (err) {
       if (isHandledError(err)) return
@@ -668,184 +644,38 @@ export default function CategoryManagement() {
   const renderCustomFieldInput = (field: CustomFieldListItem, langCode?: string) => {
     if (langCode) {
       const value = i18nValues[langCode]?.[field.field_code] ?? ''
-      if (isSelectField(field.field_type)) {
-        if (isMultiSelectField(field.field_type)) {
-          const selected = value ? value.split(',').filter(Boolean) : []
-          return (
-            <Select
-              showSearch optionFilterProp="label"
-              mode="multiple"
-              allowClear
-              value={selected}
-              placeholder={field.tip ?? t('customField.placeholder.selectField', { name: field.field_name })}
-              options={field.options.map((item) => ({
-                label: item.names[langCode] ?? item.names.default ?? Object.values(item.names)[0] ?? item.code,
-                value: item.code,
-              }))}
-              onChange={(vals) => updateI18nValue(langCode, field.field_code, vals.join(','))}
-              style={{ width: '100%' }}
-            />
-          )
-        }
-        return (
-          <Select
-            showSearch optionFilterProp="label"
-            allowClear
-            value={value || undefined}
-            placeholder={field.tip ?? t('customField.placeholder.selectField', { name: field.field_name })}
-            options={field.options.map((item) => ({
-              label: item.names[langCode] ?? item.names.default ?? Object.values(item.names)[0] ?? item.code,
-              value: item.code,
-            }))}
-            onChange={(val) => updateI18nValue(langCode, field.field_code, val ?? '')}
-            style={{ width: '100%' }}
-          />
-        )
-      }
-      if (isLongTextField(field.field_type)) {
-        return (
-          <TrimInput.TextArea
-            rows={3}
-            value={value}
-            placeholder={field.tip ?? t('customField.placeholder.enterField', { name: field.field_name })}
-            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateI18nValue(langCode, field.field_code, e.target.value)}
-          />
-        )
-      }
-      if (isDateField(field.field_type)) {
-        return (
-          <DatePicker
-            style={{ width: '100%' }}
-            value={value ? dayjs(value) : undefined}
-            placeholder={field.tip ?? t('customField.placeholder.selectField', { name: field.field_name })}
-            onChange={(_, dateString) => updateI18nValue(langCode, field.field_code, typeof dateString === 'string' ? dateString : '')}
-          />
-        )
-      }
-      if (isTimeField(field.field_type)) {
-        return (
-          <TimePicker
-            style={{ width: '100%' }}
-            value={value ? dayjs(value, 'HH:mm:ss') : undefined}
-            placeholder={field.tip ?? t('customField.placeholder.selectField', { name: field.field_name })}
-            onChange={(_, timeString) => updateI18nValue(langCode, field.field_code, typeof timeString === 'string' ? timeString : '')}
-          />
-        )
-      }
-      if (isDateTimeField(field.field_type)) {
-        return (
-          <DatePicker
-            showTime
-            style={{ width: '100%' }}
-            format="YYYY-MM-DD HH:mm:ss"
-            value={value ? dayjs(value) : undefined}
-            placeholder={field.tip ?? t('customField.placeholder.selectField', { name: field.field_name })}
-            onChange={(_, dateString) => updateI18nValue(langCode, field.field_code, typeof dateString === 'string' ? dateString : '')}
-          />
-        )
-      }
+      const options = field.options.map((item) => ({
+        label: getFieldOptionLabel(field, item.code, langCode, languageOrder),
+        value: item.code,
+      }))
+      const placeholder = getCustomFieldPlaceholder(field, t)
+
       return (
-        <TrimInput
+        <CustomFieldControl
+          fieldType={field.field_type}
+          options={options}
+          placeholder={placeholder}
           value={value}
-          placeholder={field.tip ?? t('customField.placeholder.enterField', { name: field.field_name })}
-          onChange={(e) => updateI18nValue(langCode, field.field_code, e.target.value)}
+          onChange={(val) => updateI18nValue(langCode, field.field_code, formatApiValue(field.field_type, val))}
         />
       )
     }
 
     const value = fieldValues[field.id] ?? ''
-    if (isSelectField(field.field_type)) {
-      if (isMultiSelectField(field.field_type)) {
-        const selected = value ? value.split(',').filter(Boolean) : []
-        return (
-          <Select
-              showSearch optionFilterProp="label"
-              mode="multiple"
-            allowClear
-            value={selected}
-            placeholder={field.tip ?? t('customField.placeholder.selectField', { name: field.field_name })}
-            options={field.options.map((item) => ({
-              label: getFieldOptionLabel(field, item.code, defaultLang || undefined),
-              value: item.code,
-            }))}
-            onChange={(vals) => updateFieldValue(field.id, vals.join(','))}
-            style={{ width: '100%' }}
-          />
-        )
-      }
-      return (
-        <Select
-            showSearch optionFilterProp="label"
-            allowClear
-          value={value || undefined}
-          placeholder={field.tip ?? t('customField.placeholder.selectField', { name: field.field_name })}
-          options={field.options.map((item) => ({
-            label: getFieldOptionLabel(field, item.code, defaultLang || undefined),
-            value: item.code,
-          }))}
-          onChange={(val) => updateFieldValue(field.id, val ?? '')}
-          style={{ width: '100%' }}
-        />
-      )
-    }
-    if (isLongTextField(field.field_type)) {
-      return (
-        <TrimInput.TextArea
-          rows={3}
-          value={value}
-          placeholder={field.tip ?? t('customField.placeholder.enterField', { name: field.field_name })}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateFieldValue(field.id, e.target.value)}
-        />
-      )
-    }
-    if (isNumberField(field.field_type)) {
-      return (
-        <InputNumber
-          style={{ width: '100%' }}
-          value={value === '' ? undefined : Number(value)}
-          placeholder={field.tip ?? t('customField.placeholder.enterField', { name: field.field_name })}
-          onChange={(val) => updateFieldValue(field.id, val == null ? '' : String(val))}
-        />
-      )
-    }
-    if (isDateField(field.field_type)) {
-      return (
-        <DatePicker
-          style={{ width: '100%' }}
-          value={value ? dayjs(value) : undefined}
-          placeholder={field.tip ?? t('customField.placeholder.selectField', { name: field.field_name })}
-          onChange={(_, dateString) => updateFieldValue(field.id, typeof dateString === 'string' ? dateString : '')}
-        />
-      )
-    }
-    if (isTimeField(field.field_type)) {
-      return (
-        <TimePicker
-          style={{ width: '100%' }}
-          value={value ? dayjs(value, 'HH:mm:ss') : undefined}
-          placeholder={field.tip ?? t('customField.placeholder.selectField', { name: field.field_name })}
-          onChange={(_, timeString) => updateFieldValue(field.id, typeof timeString === 'string' ? timeString : '')}
-        />
-      )
-    }
-    if (isDateTimeField(field.field_type)) {
-      return (
-        <DatePicker
-          showTime
-          style={{ width: '100%' }}
-          format="YYYY-MM-DD HH:mm:ss"
-          value={value ? dayjs(value) : undefined}
-          placeholder={field.tip ?? t('customField.placeholder.selectField', { name: field.field_name })}
-          onChange={(_, dateString) => updateFieldValue(field.id, typeof dateString === 'string' ? dateString : '')}
-        />
-      )
-    }
+    const options = field.options.map((item) => ({
+      label: getFieldOptionLabel(field, item.code, defaultLang || undefined, languageOrder),
+      value: item.code,
+    }))
+    const placeholder = getCustomFieldPlaceholder(field, t)
+
     return (
-      <TrimInput
-          value={value}
-          placeholder={field.tip ?? t('customField.placeholder.enterField', { name: field.field_name })}
-          onChange={(e) => updateFieldValue(field.id, e.target.value)}
-        />
+      <CustomFieldControl
+        fieldType={field.field_type}
+        options={options}
+        placeholder={placeholder}
+        value={value}
+        onChange={(val) => updateFieldValue(field.id, formatApiValue(field.field_type, val))}
+      />
     )
   }
 
@@ -894,8 +724,10 @@ export default function CategoryManagement() {
       width: 200,
       render: (_, record) => {
         if (record.rowType === 'platform') return null
-        const displayVal = record.ingest_status ?? 'None'
-        const tagColor = displayVal === 'success' ? 'success' : displayVal === 'failure' ? 'error' : 'default'
+        const displayVal = record.ingest_status ?? 'none'
+        // 兼容历史数据：旧版本曾写入 'Publishing'/'failed'，统一归一为 processing/failure 展示
+        const statusKey = displayVal === 'Publishing' ? 'processing' : displayVal === 'failed' ? 'failure' : displayVal
+        const tagColor = statusKey === 'success' ? 'success' : statusKey === 'failure' ? 'error' : statusKey === 'processing' ? 'processing' : 'default'
         return (
           <Button
             type="link"
@@ -903,7 +735,7 @@ export default function CategoryManagement() {
             style={{ padding: 0, height: 'auto' }}
             onClick={() => setHistoryModal({ open: true, record })}
           >
-            <Tag color={tagColor} style={{ cursor: 'pointer', margin: 0 }}>{displayVal}</Tag>
+            <Tag color={tagColor} style={{ cursor: 'pointer', margin: 0 }}>{t(`common.ingestStatus.${statusKey}` as any)}</Tag>
           </Button>
         )
       },
@@ -1030,11 +862,11 @@ export default function CategoryManagement() {
               forceRender: true,
               children: (
                 <Form form={itemForm} layout="vertical">
-                  <Form.Item name="platform" hidden><TrimInput /></Form.Item>
+                  <Form.Item name="platform" hidden rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}><TrimInput /></Form.Item>
                   <Row gutter={16}>
                     <Col span={12}>
                       <Form.Item label={t('category.form.parentLabel')}>
-                        <TrimInput value={modal.record?.name ?? ''} readOnly placeholder={t('category.form.emptyParent')} />
+                        <TrimInput value={modal.parentName ?? '—'} readOnly />
                       </Form.Item>
                     </Col>
                     <Col span={12}>
@@ -1086,23 +918,28 @@ export default function CategoryManagement() {
               label: t('category.tab.customFields'),
               forceRender: true,
               children: (
-                <Row gutter={16}>
-                  {customFieldItems.length === 0 ? (
-                    <Col span={24}>{t('category.form.noCustomFields')}</Col>
-                  ) : customFieldItems.map((field) => (
-                    <Col span={12} key={field.id}>
-                      <Form.Item
-                        label={field.field_name}
-                        required={field.mandatory}
-                        tooltip={field.tip ?? undefined}
-                        validateStatus={customFieldErrors[field.id] ? 'error' : ''}
-                        help={customFieldErrors[field.id] || ''}
-                      >
-                        {renderCustomFieldInput(field, field.multi_language ? defaultLang : undefined)}
-                      </Form.Item>
-                    </Col>
-                  ))}
-                </Row>
+                <Form layout="vertical">
+                  <Row gutter={16}>
+                    {customFieldItems.length === 0 ? (
+                      <Col span={24}>{t('category.form.noCustomFields')}</Col>
+                    ) : customFieldItems.map((field) => {
+                      const errorKey = field.multi_language ? defaultLang : '_main'
+                      return (
+                      <Col span={12} key={field.id}>
+                        <Form.Item
+                          label={field.field_name}
+                          required={field.mandatory}
+                          tooltip={field.tip ?? undefined}
+                          validateStatus={customFieldErrors[field.id]?.[errorKey] ? 'error' : ''}
+                          help={customFieldErrors[field.id]?.[errorKey] || ''}
+                        >
+                          {renderCustomFieldInput(field, field.multi_language ? defaultLang : undefined)}
+                        </Form.Item>
+                      </Col>
+                      )
+                    })}
+                  </Row>
+                </Form>
               ),
             },
             {
@@ -1141,39 +978,41 @@ export default function CategoryManagement() {
                     <div style={{ marginBottom: 16, fontWeight: 500 }}>
                       {t('category.form.currentLanguage')}{otherLanguageOptions.find((item) => item.code === activeLang)?.name ?? activeLang}
                     </div>
-                    <Row gutter={16}>
-                      <Col span={24}>
-                        <Form.Item label={t('category.col.categoryName')}>
-                          <TrimInput
-                            value={i18nValues[activeLang]?.name ?? ''}
-                            placeholder={t('category.placeholder.categoryName')}
-                            onChange={(e) => updateI18nValue(activeLang, 'name', e.target.value)}
-                          />
-                        </Form.Item>
-                      </Col>
-                      <Col span={24}>
-                        <Form.Item label={t('category.form.descriptionLabel')}>
-                          <TrimInput.TextArea
-                            rows={3}
-                            value={i18nValues[activeLang]?.description ?? ''}
-                            placeholder={t('category.form.descriptionLabel')}
-                            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateI18nValue(activeLang, 'description', e.target.value)}
-                          />
-                        </Form.Item>
-                      </Col>
-                      {multiLanguageFields.map((field) => (
-                        <Col span={12} key={field.id}>
-                          <Form.Item
-                            label={field.field_name}
-                            tooltip={field.tip ?? undefined}
-                            validateStatus={customFieldErrors[field.id] ? 'error' : ''}
-                            help={customFieldErrors[field.id] || ''}
-                          >
-                            {renderCustomFieldInput(field, activeLang)}
+                    <Form layout="vertical">
+                      <Row gutter={16}>
+                        <Col span={24}>
+                          <Form.Item label={t('category.col.categoryName')}>
+                            <TrimInput
+                              value={i18nValues[activeLang]?.name ?? ''}
+                              placeholder={t('category.placeholder.categoryName')}
+                              onChange={(e) => updateI18nValue(activeLang, 'name', e.target.value)}
+                            />
                           </Form.Item>
                         </Col>
-                      ))}
-                    </Row>
+                        <Col span={24}>
+                          <Form.Item label={t('category.form.descriptionLabel')}>
+                            <TrimInput.TextArea
+                              rows={3}
+                              value={i18nValues[activeLang]?.description ?? ''}
+                              placeholder={t('category.form.descriptionLabel')}
+                              onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateI18nValue(activeLang, 'description', e.target.value)}
+                            />
+                          </Form.Item>
+                        </Col>
+                        {multiLanguageFields.map((field) => (
+                          <Col span={12} key={field.id}>
+                            <Form.Item
+                              label={field.field_name}
+                              tooltip={field.tip ?? undefined}
+                              validateStatus={customFieldErrors[field.id]?.[activeLang] ? 'error' : ''}
+                              help={customFieldErrors[field.id]?.[activeLang] || ''}
+                            >
+                              {renderCustomFieldInput(field, activeLang)}
+                            </Form.Item>
+                          </Col>
+                        ))}
+                      </Row>
+                    </Form>
                   </Col>
                 </Row>
               ),
@@ -1190,7 +1029,7 @@ export default function CategoryManagement() {
         confirmLoading={contentOrderSubmitting}
         okText={t('common.confirm')}
         cancelText={t('common.cancel')}
-        width={760}
+        width={800}
         destroyOnHidden
       >
         <Table<CategoryContentRow>
@@ -1198,6 +1037,7 @@ export default function CategoryManagement() {
           loading={contentOrderLoading}
           dataSource={contentOrderRows}
           pagination={false}
+          scroll={{ y: 400 }}
           locale={{ emptyText: t('category.contentOrder.emptyContents') }}
           onRow={(_, index) => ({
             draggable: true,
@@ -1214,12 +1054,15 @@ export default function CategoryManagement() {
               title: '',
               key: 'drag',
               width: 40,
+              align: 'center',
               render: () => <HolderOutlined style={{ cursor: 'grab', color: '#999' }} />,
             },
             {
               title: t('category.form.contentName'),
               dataIndex: 'content_name',
               key: 'content_name',
+              width: 280,
+              ellipsis: true,
               render: (name: string, record) => {
                 const getDetailPath = () => {
                   if (record.content_type === 'CHANNEL') return `/live/channels/${record.id}`
@@ -1227,35 +1070,48 @@ export default function CategoryManagement() {
                   return `/contents/${record.id}`
                 }
                 return (
-                  <Button type="link" size="small" style={{ padding: 0 }} onClick={() => navigate(getDetailPath())}>
-                    {name}
+                  <Button
+                    type="link"
+                    size="small"
+                    style={{ padding: 0, maxWidth: '100%' }}
+                    onClick={() => navigate(getDetailPath())}
+                  >
+                    <span style={{ display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {name}
+                    </span>
                   </Button>
                 )
               },
             },
-            { title: t('category.form.contentType'), dataIndex: 'content_type', key: 'content_type', width: 140 },
-            { title: t('category.form.genre'), dataIndex: 'genre', key: 'genre', width: 120 },
-            { title: t('category.form.status'), dataIndex: 'status', key: 'status', width: 100 },
+            { title: t('category.form.contentType'), dataIndex: 'content_type', key: 'content_type', width: 120, align: 'center' },
+            { title: t('category.form.genre'), dataIndex: 'genre', key: 'genre', width: 100, align: 'center', ellipsis: true },
+            { title: t('category.form.status'), dataIndex: 'status', key: 'status', width: 80, align: 'center' },
             {
               title: t('common.action'),
               key: 'action',
               width: 100,
+              align: 'center',
+              fixed: 'right',
               render: (_, __, index) => (
-                <Space size={4}>
-                  <Button
-                    type="link"
-                    size="small"
-                    icon={<ArrowUpOutlined />}
-                    disabled={index === 0}
-                    onClick={() => moveContentRow(index, 'up')}
-                  />
-                  <Button
-                    type="link"
-                    size="small"
-                    icon={<ArrowDownOutlined />}
-                    disabled={index === contentOrderRows.length - 1}
-                    onClick={() => moveContentRow(index, 'down')}
-                  />
+                <Space size={0}>
+                  <Tooltip title={t('common.moveUp')}>
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<ArrowUpOutlined />}
+                      disabled={index === 0}
+                      onClick={() => moveContentRow(index, 'up')}
+                    />
+                  </Tooltip>
+                  <Tooltip title={t('common.moveDown')}>
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<ArrowDownOutlined />}
+                      disabled={index === contentOrderRows.length - 1}
+                      onClick={() => moveContentRow(index, 'down')}
+                    />
+                  </Tooltip>
                 </Space>
               ),
             },

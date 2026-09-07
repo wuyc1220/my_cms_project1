@@ -36,12 +36,14 @@ export interface ContentStatusCount {
   published: number
   publish_failed: number
   no_active_license: number
-  expired: number
-  near_expiry: number
-  near_expiry_days: number
-  deleted: number
   closed: number
   none_status: number
+  /** 计算状态：临近过期数量（Published + 许可证 end_date 在窗口内） */
+  near_expired: number
+  /** 计算状态：本次统计实际生效的临近过期天数（NEAR_EXPIRY_DAYS 配置，点击跳转复用） */
+  near_expiry_days: number
+  /** 计算状态：已删除数量（is_discarded=true） */
+  deleted: number
 }
 
 export interface GenreStatusMatrix {
@@ -134,6 +136,8 @@ export interface DashboardData {
   task_completion_stats: TaskCompletionStats
   task_status_count: TaskStatusCount
   task_assigned_matrix: TaskAssignedMatrix
+  /** 当前用户是否可见任务相关模块（后端实时权限，前端显隐权威来源） */
+  can_see_task_modules: boolean
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -151,10 +155,18 @@ export const MODULE_CODES = {
   NOT_ASSIGNED_TASKS: 'not_assigned_tasks',
 } as const
 
+// 受任务权限控制的看板模块 code 集合（无 operate 权限时隐藏）
+// 注意：未分配任务列表（not_assigned_tasks）不受权限控制，仅由自定义看板弹窗配置
+export const TASK_MODULE_CODES: Set<string> = new Set([
+  MODULE_CODES.TASK_COMPLETION_STATS,
+  MODULE_CODES.TASK_STATUS_COUNT,
+  MODULE_CODES.TASK_ASSIGNED_TABLE,
+])
+
 export const MODULE_NAMES: Record<string, string> = {
-  [MODULE_CODES.PUBLISHED_STATS]: 'Content Published Statistics',
-  [MODULE_CODES.CONTENT_STATUS_COUNT]: 'Content Status Count',
-  [MODULE_CODES.GENRE_STATUS_TABLE]: 'Content Genre/Status Table',
+  [MODULE_CODES.PUBLISHED_STATS]: 'Vod Published Statistics',
+  [MODULE_CODES.CONTENT_STATUS_COUNT]: 'Vod Status Count',
+  [MODULE_CODES.GENRE_STATUS_TABLE]: 'Vod Genre/Status Table',
   [MODULE_CODES.ASSIGNED_TO_ME]: 'Assigned To Me Table',
   [MODULE_CODES.TASK_COMPLETION_STATS]: 'Task Completion Statistics',
   [MODULE_CODES.TASK_STATUS_COUNT]: 'Task Status Count',
@@ -174,14 +186,3 @@ export const DEFAULT_MODULE_CONFIG: ModuleConfigItem[] = [
   { code: MODULE_CODES.NOT_ASSIGNED_TASKS, name: MODULE_NAMES[MODULE_CODES.NOT_ASSIGNED_TASKS], visible: true, sort_order: 8 },
 ]
 
-// 计算状态常量（不属于数据字典，由系统计算得出）
-// 后端会自动将这些状态合并到内容状态配置中
-export const COMPUTED_STATUS_ITEMS: StatusConfigItem[] = [
-  { code: 'Expired', name: 'Expired', visible: true, sort_order: 97 },
-  { code: 'NearExpiry', name: 'NearExpiry', visible: true, sort_order: 98 },
-  { code: 'Deleted', name: 'Deleted', visible: true, sort_order: 99 },
-]
-
-// 默认内容状态配置（已废弃，状态现在从后端 Ingest_Status 字典获取）
-// 保留此常量用于类型定义和向后兼容，实际数据从后端获取
-export const DEFAULT_CONTENT_STATUS_CONFIG: StatusConfigItem[] = COMPUTED_STATUS_ITEMS

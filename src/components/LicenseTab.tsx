@@ -52,13 +52,24 @@ export default function LicenseTab({ contentId, refreshVersion }: LicenseTabProp
       title: t('content.col.providerName'),
       dataIndex: 'provider_name',
       key: 'provider_name',
+      width: 160,
       ellipsis: { showTitle: false },
-      render: (v: string) => <Tooltip title={v}><span>{v}</span></Tooltip>,
+      render: (v: string, record) => (
+        <Tooltip title={v}>
+          <span
+            style={{ color: '#1677ff', cursor: 'pointer' }}
+            onClick={() => record.provider_id && navigate(`/trade/providers/${record.provider_id}`)}
+          >
+            {v}
+          </span>
+        </Tooltip>
+      ),
     },
     {
       title: t('content.col.contractName'),
       dataIndex: 'contract_name',
       key: 'contract_name',
+      width: 160,
       ellipsis: { showTitle: false },
       render: (v: string, record) => (
         <Tooltip title={v}>
@@ -75,6 +86,7 @@ export default function LicenseTab({ contentId, refreshVersion }: LicenseTabProp
       title: t('content.col.licenseName'),
       dataIndex: 'name',
       key: 'name',
+      width: 160,
       ellipsis: { showTitle: false },
       render: (v: string, record) => (
         <Tooltip title={v}>
@@ -92,7 +104,7 @@ export default function LicenseTab({ contentId, refreshVersion }: LicenseTabProp
       dataIndex: 'service_type',
       key: 'service_type',
       width: 120,
-      render: (v: string) => <Tag>{v}</Tag>,
+      render: (v: string, record) => <Tag>{record.service_type_name || v}</Tag>,
     },
     {
       title: t('content.col.startDate'),

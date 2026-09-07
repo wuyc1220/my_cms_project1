@@ -2,18 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Button,
   Col,
-  DatePicker,
   Form,
-  InputNumber,
   Modal,
   Row,
-  Select,
   Spin,
   Tabs,
-  TimePicker,
   message,
 } from 'antd'
-import dayjs from 'dayjs'
 import {
   createCast,
   getCast,
@@ -27,6 +22,9 @@ import { getCustomFields } from '../api/customFields'
 import { getMultiLanguageOptions } from '../api/i18n'
 import TrimInput from './TrimInput'
 import { useI18n } from '../i18n/useI18n'
+import { useSensitiveCheck } from '../hooks/useSensitiveCheck'
+import CustomFieldControl from './CustomFieldControl'
+import { getFieldOptionLabel, formatApiValue, getCustomFieldPlaceholder, validateCustomFields as validateCustomFieldsUtil, clearFieldError } from '../utils/customField'
 import type {
   CastListItem,
   CustomFieldListItem,
@@ -53,20 +51,6 @@ interface MainFormValues {
 type FieldValueMap = Record<number, string>
 type I18nValueMap = Record<string, Record<string, string>>
 
-const isMultiSelectField = (fieldType: string) => fieldType === 'DropList_multiple'
-const isSelectField = (fieldType: string) => fieldType === 'DropList' || fieldType === 'DropList_multiple'
-const isLongTextField = (fieldType: string) => fieldType === 'LongText'
-const isNumberField = (fieldType: string) => fieldType === 'Integer' || fieldType === 'Decimal'
-const isDateField = (fieldType: string) => fieldType === 'Date'
-const isTimeField = (fieldType: string) => fieldType === 'Time'
-const isDateTimeField = (fieldType: string) => fieldType === 'Date+Time'
-
-const getFieldOptionLabel = (field: CustomFieldListItem, optionCode: string, preferredLanguage?: string) => {
-  const option = field.options.find((item) => item.code === optionCode)
-  if (!option) return optionCode
-  return option.names[preferredLanguage ?? ''] ?? option.names.default ?? Object.values(option.names)[0] ?? option.code
-}
-
 export default function CastFormModal({
   open,
   mode,
@@ -75,12 +59,13 @@ export default function CastFormModal({
   onSuccess,
 }: CastFormModalProps) {
   const { t, language } = useI18n()
+  const { checkSensitive } = useSensitiveCheck()
   const formRules = useFormRules()
   const [itemForm] = Form.useForm<MainFormValues>()
 
   const [submitting, setSubmitting] = useState(false)
   const [activeTab, setActiveTab] = useState('main')
-  const [customFieldErrors, setCustomFieldErrors] = useState<Record<number, string>>({})
+  const [customFieldErrors, setCustomFieldErrors] = useState<Record<number, Record<string, string>>>({})
 
   const [languageOptions, setLanguageOptions] = useState<LanguageOption[]>([])
   const [customFields, setCustomFields] = useState<CustomFieldListItem[]>([])
@@ -89,6 +74,7 @@ export default function CastFormModal({
   const [dataLoading, setDataLoading] = useState(false)
 
   const defaultLang = languageOptions[0]?.code ?? ''
+  const languageOrder = useMemo(() => languageOptions.map((l) => l.code), [languageOptions])
   const otherLanguageOptions = useMemo(
     () => languageOptions.filter((l) => l.code !== defaultLang),
     [languageOptions, defaultLang]
@@ -104,9 +90,6 @@ export default function CastFormModal({
     () => customFieldItems.filter((item) => item.multi_language),
     [customFieldItems]
   )
-
-  const inputPlaceholder = (name: string) => language === 'cn' ? `请输入${name}` : `Enter ${name}`
-  const selectPlaceholder = (name: string) => language === 'cn' ? `请选择${name}` : `Select ${name}`
 
   const prevOpenRef = useRef(false)
 
@@ -184,14 +167,7 @@ export default function CastFormModal({
 
   const updateFieldValue = (fieldId: number, value: string) => {
     setFieldValues((prev) => ({ ...prev, [fieldId]: value }))
-    setCustomFieldErrors((prev) => {
-      if (prev[fieldId]) {
-        const next = { ...prev }
-        delete next[fieldId]
-        return next
-      }
-      return prev
-    })
+    setCustomFieldErrors((prev) => clearFieldError(prev, fieldId, '_main'))
   }
 
   const updateI18nValue = (lang: string, fieldName: string, value: string) => {
@@ -201,38 +177,12 @@ export default function CastFormModal({
     }))
     const field = customFieldItems.find((f) => f.field_code === fieldName && f.multi_language)
     if (field) {
-      setCustomFieldErrors((prev) => {
-        if (prev[field.id]) {
-          const next = { ...prev }
-          delete next[field.id]
-          return next
-        }
-        return prev
-      })
+      setCustomFieldErrors((prev) => clearFieldError(prev, field.id, lang))
     }
   }
 
   const clearLanguageValues = (lang: string) => {
     setI18nValues((prev) => ({ ...prev, [lang]: {} }))
-  }
-
-  const validateCustomFields = () => {
-    const errors: Record<number, string> = {}
-    for (const field of customFieldItems) {
-      if (!field.mandatory) continue
-      if (field.multi_language) {
-        const hasValue = Object.values(i18nValues).some((langMap) => (langMap[field.field_code] ?? '').trim())
-        if (!hasValue) {
-          errors[field.id] = language === 'cn' ? `请填写${field.field_name}` : `Please fill in ${field.field_name}`
-        }
-      } else {
-        if (!(fieldValues[field.id] ?? '').trim()) {
-          errors[field.id] = language === 'cn' ? `请填写${field.field_name}` : `Please fill in ${field.field_name}`
-        }
-      }
-    }
-    setCustomFieldErrors(errors)
-    return Object.keys(errors).length === 0
   }
 
   const buildFieldValuePayload = () =>
@@ -241,19 +191,25 @@ export default function CastFormModal({
   const handleSubmit = async () => {
     const mainFieldNames = ['name', 'description']
 
+    const doValidateCustomFields = () => {
+      const errors = validateCustomFieldsUtil(customFieldItems, fieldValues, i18nValues, t, defaultLang)
+      setCustomFieldErrors(errors)
+      return Object.values(errors).every((langErrors) => Object.keys(langErrors).length === 0)
+    }
+
     const validateCurrentTab = () => {
       if (activeTab === 'main') {
         return itemForm.validateFields(mainFieldNames).then(() => true, () => false)
       }
       if (activeTab === 'custom-fields') {
-        return Promise.resolve(validateCustomFields())
+        return Promise.resolve(doValidateCustomFields())
       }
       return Promise.resolve(true)
     }
 
     const validateOtherTab = () => {
       if (activeTab === 'main') {
-        if (!validateCustomFields()) return Promise.resolve('custom-fields')
+        if (!doValidateCustomFields()) return Promise.resolve('custom-fields')
         return Promise.resolve(null)
       }
       if (activeTab === 'custom-fields') {
@@ -278,6 +234,16 @@ export default function CastFormModal({
 
     setSubmitting(true)
     try {
+      // 敏感词预校验：检查 name、description、自定义字段、多语言数据
+      const checkData: Record<string, unknown> = {
+        name: values.name,
+        description: values.description ?? null,
+        fieldValues: buildFieldValuePayload(),
+        i18nValues,
+      }
+      const ok = await checkSensitive(checkData)
+      if (!ok) return
+
       let castIdResult = 0
       let result: CastListItem
 
@@ -331,200 +297,34 @@ export default function CastFormModal({
   }
 
   const renderCustomFieldInput = (field: CustomFieldListItem, inMultiLanguage = false, langCode?: string) => {
-    if (inMultiLanguage) {
-      const targetLang = langCode ?? activeLang
-      const value = i18nValues[targetLang]?.[field.field_code] ?? ''
-      if (isSelectField(field.field_type)) {
-        if (isMultiSelectField(field.field_type)) {
-          const selected = value ? value.split(',').filter(Boolean) : []
-          return (
-            <Select
-              showSearch
-              optionFilterProp="label"
-              mode="multiple"
-              allowClear
-              value={selected}
-              placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-              options={field.options.map((item) => ({
-                label: item.names[targetLang] ?? item.names.default ?? Object.values(item.names)[0] ?? item.code,
-                value: item.code,
-              }))}
-              onChange={(vals) => updateI18nValue(targetLang, field.field_code, vals.join(','))}
-              style={{ width: '100%' }}
-            />
-          )
-        }
-        return (
-          <Select
-            showSearch
-            optionFilterProp="label"
-            allowClear
-            value={value || undefined}
-            placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-            options={field.options.map((item) => ({
-              label: item.names[targetLang] ?? item.names.default ?? Object.values(item.names)[0] ?? item.code,
-              value: item.code,
-            }))}
-            onChange={(val) => updateI18nValue(targetLang, field.field_code, val ?? '')}
-            style={{ width: '100%' }}
-          />
-        )
+    const targetLang = inMultiLanguage ? (langCode ?? activeLang) : defaultLang
+    const rawValue = inMultiLanguage
+      ? (i18nValues[targetLang]?.[field.field_code] ?? '')
+      : (fieldValues[field.id] ?? '')
+
+    const options = field.options.map((item) => ({
+      label: getFieldOptionLabel(field, item.code, inMultiLanguage ? targetLang : (defaultLang || undefined), languageOrder),
+      value: item.code,
+    }))
+
+    const placeholder = getCustomFieldPlaceholder(field, t)
+
+    const handleChange = (val: unknown) => {
+      const strVal = formatApiValue(field.field_type, val)
+      if (inMultiLanguage) {
+        updateI18nValue(targetLang, field.field_code, strVal)
+      } else {
+        updateFieldValue(field.id, strVal)
       }
-      if (isLongTextField(field.field_type)) {
-        return (
-          <TrimInput.TextArea
-            rows={3}
-            value={value}
-            placeholder={field.tip ?? inputPlaceholder(field.field_name)}
-            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateI18nValue(targetLang, field.field_code, e.target.value)}
-          />
-        )
-      }
-      if (isNumberField(field.field_type)) {
-        return (
-          <InputNumber
-            style={{ width: '100%' }}
-            value={value === '' ? undefined : Number(value)}
-            placeholder={field.tip ?? inputPlaceholder(field.field_name)}
-            onChange={(val) => updateI18nValue(targetLang, field.field_code, val == null ? '' : String(val))}
-          />
-        )
-      }
-      if (isDateField(field.field_type)) {
-        return (
-          <DatePicker
-            style={{ width: '100%' }}
-            value={value ? dayjs(value) : undefined}
-            placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-            onChange={(_, dateString) => updateI18nValue(targetLang, field.field_code, typeof dateString === 'string' ? dateString : '')}
-          />
-        )
-      }
-      if (isTimeField(field.field_type)) {
-        return (
-          <TimePicker
-            style={{ width: '100%' }}
-            value={value ? dayjs(value, 'HH:mm:ss') : undefined}
-            placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-            onChange={(_, timeString) => updateI18nValue(targetLang, field.field_code, typeof timeString === 'string' ? timeString : '')}
-          />
-        )
-      }
-      if (isDateTimeField(field.field_type)) {
-        return (
-          <DatePicker
-            showTime
-            style={{ width: '100%' }}
-            format="YYYY-MM-DD HH:mm:ss"
-            value={value ? dayjs(value) : undefined}
-            placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-            onChange={(_, dateString) => updateI18nValue(targetLang, field.field_code, typeof dateString === 'string' ? dateString : '')}
-          />
-        )
-      }
-      return (
-        <TrimInput
-          value={value}
-          placeholder={field.tip ?? inputPlaceholder(field.field_name)}
-          onChange={(e) => updateI18nValue(targetLang, field.field_code, e.target.value)}
-        />
-      )
     }
 
-    const value = fieldValues[field.id] ?? ''
-    if (isSelectField(field.field_type)) {
-      if (isMultiSelectField(field.field_type)) {
-        const selected = value ? value.split(',').filter(Boolean) : []
-        return (
-          <Select
-            showSearch
-            optionFilterProp="label"
-            mode="multiple"
-            allowClear
-            value={selected}
-            placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-            options={field.options.map((item) => ({
-              label: getFieldOptionLabel(field, item.code, defaultLang || undefined),
-              value: item.code,
-            }))}
-            onChange={(vals) => updateFieldValue(field.id, vals.join(','))}
-            style={{ width: '100%' }}
-          />
-        )
-      }
-      return (
-        <Select
-          showSearch
-          optionFilterProp="label"
-          allowClear
-          value={value || undefined}
-          placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-          options={field.options.map((item) => ({
-            label: getFieldOptionLabel(field, item.code, defaultLang || undefined),
-            value: item.code,
-          }))}
-          onChange={(val) => updateFieldValue(field.id, val ?? '')}
-          style={{ width: '100%' }}
-        />
-      )
-    }
-    if (isLongTextField(field.field_type)) {
-      return (
-        <TrimInput.TextArea
-          rows={3}
-          value={value}
-          placeholder={field.tip ?? inputPlaceholder(field.field_name)}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateFieldValue(field.id, e.target.value)}
-        />
-      )
-    }
-    if (isNumberField(field.field_type)) {
-      return (
-        <InputNumber
-          style={{ width: '100%' }}
-          value={value === '' ? undefined : Number(value)}
-          placeholder={field.tip ?? inputPlaceholder(field.field_name)}
-          onChange={(val) => updateFieldValue(field.id, val == null ? '' : String(val))}
-        />
-      )
-    }
-    if (isDateField(field.field_type)) {
-      return (
-        <DatePicker
-          style={{ width: '100%' }}
-          value={value ? dayjs(value) : undefined}
-          placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-          onChange={(_, dateString) => updateFieldValue(field.id, typeof dateString === 'string' ? dateString : '')}
-        />
-      )
-    }
-    if (isTimeField(field.field_type)) {
-      return (
-        <TimePicker
-          style={{ width: '100%' }}
-          value={value ? dayjs(value, 'HH:mm:ss') : undefined}
-          placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-          onChange={(_, timeString) => updateFieldValue(field.id, typeof timeString === 'string' ? timeString : '')}
-        />
-      )
-    }
-    if (isDateTimeField(field.field_type)) {
-      return (
-        <DatePicker
-          showTime
-          style={{ width: '100%' }}
-          format="YYYY-MM-DD HH:mm:ss"
-          value={value ? dayjs(value) : undefined}
-          placeholder={field.tip ?? selectPlaceholder(field.field_name)}
-          onChange={(_, dateString) => updateFieldValue(field.id, typeof dateString === 'string' ? dateString : '')}
-        />
-      )
-    }
     return (
-      <TrimInput
-        value={value}
-        placeholder={field.tip ?? inputPlaceholder(field.field_name)}
-        onChange={(e) => updateFieldValue(field.id, e.target.value)}
+      <CustomFieldControl
+        fieldType={field.field_type}
+        options={options}
+        placeholder={placeholder}
+        value={rawValue}
+        onChange={handleChange}
       />
     )
   }
@@ -538,7 +338,7 @@ export default function CastFormModal({
       confirmLoading={submitting}
       okText={t('common.confirm')}
       cancelText={t('common.cancel')}
-      width={920}
+      width={'60%'}
       destroyOnHidden
     >
       <Tabs
@@ -589,25 +389,30 @@ export default function CastFormModal({
                 <Spin size="large" />
               </div>
             ) : (
-              <Row gutter={16}>
-                {customFieldItems.length === 0 ? (
-                  <Col span={24}>{t('cast.modal.noCustomFields')}</Col>
-                ) : (
-                  customFieldItems.map((field) => (
-                    <Col span={12} key={field.id}>
-                      <Form.Item
-                        label={field.field_name}
-                        required={field.mandatory}
-                        tooltip={field.tip ?? undefined}
-                        validateStatus={customFieldErrors[field.id] ? 'error' : ''}
-                        help={customFieldErrors[field.id] || ''}
-                      >
-                        {renderCustomFieldInput(field, field.multi_language, defaultLang)}
-                      </Form.Item>
-                    </Col>
-                  ))
-                )}
-              </Row>
+              <Form layout="vertical">
+                <Row gutter={16}>
+                  {customFieldItems.length === 0 ? (
+                    <Col span={24}>{t('cast.modal.noCustomFields')}</Col>
+                  ) : (
+                    customFieldItems.map((field) => {
+                      const errorKey = field.multi_language ? defaultLang : '_main'
+                      return (
+                      <Col span={12} key={field.id}>
+                        <Form.Item
+                          label={field.field_name}
+                          required={field.mandatory}
+                          tooltip={field.tip ?? undefined}
+                          validateStatus={customFieldErrors[field.id]?.[errorKey] ? 'error' : ''}
+                          help={customFieldErrors[field.id]?.[errorKey] || ''}
+                        >
+                          {renderCustomFieldInput(field, field.multi_language, defaultLang)}
+                        </Form.Item>
+                      </Col>
+                      )
+                    })
+                  )}
+                </Row>
+              </Form>
             ),
           },
           {
@@ -658,39 +463,41 @@ export default function CastFormModal({
                   <div style={{ marginBottom: 16, fontWeight: 500 }}>
                     {t('cast.modal.currentLanguage')}{otherLanguageOptions.find((item) => item.code === activeLang)?.name ?? activeLang}
                   </div>
-                  <Row gutter={16}>
-                    <Col span={24}>
-                      <Form.Item label={t('cast.modal.castNameLabel')}>
-                        <TrimInput
-                          value={i18nValues[activeLang]?.name ?? ''}
-                          placeholder={language === 'cn' ? '请输入人物名称' : 'Enter Cast Name'}
-                          onChange={(e) => updateI18nValue(activeLang, 'name', e.target.value)}
-                        />
-                      </Form.Item>
-                    </Col>
-                    <Col span={24}>
-                      <Form.Item label={t('cast.modal.descriptionLabel')}>
-                        <TrimInput.TextArea
-                          rows={3}
-                          value={i18nValues[activeLang]?.description ?? ''}
-                          placeholder={language === 'cn' ? '请输入描述' : 'Enter description'}
-                          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateI18nValue(activeLang, 'description', e.target.value)}
-                        />
-                      </Form.Item>
-                    </Col>
-                    {multiLanguageFields.map((field) => (
-                      <Col span={12} key={field.id}>
-                        <Form.Item
-                          label={field.field_name}
-                          tooltip={field.tip ?? undefined}
-                          validateStatus={customFieldErrors[field.id] ? 'error' : ''}
-                          help={customFieldErrors[field.id] || ''}
-                        >
-                          {renderCustomFieldInput(field, true)}
+                  <Form layout="vertical">
+                    <Row gutter={16}>
+                      <Col span={24}>
+                        <Form.Item label={t('cast.modal.castNameLabel')}>
+                          <TrimInput
+                            value={i18nValues[activeLang]?.name ?? ''}
+                            placeholder={language === 'cn' ? '请输入人物名称' : 'Enter Cast Name'}
+                            onChange={(e) => updateI18nValue(activeLang, 'name', e.target.value)}
+                          />
                         </Form.Item>
                       </Col>
-                    ))}
-                  </Row>
+                      <Col span={24}>
+                        <Form.Item label={t('cast.modal.descriptionLabel')}>
+                          <TrimInput.TextArea
+                            rows={3}
+                            value={i18nValues[activeLang]?.description ?? ''}
+                            placeholder={language === 'cn' ? '请输入描述' : 'Enter description'}
+                            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateI18nValue(activeLang, 'description', e.target.value)}
+                          />
+                        </Form.Item>
+                      </Col>
+                      {multiLanguageFields.map((field) => (
+                        <Col span={12} key={field.id}>
+                          <Form.Item
+                            label={field.field_name}
+                            tooltip={field.tip ?? undefined}
+                            validateStatus={customFieldErrors[field.id]?.[activeLang] ? 'error' : ''}
+                            help={customFieldErrors[field.id]?.[activeLang] || ''}
+                          >
+                            {renderCustomFieldInput(field, true)}
+                          </Form.Item>
+                        </Col>
+                      ))}
+                    </Row>
+                  </Form>
                 </Col>
               </Row>
             ),

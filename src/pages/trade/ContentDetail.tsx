@@ -28,8 +28,11 @@ import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 import { getContent, getContentLicenses } from '../../api/contents'
 import { removeContentFromLicense } from '../../api/licenses'
+import { checkContentAuthPermission } from '../../api/dataAuth'
+import { getDictTree } from '../../api/dicts'
 import TrimInput from '../../components/TrimInput'
 import type { ContentListItem, ContentLicenseRef } from '../../types/content'
+import type { DictNodeListItem } from '../../types/dict'
 import { useI18n } from '../../i18n/useI18n'
 import { usePermission } from '../../hooks/usePermission'
 import SectionTitle from '../../components/SectionTitle'
@@ -44,11 +47,27 @@ export default function ContentDetail() {
   const [content, setContent] = useState<ContentListItem | null>(null)
   const [licenses, setLicenses] = useState<ContentLicenseRef[]>([])
   const [licensesLoading, setLicensesLoading] = useState(false)
+  const [serviceTypeOptions, setServiceTypeOptions] = useState<{ label: string; value: string }[]>([])
+
+  // 数据权限：无数据权限时屏蔽许可证 action 列
+  const [hasDataPermission, setHasDataPermission] = useState(false)
 
   const { hasPermission } = usePermission()
-  const canOperateLicense = hasPermission('menu.trade.licenses.operate')
+  const canOperateLicense = hasPermission('menu.trade.licenses.operate') && hasDataPermission
 
   // ─── 初始化 ────────────────────────────────────────────────────────────────
+
+  const loadDetail = useCallback(async (withLoading = true) => {
+    if (withLoading) setLoading(true)
+    try {
+      const detail = await getContent(contentId)
+      setContent(detail.content)
+    } catch (err) {
+      // 错误已由拦截器处理
+    } finally {
+      if (withLoading) setLoading(false)
+    }
+  }, [contentId])
 
   useEffect(() => {
     if (!id || isNaN(contentId)) {
@@ -59,8 +78,15 @@ export default function ContentDetail() {
     void (async () => {
       setLoading(true)
       try {
-        const detail = await getContent(contentId)
+        const [detail, dicts] = await Promise.all([
+          getContent(contentId),
+          getDictTree(),
+        ])
         setContent(detail.content)
+        const svcRoot = dicts.find((d: DictNodeListItem) => d.code === 'ServiceType')
+        if (svcRoot?.children) {
+          setServiceTypeOptions(svcRoot.children.map((c: DictNodeListItem) => ({ label: c.name, value: c.code })))
+        }
       } catch (err) {
         // 错误已由拦截器处理
       } finally {
@@ -84,6 +110,16 @@ export default function ContentDetail() {
   useEffect(() => {
     if (!isNaN(contentId)) {
       void loadLicenses()
+      // 校验当前用户对该内容的数据权限，用于控制许可证 action 列显隐
+      void (async () => {
+        try {
+          const result = await checkContentAuthPermission(contentId)
+          setHasDataPermission(result.has_permission)
+        } catch {
+          // 校验失败时安全兜底：隐藏操作按钮
+          setHasDataPermission(false)
+        }
+      })()
     }
   }, [contentId, loadLicenses])
 
@@ -92,6 +128,8 @@ export default function ContentDetail() {
       await removeContentFromLicense(licRef.id, contentId)
       void message.success(t('trade.content.detail.removeSuccess'), 3)
       void loadLicenses()
+      // 移除许可证会回退内容自身状态（Published → InProgress），同步刷新详情展示
+      void loadDetail(false)
     } catch (err) {
       // 错误已由拦截器处理
     }
@@ -105,7 +143,16 @@ export default function ContentDetail() {
       dataIndex: 'provider_name',
       key: 'provider_name',
       ellipsis: { showTitle: false },
-      render: (val: string) => <Tooltip title={val}><span>{val}</span></Tooltip>,
+      render: (val: string, record) => (
+        <Tooltip title={val}>
+          <span
+            style={{ color: '#1677ff', cursor: 'pointer' }}
+            onClick={() => record.provider_id && navigate(`/trade/providers/${record.provider_id}`)}
+          >
+            {val}
+          </span>
+        </Tooltip>
+      ),
     },
     {
       title: t('content.col.contractName'),
@@ -143,49 +190,49 @@ export default function ContentDetail() {
       title: t('content.col.serviceType'),
       dataIndex: 'service_type',
       key: 'service_type',
-      width: 130,
-      render: (val: string) => <Tag>{val}</Tag>,
+      render: (val: string) => {
+        const label = serviceTypeOptions.find((o) => o.value === val)?.label ?? val
+        return <Tag>{label}</Tag>
+      },
     },
     {
       title: t('content.col.startDate'),
       dataIndex: 'start_date',
       key: 'start_date',
-      width: 110,
       render: (val?: string) => val ?? '—',
     },
     {
       title: t('content.col.endDate'),
       dataIndex: 'end_date',
       key: 'end_date',
-      width: 110,
       render: (val?: string) => val ?? '—',
     },
-    {
-      title: t('common.action'),
-      key: 'action',
-      fixed: 'right',
-      width: 70,
-      render: (_, record) => (
-        canOperateLicense ? (
-          <Popconfirm
-            title={t('trade.content.detail.confirmRemoveTitle')}
-            description={t('trade.content.detail.confirmRemoveDesc')}
-            onConfirm={() => void handleRemoveLicense(record)}
-            okText={t('common.confirm')}
-            cancelText={t('common.cancel')}
-          >
-            <Tooltip title={t('trade.content.detail.removeLicense')}>
-              <Button
-                type="link"
-                size="small"
-                danger
-                icon={<DeleteOutlined />}
-              />
-            </Tooltip>
-          </Popconfirm>
-        ) : null
-      ),
-    },
+    // 无操作权限（菜单权限）或无数据权限时，屏蔽整个 action 列
+    ...(canOperateLicense
+      ? [{
+          title: t('common.action'),
+          key: 'action',
+          width: 100,
+          render: (_: unknown, record: ContentLicenseRef) => (
+            <Popconfirm
+              title={t('trade.content.detail.confirmRemoveTitle')}
+              description={t('trade.content.detail.confirmRemoveDesc')}
+              onConfirm={() => void handleRemoveLicense(record)}
+              okText={t('common.confirm')}
+              cancelText={t('common.cancel')}
+            >
+              <Tooltip title={t('trade.content.detail.removeLicense')}>
+                <Button
+                  type="link"
+                  size="small"
+                  danger
+                  icon={<DeleteOutlined />}
+                />
+              </Tooltip>
+            </Popconfirm>
+          ),
+        } as ColumnsType<ContentLicenseRef>[number]]
+      : []),
   ]
 
   // ─── 渲染 ──────────────────────────────────────────────────────────────────
@@ -243,18 +290,22 @@ export default function ContentDetail() {
               </Col>
               <Col span={8}>
                 <Form.Item label={t('trade.col.genre')}>
-                  <TrimInput value={content.genre_name ?? '—'} disabled style={{ background: '#f5f5f5' }} />
+                  <Tooltip title={content.genre_name || undefined}>
+                    <TrimInput value={content.genre_name ?? '—'} disabled style={{ background: '#f5f5f5' }} />
+                  </Tooltip>
                 </Form.Item>
               </Col>
               <Col span={8}>
                 <Form.Item label={t('trade.content.col.customTags')}>
-                  <TrimInput
-                    value={content.custom_tag_names && content.custom_tag_names.length > 0
-                      ? content.custom_tag_names.join(', ')
-                      : '—'}
-                    disabled
-                    style={{ background: '#f5f5f5' }}
-                  />
+                  <Tooltip title={content.custom_tag_names && content.custom_tag_names.length > 0 ? content.custom_tag_names.join(', ') : undefined}>
+                    <TrimInput
+                      value={content.custom_tag_names && content.custom_tag_names.length > 0
+                        ? content.custom_tag_names.join(', ')
+                        : '—'}
+                      disabled
+                      style={{ background: '#f5f5f5' }}
+                    />
+                  </Tooltip>
                 </Form.Item>
               </Col>
               {content.parent_title && (
@@ -311,7 +362,7 @@ export default function ContentDetail() {
             loading={licensesLoading}
             columns={licenseColumns}
             dataSource={licenses}
-            scroll={{ x: 900 }}
+            scroll={{ x: 1000 }}
             pagination={{
               pageSize: 10,
               position: ['bottomCenter'],

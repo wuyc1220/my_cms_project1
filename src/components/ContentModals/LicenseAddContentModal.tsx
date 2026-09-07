@@ -13,6 +13,7 @@ import {
   Empty,
   Form,
   Modal,
+  Pagination,
   Space,
   Table,
   Tooltip,
@@ -30,6 +31,7 @@ import {
 } from '../../api/licenses'
 import { getDictTree } from '../../api/dicts'
 import { getGenres } from '../../api/genres'
+import { getMultiLanguageOptions } from '../../api/i18n'
 import type { LicenseListItem, ContentForTradeItem } from '../../types/trade'
 import type { DictNodeListItem } from '../../types/dict'
 import type { SearchFieldConfig } from '../../types/searchForm'
@@ -37,6 +39,7 @@ import { useI18n } from '../../i18n/useI18n'
 import { usePermission } from '../../hooks/usePermission'
 import { useTablePagination } from '../../hooks/useTablePagination'
 import { useSearchForm } from '../../hooks/useSearchForm'
+import { PAGINATION_CONFIG } from '../../constants/pagination'
 import SearchForm from '../../components/SearchForm'
 import { CreateContentModal } from './index'
 
@@ -45,7 +48,7 @@ const CONTENT_TYPES = ['MOVIE', 'EPISODE', 'SERIES', 'SEASON', 'CHANNEL', 'SCHED
 interface ContentSearchValues {
   title?: string
   content_types?: string[]
-  genres?: string[]
+  genre_ids?: number[]
   ingest_statuses?: string[]
 }
 
@@ -70,20 +73,21 @@ export default function LicenseAddContentModal({
 
   const [licenseContents, setLicenseContents] = useState<ContentForTradeItem[]>([])
   const [pendingAdd, setPendingAdd] = useState<ContentForTradeItem[]>([])
+  const [pendingRemoveIds, setPendingRemoveIds] = useState<number[]>([])
   const [availableContents, setAvailableContents] = useState<ContentForTradeItem[]>([])
   const [contentLoading, setContentLoading] = useState(false)
   const [addContentSaving, setAddContentSaving] = useState(false)
   const [withoutLicense, setWithoutLicense] = useState(false)
 
   const [withoutLicenseCount, setWithoutLicenseCount] = useState(0)
-  const [genreOptions, setGenreOptions] = useState<{ label: string; value: string }[]>([])
+  const [genreOptions, setGenreOptions] = useState<{ label: string; value: number }[]>([])
   const [ingestStatusOptions, setIngestStatusOptions] = useState<{ label: string; value: string }[]>([])
 
   const [createContentModalOpen, setCreateContentModalOpen] = useState(false)
 
   const [searchFormFilters, setSearchFormFilters] = useState<ContentSearchValues>({})
 
-  const { pagination, updatePagination, tablePaginationProps, handleTableChange } = useTablePagination({
+  const { pagination, updatePagination } = useTablePagination({
     onChange: ({ page, pageSize }) => {
       void loadAvailableContents(page, pageSize, searchFormFilters, withoutLicense)
     },
@@ -107,7 +111,7 @@ export default function LicenseAddContentModal({
         page_size: ps,
         title: filters.title || undefined,
         content_types: filters.content_types?.length ? filters.content_types : undefined,
-        genres: filters.genres?.length ? filters.genres : undefined,
+        genre_ids: filters.genre_ids?.length ? filters.genre_ids : undefined,
         ingest_statuses: filters.ingest_statuses?.length ? filters.ingest_statuses : undefined,
         without_license: wl || undefined,
       })
@@ -133,7 +137,7 @@ export default function LicenseAddContentModal({
       options: CONTENT_TYPES.map((ct) => ({ label: ct, value: ct })),
     },
     {
-      name: 'genres',
+      name: 'genre_ids',
       labelKey: 'trade.col.genre',
       type: 'multiSelect',
       options: genreOptions,
@@ -170,9 +174,12 @@ export default function LicenseAddContentModal({
     if (open) {
       void (async () => {
         try {
+          const langOptions = await getMultiLanguageOptions()
+          const defaultLang = langOptions.length > 0 ? langOptions[0].code : undefined
+          const langFilter = defaultLang ? [defaultLang] : undefined
           const [dicts, genresData, countData] = await Promise.all([
             getDictTree(),
-            getGenres({ page: 1, page_size: 500 }),
+            getGenres({ page: 1, page_size: 500, languages: langFilter }),
             getWithoutLicenseContentCount(),
           ])
           const ingestRoot = dicts.find((d: DictNodeListItem) => d.code === 'Ingest_Status')
@@ -180,7 +187,7 @@ export default function LicenseAddContentModal({
             (ingestRoot?.children ?? []).map((c: DictNodeListItem) => ({ label: c.name, value: c.code })),
           )
           setGenreOptions(
-            (genresData.items ?? []).map((g) => ({ label: g.name, value: String(g.id) })),
+            (genresData.items ?? []).map((g) => ({ label: g.name, value: g.id })),
           )
           setWithoutLicenseCount(countData.count)
         } catch (err) {
@@ -232,28 +239,32 @@ export default function LicenseAddContentModal({
     setPendingAdd((prev) => prev.filter((c) => c.id !== id))
   }
 
-  const handleRemoveLinked = async (contentId: number) => {
-    try {
-      await removeContentFromLicense(licenseId, contentId)
-      setLicenseContents((prev) => prev.filter((c) => c.id !== contentId))
-      void message.success(t('common.msg.removed'), 3)
-    } catch (err) {
-      // 错误已由拦截器处理
-    }
+  const handleRemoveLinked = (contentId: number) => {
+    // 仅本地标记为待移除，不调后端接口，提交时才统一处理
+    setPendingRemoveIds((prev) => [...prev, contentId])
+    setLicenseContents((prev) => prev.filter((c) => c.id !== contentId))
   }
 
   const handleSaveAddContent = async () => {
-    if (pendingAdd.length === 0) {
+    if (pendingAdd.length === 0 && pendingRemoveIds.length === 0) {
       onClose()
       return
     }
     setAddContentSaving(true)
     try {
-      const updated = await addContentsToLicense(licenseId, {
-        content_ids: pendingAdd.map((c) => c.id),
-      })
-      setLicenseContents(updated)
+      // 先处理移除
+      for (const contentId of pendingRemoveIds) {
+        await removeContentFromLicense(licenseId, contentId)
+      }
+      // 再处理新增
+      if (pendingAdd.length > 0) {
+        const updated = await addContentsToLicense(licenseId, {
+          content_ids: pendingAdd.map((c) => c.id),
+        })
+        setLicenseContents(updated)
+      }
       setPendingAdd([])
+      setPendingRemoveIds([])
       void message.success(t('common.contentsCount', { count: pendingAdd.length }), 3)
       onSuccess?.()
       onClose()
@@ -382,7 +393,7 @@ export default function LicenseAddContentModal({
               )}
             </div>
 
-            <div style={{ flex: 1, minHeight: 0 }}>
+            <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
               <Table<ContentForTradeItem>
                 rowKey="id"
                 size="small"
@@ -391,8 +402,22 @@ export default function LicenseAddContentModal({
                 dataSource={availableContents}
                 scroll={{ x: 500, y: 360 }}
                 rootClassName="compact-table"
-                pagination={tablePaginationProps}
-                onChange={handleTableChange}
+                pagination={false}
+              />
+            </div>
+            <div style={{ paddingTop: 12, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
+              <Pagination
+                current={pagination.current}
+                pageSize={pagination.pageSize}
+                total={pagination.total}
+                size="small"
+                showSizeChanger
+                showQuickJumper
+                pageSizeOptions={PAGINATION_CONFIG.pageSizeOptions.map(String)}
+                showTotal={(n) => t('pagination.total', { n })}
+                onChange={(page, pageSize) => {
+                  void loadAvailableContents(page, pageSize, searchFormFilters, withoutLicense)
+                }}
               />
             </div>
           </div>

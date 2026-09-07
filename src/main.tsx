@@ -8,8 +8,20 @@ import { I18nProvider } from './i18n/useI18n'
 import { useAuthStore } from './stores/authStore'
 import type { LanguageOption, UiLanguage } from './types/i18n'
 
+// 语言持久化：拦截器/请求头等 React 之外的模块从 localStorage 同步读取语言。
+// 首帧渲染前先用已保存值，避免请求头语言缺失。
+function persistLanguage(lang: UiLanguage) {
+  try {
+    localStorage.setItem('ui_language', lang)
+  } catch {
+    // 忽略隐私模式等 localStorage 不可用场景
+  }
+}
+
 function BootstrapApp() {
-  const [language, setLanguage] = useState<UiLanguage>('cn')
+  const [language, setLanguage] = useState<UiLanguage>(
+    () => (localStorage.getItem('ui_language') === 'en' ? 'en' : 'cn'),
+  )
   const [options, setOptions] = useState<LanguageOption[]>([])
   const [ready, setReady] = useState(false)
 
@@ -21,6 +33,7 @@ function BootstrapApp() {
           getMultiLanguageOptions(),
         ])
         const nextLanguage = languageResponse.language === 'en' ? 'en' : 'cn'
+        persistLanguage(nextLanguage)
         setLanguage(nextLanguage)
         setOptions(optionResponse)
         // 有 token 时异步加载用户信息（含角色权限），不阻塞页面渲染
@@ -28,6 +41,7 @@ function BootstrapApp() {
           void useAuthStore.getState().loadCurrentUser()
         }
       } catch (err) {
+        persistLanguage('cn')
         setLanguage('cn')
         setOptions([])
       } finally {

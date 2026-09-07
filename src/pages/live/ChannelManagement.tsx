@@ -8,8 +8,7 @@
  *          Provider(多选) / License Start/End Date(范围) / Publish Date(占位) / Takedown Date(占位)
  *  - 列表列：Channel Name / Genre / Custom Tags / Category / Package /
  *            License Start / License End / Action
- *  - Action：Detail(i) / Edit(铅笔) / Poster(图片) / Add Schedule(+)
- *  - 海报 entityType = "channel"
+ *  - Action：Detail(i) / Edit(铅笔) / Add Schedule(+)
  */
 
 import { useEffect, useMemo, useState } from 'react'
@@ -17,28 +16,29 @@ import { useNavigate } from 'react-router-dom'
 import {
   Button,
   Space,
-  Table,
+  Tag,
   Tooltip,
   message,
 } from 'antd'
 import {
   EditOutlined,
   InfoCircleOutlined,
-  PictureOutlined,
   PlusOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 import { getChannels } from '../../api/live'
 import { getGenres } from '../../api/genres'
+import { getMultiLanguageOptions } from '../../api/i18n'
 import { getProvidersSimple } from '../../api/providers'
 import { getCategoryTree } from '../../api/categories'
 import { getPackages } from '../../api/packages'
 import { getCustomTags } from '../../api/customTags'
 import { getDictTree } from '../../api/dicts'
-import PostersModal from '../../components/PostersModal'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import ScheduleCreateModal from '../../components/ScheduleCreateModal'
+import { EditContentModal } from '../../components/ContentModals'
 import type { ChannelListItem, ChannelQueryParams } from '../../types/live'
 import type { CategoryListItem, CustomTagListItem, GenreListItem } from '../../types/basic'
 import type { DictNodeListItem } from '../../types/dict'
@@ -47,6 +47,14 @@ import { useI18n } from '../../i18n/useI18n'
 import { useTablePagination } from '../../hooks/useTablePagination'
 import { useSearchForm } from '../../hooks/useSearchForm'
 import { usePermission } from '../../hooks/usePermission'
+
+const STATUS_COLOR: Record<string, string> = {
+  Published: 'success',
+  Processing: 'processing',
+  WaitingForMaterials: 'warning',
+  Failed: 'error',
+  None: 'default',
+}
 
 // ─── 常量 ────────────────────────────────────────────────────────────────────
 
@@ -59,9 +67,11 @@ interface SearchValues {
   package_ids?: number[]
   category_name?: string
   custom_tag_ids?: number[]
-  languages?: string[]
   license_start_range?: [dayjs.Dayjs, dayjs.Dayjs]
   license_end_range?: [dayjs.Dayjs, dayjs.Dayjs]
+  publish_date_range?: [dayjs.Dayjs, dayjs.Dayjs]
+  unpublish_date_range?: [dayjs.Dayjs, dayjs.Dayjs]
+  is_discarded?: boolean
 }
 
 // ─── 主组件 ───────────────────────────────────────────────────────────────────
@@ -87,16 +97,15 @@ export default function ChannelManagement() {
   const [categoryOptions, setCategoryOptions] = useState<{ label: string; value: number }[]>([])
   const [customTagOptions, setCustomTagOptions] = useState<{ label: string; value: number }[]>([])
   const [ingestStatusOptions, setIngestStatusOptions] = useState<{ label: string; value: string }[]>([])
-  const [languageOptions, setLanguageOptions] = useState<{ label: string; value: string }[]>([])
 
   // 新增节目单弹框
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false)
   const [presetChannelId, setPresetChannelId] = useState<number | null>(null)
   const [presetChannelTitle, setPresetChannelTitle] = useState<string>('')
 
-  // 海报弹框
-  const [postersOpen, setPostersOpen] = useState(false)
-  const [postersTarget, setPostersTarget] = useState<{ id: number; title: string } | null>(null)
+  // 编辑弹框
+  const [editModalOpen, setEditModalOpen] = useState(false)
+  const [editContentId, setEditContentId] = useState<number | null>(null)
 
   // ─── 搜索字段配置 ───────────────────────────────────────────────────────────
 
@@ -121,6 +130,16 @@ export default function ChannelManagement() {
       options: ingestStatusOptions,
     },
     {
+      name: 'is_discarded',
+      labelKey: 'common.col.deleted',
+      type: 'select',
+      options: [
+        { label: t('common.no'), value: false },
+        { label: t('common.yes'), value: true },
+      ],
+      defaultValue: false,
+    },
+    {
       name: 'genre_ids',
       labelKey: 'common.col.genre',
       type: 'multiSelect',
@@ -131,13 +150,6 @@ export default function ChannelManagement() {
       labelKey: 'common.col.customTags',
       type: 'multiSelect',
       options: customTagOptions,
-    },
-    // 语言多选（需求 3.5.1.2）：数据字典 Language
-    {
-      name: 'languages',
-      labelKey: 'common.col.language',
-      type: 'multiSelect',
-      options: languageOptions,
     },
     {
       name: 'category_name',
@@ -167,20 +179,17 @@ export default function ChannelManagement() {
       labelKey: 'common.col.licenseEnd',
       type: 'dateRange',
     },
-    // TODO（需求 3.5.1.2）：Publish/Takedown Date 需发布管理落库后再启用
     {
-      name: '_publish_range',
+      name: 'publish_date_range',
       labelKey: 'common.col.publishDate',
       type: 'dateRange',
-      disabled: true,
     },
     {
-      name: '_takedown_range',
-      labelKey: 'common.col.takedownDate',
+      name: 'unpublish_date_range',
+      labelKey: 'common.col.unpublishDate',
       type: 'dateRange',
-      disabled: true,
     },
-  ], [genreOptions, providerOptions, packageOptions, categoryOptions, customTagOptions, ingestStatusOptions, languageOptions, t])
+  ], [genreOptions, providerOptions, packageOptions, categoryOptions, customTagOptions, ingestStatusOptions, t])
 
   // ─── 使用 useSearchForm Hook ─────────────────────────────────────────────────
 
@@ -204,15 +213,23 @@ export default function ChannelManagement() {
       if (values.package_ids?.length) params.package_ids = values.package_ids
       if (values.category_name) params.category_name = values.category_name
       if (values.custom_tag_ids?.length) params.custom_tag_ids = values.custom_tag_ids
-      if (values.languages?.length) params.languages = values.languages
       if (values.license_start_range?.[0]) {
-        params.license_start_from = values.license_start_range[0].format('YYYY-MM-DD')
-        params.license_start_to = values.license_start_range[1].format('YYYY-MM-DD')
+        params.license_start_from = values.license_start_range[0].startOf('day').format('YYYY-MM-DD')
+        params.license_start_to = values.license_start_range[1].endOf('day').format('YYYY-MM-DD')
       }
       if (values.license_end_range?.[0]) {
-        params.license_end_from = values.license_end_range[0].format('YYYY-MM-DD')
-        params.license_end_to = values.license_end_range[1].format('YYYY-MM-DD')
+        params.license_end_from = values.license_end_range[0].startOf('day').format('YYYY-MM-DD')
+        params.license_end_to = values.license_end_range[1].endOf('day').format('YYYY-MM-DD')
       }
+      if (values.publish_date_range?.[0]) {
+        params.publish_date_from = values.publish_date_range[0].startOf('day').format('YYYY-MM-DD')
+        params.publish_date_to = values.publish_date_range[1].endOf('day').format('YYYY-MM-DD')
+      }
+      if (values.unpublish_date_range?.[0]) {
+        params.unpublish_date_from = values.unpublish_date_range[0].startOf('day').format('YYYY-MM-DD')
+        params.unpublish_date_to = values.unpublish_date_range[1].endOf('day').format('YYYY-MM-DD')
+      }
+      if (values.is_discarded !== undefined) params.is_discarded = values.is_discarded
       setFilters(params)
       resetSort()
       void loadList(1, pagination.pageSize, params, null, null)
@@ -234,8 +251,11 @@ export default function ChannelManagement() {
 
   const loadOptions = async () => {
     try {
+      const langOptions = await getMultiLanguageOptions()
+      const defaultLang = langOptions.length > 0 ? langOptions[0].code : undefined
+      const langFilter = defaultLang ? [defaultLang] : undefined
       const [genres, providers, packages, customTags, categories, dicts] = await Promise.all([
-        getGenres({ page: 1, page_size: 500 }),
+        getGenres({ page: 1, page_size: 500, languages: langFilter }),
         getProvidersSimple(),
         getPackages({ page: 1, page_size: 500 }),
         getCustomTags({ page: 1, page_size: 500 }),
@@ -259,9 +279,6 @@ export default function ChannelManagement() {
       // Ingest 状态选项来源于数据字典 Ingest_Status
       const ingestRoot = dicts.find((d: DictNodeListItem) => d.code === 'Ingest_Status')
       setIngestStatusOptions((ingestRoot?.children ?? []).map((c: DictNodeListItem) => ({ label: c.name, value: c.code })))
-      // 语言选项来源于数据字典 Language
-      const languageRoot = dicts.find((d: DictNodeListItem) => d.code === 'Language')
-      setLanguageOptions((languageRoot?.children ?? []).map((c: DictNodeListItem) => ({ label: c.name, value: c.code })))
     } catch (err) { /* 不阻塞 */ }
   }
 
@@ -309,12 +326,13 @@ export default function ChannelManagement() {
       title: t('common.col.channelName'),
       dataIndex: 'title',
       key: 'title',
+      width: 200,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'title' ? sortOrder : null,
       render: (v: string, record) => (
         <Tooltip title={v}>
-          <a onClick={() => navigateToChannel(record.id)}>{v}</a>
+          <a onClick={() => navigateToChannel(record.id, record.is_discarded ? 'view' : 'edit')}>{v}</a>
         </Tooltip>
       ),
     },
@@ -329,6 +347,20 @@ export default function ChannelManagement() {
       render: (v?: string) => <Tooltip title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>,
     },
     {
+      title: t('common.col.ingestStatus'),
+      dataIndex: 'status',
+      key: 'status',
+      width: 120,
+      ellipsis: { showTitle: false },
+      sorter: true,
+      sortOrder: sortField === 'status' ? sortOrder : null,
+      render: (v: string) => (
+        <Tooltip title={v}>
+          <Tag color={STATUS_COLOR[v] ?? 'default'}>{v}</Tag>
+        </Tooltip>
+      ),
+    },
+    {
       title: t('common.col.customTags'),
       dataIndex: 'custom_tag_names',
       key: 'custom_tag_names',
@@ -336,7 +368,7 @@ export default function ChannelManagement() {
       ellipsis: { showTitle: false },
       render: (names: string[]) => {
         const text = names.length ? names.join(', ') : '—'
-        return <Tooltip title={text}><span>{text}</span></Tooltip>
+        return <Tooltip autoAdjustOverflow={false} placement="topLeft" title={text}><span>{text}</span></Tooltip>
       },
     },
     {
@@ -347,7 +379,7 @@ export default function ChannelManagement() {
       ellipsis: { showTitle: false },
       render: (names: string[]) => {
         const text = names.length ? names.join(', ') : '—'
-        return <Tooltip title={text}><span>{text}</span></Tooltip>
+        return <Tooltip autoAdjustOverflow={false} placement="topLeft" title={text}><span>{text}</span></Tooltip>
       },
     },
     {
@@ -380,25 +412,21 @@ export default function ChannelManagement() {
     {
       title: t('common.action'),
       key: 'action',
-      width: 160,
+      width: 140,
       fixed: 'right',
       render: (_, record) => (
         <Space size={0}>
           <Tooltip title={t('common.detail')}>
             <Button type="link" size="small" icon={<InfoCircleOutlined />}
-              onClick={() => navigateToChannel(record.id, 'view')} />
+              onClick={() => navigate(`/trade/contents/${record.id}`)} />
           </Tooltip>
           {canOperate && (
             <Tooltip title={t('common.edit')}>
               <Button type="link" size="small" icon={<EditOutlined />}
-                onClick={() => navigateToChannel(record.id, 'edit')} />
+                onClick={() => { setEditContentId(record.id); setEditModalOpen(true) }} />
             </Tooltip>
           )}
-          <Tooltip title={t('common.tooltip.posterManagement')}>
-            <Button type="link" size="small" icon={<PictureOutlined />}
-              onClick={() => { setPostersTarget({ id: record.id, title: record.title }); setPostersOpen(true) }} />
-          </Tooltip>
-          {canScheduleOperate && (
+          {canScheduleOperate && !record.is_discarded && (
             <Tooltip title={t('common.tooltip.addSchedule')}>
               <Button type="link" size="small" icon={<PlusOutlined />}
                 onClick={() => openAddSchedule(record)} />
@@ -426,7 +454,7 @@ export default function ChannelManagement() {
       />
 
       {/* 列表区 */}
-      <Table<ChannelListItem>
+      <ResizableTable<ChannelListItem>
         rowKey="id"
         size="small"
         columns={columns}
@@ -449,17 +477,14 @@ export default function ChannelManagement() {
         }}
       />
 
-      {/* 海报管理弹框 */}
-      {postersTarget && (
-        <PostersModal
-          open={postersOpen}
-          entityType="channel"
-          entityId={postersTarget.id}
-          entityName={postersTarget.title}
-          readOnly={!canOperate}
-          onClose={() => { setPostersOpen(false); setPostersTarget(null) }}
-        />
-      )}
+      {/* 编辑内容弹窗 */}
+      <EditContentModal
+        open={editModalOpen}
+        contentId={editContentId}
+        onClose={() => { setEditModalOpen(false); setEditContentId(null) }}
+        onSuccess={() => { setEditModalOpen(false); setEditContentId(null); void loadList(pagination.current, pagination.pageSize, filters) }}
+      />
+
     </div>
   )
 }

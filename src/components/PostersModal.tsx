@@ -4,8 +4,8 @@
  * 功能：按 PosterSize 规格展示海报，支持预览 / 下载 / 上传 / 删除。
  * 上传使用通用附件 API（uploadAttachment）+ createPicture 两步调用。
  */
-import { useEffect, useState } from 'react'
-import { Button, Modal, Space, Table, Tooltip, Upload, message } from 'antd'
+import { useCallback, useEffect, useState } from 'react'
+import { Button, Modal, Popconfirm, Space, Table, Tooltip, Upload, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
   CheckCircleOutlined,
@@ -18,7 +18,7 @@ import {
 } from '@ant-design/icons'
 
 import { getPosterSizes } from '../api/posterSizes'
-import { getPictures, deletePicture, createPicture } from '../api/pictures'
+import { getPictures, deletePicture, createPicture, publishPictures } from '../api/pictures'
 import type { PictureItem } from '../api/pictures'
 import { uploadAttachment } from '../api/attachments'
 import type { PosterSizeListItem } from '../types/basic'
@@ -61,13 +61,15 @@ function StatusIcon({ status }: { status: RowStatus }) {
 
 export default function PostersModal({ open, entityType, entityId, entityName, readOnly = false, onClose }: PostersModalProps) {
   const { t } = useI18n()
+  const [modalApi, contextHolder] = Modal.useModal()
   const [loading, setLoading] = useState(false)
   const [rows, setRows] = useState<PosterRow[]>([])
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [publishing, setPublishing] = useState(false)
 
   const load = async () => {
     setLoading(true)
     try {
+      // series/season/season_series 统一归属 Series（与 SEASON 保持一致）
       const belonging = entityType.charAt(0).toUpperCase() + entityType.slice(1)
       const [sizesResp, pictures] = await Promise.all([
         getPosterSizes({ page: 1, page_size: 200, belongings: [belonging] }),
@@ -88,10 +90,6 @@ export default function PostersModal({ open, entityType, entityId, entityName, r
     if (open && entityId) void load()
   }, [open, entityId])
 
-  useEffect(() => {
-    return () => { if (previewUrl) URL.revokeObjectURL(previewUrl) }
-  }, [previewUrl])
-
   const fetchBlob = async (url: string): Promise<string> => {
     const token = localStorage.getItem('token')
     const resp = await fetch(url, {
@@ -101,20 +99,34 @@ export default function PostersModal({ open, entityType, entityId, entityName, r
     return URL.createObjectURL(await resp.blob())
   }
 
-  const handlePreview = async (picture: PictureItem) => {
+  // 构造下载 URL：优先使用 relative_path，避免加密路径双重编码问题
+  const getDownloadUrl = (item: PictureItem): string => {
+    return item.relative_path
+      ? `/api/v1/attachments/download?path=${encodeURIComponent(item.relative_path)}&inline=1`
+      : item.url
+  }
+
+  const handlePreview = useCallback(async (picture: PictureItem) => {
     try {
-      const blobUrl = await fetchBlob(picture.url)
-      if (previewUrl) URL.revokeObjectURL(previewUrl)
-      setPreviewUrl(blobUrl)
+      const blobUrl = await fetchBlob(getDownloadUrl(picture))
+      modalApi.info({
+        title: t('common.preview'),
+        content: <img src={blobUrl} alt="preview" style={{ maxWidth: '80vw', maxHeight: '80vh', display: 'block' }} />,
+        centered: true,
+        width: 'auto',
+        maskClosable: true,
+        onOk: () => URL.revokeObjectURL(blobUrl),
+        onCancel: () => URL.revokeObjectURL(blobUrl),
+      })
     } catch (err) {
       if (isHandledError(err)) return
       message.error(t('content.poster.previewFailed'), 5)
     }
-  }
+  }, [t, modalApi])
 
   const handleDownload = async (picture: PictureItem) => {
     try {
-      const blobUrl = await fetchBlob(picture.url)
+      const blobUrl = await fetchBlob(getDownloadUrl(picture))
       const link = document.createElement('a')
       link.href = blobUrl
       link.download = picture.file_name
@@ -132,6 +144,14 @@ export default function PostersModal({ open, entityType, entityId, entityName, r
     if (!row) return false
 
     const { posterSize } = row
+
+    // 前置校验：文件扩展名（accept 仅过滤文件选择器，可被绕过，此处强制校验）
+    const ext = file.name.includes('.') ? file.name.split('.').pop()!.toLowerCase() : ''
+    const allowedExts = posterSize.extensions.map((item) => item.toLowerCase())
+    if (allowedExts.length > 0 && !allowedExts.includes(ext)) {
+      message.error(t('content.poster.invalidFormat', { extensions: allowedExts.join(', ') }), 5)
+      return false
+    }
 
     // 前置校验：文件大小
     if (posterSize.max_file_size_kb > 0) {
@@ -151,14 +171,14 @@ export default function PostersModal({ open, entityType, entityId, entityName, r
     try {
       // 第一步：通过通用附件 API 上传文件
       const uploadResult = await uploadAttachment(file, 'pictures')
-      // 第二步：创建 Picture 记录，关联到实体和海报规格
       const picture = await createPicture({
         entity_type: entityType,
         entity_id: entityId,
         poster_size_id: posterSizeId,
-        file_path: uploadResult.file_path,
+        file_path: uploadResult.storage_url,
         file_name: uploadResult.file_name,
         file_size: uploadResult.file_size,
+        relative_path: uploadResult.file_path,
       })
       setRows((prev) => prev.map((row) => (row.posterSize.id === posterSizeId ? { ...row, picture } : row)))
       message.success(t('content.poster.uploadSuccess'), 3)
@@ -182,6 +202,37 @@ export default function PostersModal({ open, entityType, entityId, entityName, r
     }
   }
 
+  const handlePublish = async () => {
+    // 校验必填海报是否全部上传（必填未全传不允许发布）
+    const missingMandatory = rows.filter((row) => row.posterSize.mandatory && !row.picture)
+    if (missingMandatory.length > 0) {
+      message.warning(t('content.poster.mandatoryMissing'), 5)
+      return
+    }
+
+    // 检查是否有海报可发布
+    const hasPictures = rows.some((row) => row.picture !== null)
+    if (!hasPictures) {
+      message.warning(t('content.poster.noPicturesToPublish'), 5)
+      return
+    }
+
+    setPublishing(true)
+    try {
+      const result = await publishPictures(entityType, entityId)
+      if (result.success) {
+        message.success(t('content.poster.publishSuccess'), 3)
+      } else {
+        message.error(result.message || t('content.poster.publishFailed'), 5)
+      }
+    } catch (err) {
+      if (isHandledError(err)) return
+      message.error(t('content.poster.publishFailed'), 5)
+    } finally {
+      setPublishing(false)
+    }
+  }
+
   const columns: ColumnsType<PosterRow> = [
     {
       title: 'Name',
@@ -195,6 +246,7 @@ export default function PostersModal({ open, entityType, entityId, entityName, r
     },
     { title: 'Mandatory', key: 'mandatory', width: 120, render: (_, row) => (row.posterSize.mandatory ? 'YES' : '') },
     { title: 'Max File Size(Kb)', key: 'max_file_size_kb', width: 180, render: (_, row) => row.posterSize.max_file_size_kb },
+    { title: 'Extensions', key: 'extensions', width: 180, render: (_, row) => row.posterSize.extensions.map((item) => `.${item}`).join(', ') },
     { title: 'Width(Px)', key: 'width', width: 120, render: (_, row) => row.posterSize.width },
     { title: 'Height(Px)', key: 'height', width: 120, render: (_, row) => row.posterSize.height },
     { title: 'Aspect Ratio', key: 'aspect_ratio', width: 140, render: (_, row) => row.posterSize.aspect_ratio ?? '' },
@@ -204,15 +256,15 @@ export default function PostersModal({ open, entityType, entityId, entityName, r
       fixed: 'right',
       width: readOnly ? 100 : 160,
       render: (_, row) => (
-        <Space size={4}>
-          <Tooltip title="预览">
+        <Space size={0}>
+          <Tooltip title={t('common.preview')}>
             <Button
               type="link" size="small" icon={<EyeOutlined />}
               disabled={!row.picture}
               onClick={() => row.picture && void handlePreview(row.picture)}
             />
           </Tooltip>
-          <Tooltip title="下载">
+          <Tooltip title={t('common.download')}>
             <Button
               type="link" size="small" icon={<DownloadOutlined />}
               disabled={!row.picture}
@@ -225,19 +277,23 @@ export default function PostersModal({ open, entityType, entityId, entityName, r
               beforeUpload={(file) => { void handleUpload(row.posterSize.id, file); return false }}
               accept={row.posterSize.extensions.map((item) => `.${item}`).join(',')}
             >
-              <Tooltip title="上传">
+              <Tooltip title={t('common.upload')}>
                 <Button type="link" size="small" icon={<UploadOutlined />} />
               </Tooltip>
             </Upload>
           )}
           {!readOnly && (
-            <Tooltip title="删除">
-              <Button
-                type="link" size="small" danger icon={<DeleteOutlined />}
-                disabled={!row.picture}
-                onClick={() => void handleDelete(row)}
-              />
-            </Tooltip>
+            <Popconfirm
+              title={t('common.confirmDelete', { name: row.posterSize.name })}
+              onConfirm={() => void handleDelete(row)}
+            >
+              <Tooltip title={t('common.delete')}>
+                <Button
+                  type="link" size="small" danger icon={<DeleteOutlined />}
+                  disabled={!row.picture}
+                />
+              </Tooltip>
+            </Popconfirm>
           )}
         </Space>
       ),
@@ -246,11 +302,27 @@ export default function PostersModal({ open, entityType, entityId, entityName, r
 
   return (
     <>
+      {contextHolder}
       <Modal
         title={`Posters${entityName ? ` — ${entityName}` : ''}`}
         open={open}
         onCancel={onClose}
-        footer={<Button onClick={onClose}>Close</Button>}
+        footer={[
+          !readOnly && (
+            <Button
+              key="publish"
+              type="primary"
+              loading={publishing}
+              disabled={rows.length > 0 && rows.some((row) => row.posterSize.mandatory && !row.picture)}
+              onClick={handlePublish}
+            >
+              {t('content.poster.publish')}
+            </Button>
+          ),
+          <Button key="close" onClick={onClose}>
+            {t('content.poster.close')}
+          </Button>,
+        ].filter(Boolean)}
         width="70%"
         destroyOnHidden
       >
@@ -260,22 +332,11 @@ export default function PostersModal({ open, entityType, entityId, entityName, r
           columns={columns}
           dataSource={rows}
           pagination={false}
-          scroll={{ x: 920 }}
-          locale={{ emptyText: `未找到匹配的海报规格（请先在海报尺寸管理中配置 Belonging 包含 ${entityType.charAt(0).toUpperCase() + entityType.slice(1)} 的规格）` }}
+          scroll={{ x: 1100 }}
+          locale={{ emptyText: t('content.poster.noMatchingSpec', { belonging: entityType.charAt(0).toUpperCase() + entityType.slice(1) }) }}
         />
       </Modal>
-      <Modal
-        open={!!previewUrl}
-        footer={null}
-        onCancel={() => { if (previewUrl) URL.revokeObjectURL(previewUrl); setPreviewUrl(null) }}
-        width="auto"
-        centered
-        styles={{ body: { padding: 24 } }}
-      >
-        {previewUrl && (
-          <img src={previewUrl} alt="preview" style={{ maxWidth: '80vw', maxHeight: '80vh', display: 'block' }} />
-        )}
-      </Modal>
+
     </>
   )
 }

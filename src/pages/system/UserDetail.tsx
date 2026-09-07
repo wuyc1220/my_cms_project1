@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Button, Spin, Table, message } from 'antd'
+import { Button, Spin, Tooltip, message } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import { getUser } from '../../api/users'
 import type { UserListItem } from '../../types/user'
 import { useI18n } from '../../i18n/useI18n'
 import TrimInput from '../../components/TrimInput'
+import SectionTitle from '../../components/SectionTitle'
+import ProcessedHistoryTab from '../../components/ProcessedHistoryTab'
 
 export default function UserDetail() {
   const { t } = useI18n()
@@ -67,7 +69,9 @@ export default function UserDetail() {
                 </div>
                 <div>
                   <div style={{ color: '#666', marginBottom: 4 }}>{t('system.user.colRole')}</div>
-                  <TrimInput value={user.roles?.length ? user.roles.map((role) => role.name).join(', ') : '-'} disabled />
+                  <Tooltip title={user.roles?.length ? user.roles.map((role) => role.name).join(', ') : ''}>
+                    <TrimInput value={user.roles?.length ? user.roles.map((role) => role.name).join(', ') : '-'} disabled />
+                  </Tooltip>
                 </div>
                 <div>
                   <div style={{ color: '#666', marginBottom: 4 }}>{t('common.status')}</div>
@@ -76,20 +80,10 @@ export default function UserDetail() {
               </div>
             </div>
             <div>
-              <h4 style={{ borderLeft: '3px solid #1890ff', paddingLeft: 8, marginBottom: 16 }}>{t('system.user.detailSection.history')}</h4>
-              <Table
-                size="small"
-                pagination={false}
-                dataSource={[]}
-                columns={[
-                  { title: t('system.user.detail.colProcessedAt'), dataIndex: 'processedAt', key: 'processedAt', align: 'center' },
-                  { title: t('system.user.detail.colProcessedBy'), dataIndex: 'processedBy', key: 'processedBy', align: 'center' },
-                  { title: t('system.user.detail.colProcessedType'), dataIndex: 'processedType', key: 'processedType', align: 'center' },
-                  { title: t('system.user.detail.colPreviousValue'), dataIndex: 'previousValue', key: 'previousValue', align: 'center' },
-                  { title: t('system.user.detail.colUpdatedValue'), dataIndex: 'updatedValue', key: 'updatedValue', align: 'center' },
-                ]}
-                locale={{ emptyText: t('common.noData') }}
-              />
+              <SectionTitle title={t('system.user.detailSection.history')} />
+              <div style={{ paddingLeft: 20 }}>
+                <ProcessedHistoryTab entityType="user" entityId={Number(id)} mode="full" />
+              </div>
             </div>
           </div>
         )}

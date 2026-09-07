@@ -19,9 +19,9 @@ import {
   message,
 } from 'antd'
 import {
+  DeleteOutlined,
   EditOutlined,
   InfoCircleOutlined,
-  MinusCircleOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { getLicense, getLicenseContents, removeContentFromLicense } from '../../api/licenses'
@@ -31,6 +31,7 @@ import type { LicenseListItem, LicensePlatformItem, ContentForTradeItem } from '
 import type { DictNodeListItem } from '../../types/dict'
 import { useI18n } from '../../i18n/useI18n'
 import { usePermission } from '../../hooks/usePermission'
+import { useContentAuthPermission } from '../../hooks/useContentAuthPermission'
 import SectionTitle from '../../components/SectionTitle'
 import { EditContentModal } from '../../components/ContentModals'
 import ProcessedHistoryTab from '../../components/ProcessedHistoryTab'
@@ -55,6 +56,9 @@ export default function LicenseDetail() {
   const { hasPermission } = usePermission()
   const canViewContent = hasPermission('menu.trade.contents.view') || hasPermission('menu.trade.contents.operate')
   const canOperateContent = hasPermission('menu.trade.contents.operate')
+
+  // 数据权限校验
+  const { checkAndNavigate: checkAndNavigateToContent } = useContentAuthPermission()
 
   const [loading, setLoading] = useState(true)
   const [license, setLicense] = useState<LicenseListItem | null>(null)
@@ -175,14 +179,14 @@ export default function LicenseDetail() {
       fixed: 'right',
       width: 140,
       render: (_, record) => (
-        <Space size={4}>
+        <Space size={0}>
           {canViewContent && (
             <Tooltip title={t('common.detail')}>
               <Button
                 type="link"
                 size="small"
                 icon={<InfoCircleOutlined />}
-                onClick={() => navigate(`/trade/contents/${record.id}`)}
+                onClick={() => void checkAndNavigateToContent(record.id, `/trade/contents/${record.id}`)}
               />
             </Tooltip>
           )}
@@ -211,7 +215,7 @@ export default function LicenseDetail() {
                   type="link"
                   size="small"
                   danger
-                  icon={<MinusCircleOutlined />}
+                  icon={<DeleteOutlined />}
                 />
               </Tooltip>
             </Popconfirm>

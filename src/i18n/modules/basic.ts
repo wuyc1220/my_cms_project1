@@ -178,6 +178,7 @@ export const cnBasic = {
   'category.msg.updated': '栏目已更新',
   'category.msg.created': '栏目已创建',
   'category.msg.noData': '暂无栏目数据',
+  'category.msg.syncSuccess': '同步成功',
   'category.msg.syncFailed': '同步失败',
   'category.msg.orderSaved': '排序已保存',
   'category.msg.mandatoryField': '请填写自定义字段：{name}',
@@ -250,6 +251,7 @@ export const cnBasic = {
   'customField.msg.batchDeleted': '已删除 {count} 条记录',
   'customField.msg.updated': '已更新',
   'customField.msg.created': '已创建',
+  'customField.option.noCol': 'NO.',
   'customField.option.codePlaceholder': '选项编码',
   'customField.option.namePlaceholder': '选项名称',
   'customField.msg.codeRequired': '选项第 {index} 行的编码不能为空',
@@ -286,6 +288,8 @@ export const cnBasic = {
   'customField.fieldType.Date': '日期',
   'customField.fieldType.Time': '时间',
   'customField.fieldType.Date+Time': '日期时间',
+  'customField.validation.integerOnly': '请输入整数',
+  'customField.validation.maxLength': '已超出最大限制 {exceeded} 个字符，最大允许 {max} 个字符',
 } as const
 
 export const enBasic = {
@@ -461,6 +465,7 @@ export const enBasic = {
   'category.msg.updated': 'Category updated',
   'category.msg.created': 'Category created',
   'category.msg.noData': 'No category data',
+  'category.msg.syncSuccess': 'Sync successful',
   'category.msg.syncFailed': 'Sync failed',
   'category.msg.orderSaved': 'Order saved',
   'category.msg.mandatoryField': 'Please fill in custom field: {name}',
@@ -532,6 +537,7 @@ export const enBasic = {
   'customField.msg.batchDeleted': 'Deleted {count} record(s)',
   'customField.msg.updated': 'Updated',
   'customField.msg.created': 'Created',
+  'customField.option.noCol': 'No.',
   'customField.option.codePlaceholder': 'Option Code',
   'customField.option.namePlaceholder': 'Option Name',
   'customField.msg.codeRequired': 'Option row {index} code is required',
@@ -568,4 +574,6 @@ export const enBasic = {
   'customField.fieldType.Date': 'Date',
   'customField.fieldType.Time': 'Time',
   'customField.fieldType.Date+Time': 'Date+Time',
+  'customField.validation.integerOnly': 'Please enter an integer',
+  'customField.validation.maxLength': 'Exceeded maximum limit by {exceeded} characters, maximum {max} allowed',
 } as const

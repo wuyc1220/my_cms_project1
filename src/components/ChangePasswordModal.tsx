@@ -1,25 +1,26 @@
-/**
- * ChangePasswordModal — 修改密码弹框
- */
-
-import { useState, useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
+  Alert,
   Button,
   Form,
   Modal,
   Space,
   message,
 } from 'antd'
-import { changePassword } from '../api/auth'
-import { getPasswordMinLength } from '../api/configs'
+import { changePassword, logout } from '../api/auth'
+import { getPasswordPatternMinLen } from '../api/configs'
 import { useI18n } from '../i18n/useI18n'
+import { useAuthStore } from '../stores/authStore'
 import { isHandledError } from '../api'
 import TrimInput from './TrimInput'
-
+import { validatePassword, PASSWORD_ERROR_I18N_KEYS } from '../utils/passwordValidation'
 
 interface ChangePasswordModalProps {
   open: boolean
   onClose: () => void
+  forceMode?: boolean
+  onSuccess?: () => void
 }
 
 interface FormValues {
@@ -31,69 +32,37 @@ interface FormValues {
 export default function ChangePasswordModal({
   open,
   onClose,
+  forceMode = false,
+  onSuccess,
 }: ChangePasswordModalProps) {
   const { t } = useI18n()
+  const navigate = useNavigate()
+  const authStore = useAuthStore()
   const [form] = Form.useForm<FormValues>()
   const [loading, setLoading] = useState(false)
-  const [minLength, setMinLength] = useState(8)
+  const patternMinLenRef = useRef(6)
 
-  // 获取密码最小长度配置
   useEffect(() => {
-    if (open) {
-      void getPasswordMinLength().then(setMinLength)
-    }
+    if (!open) return
+    getPasswordPatternMinLen()
+      .then((v) => {
+        patternMinLenRef.current = v
+      })
+      .catch(() => {
+        // 获取配置失败时保持默认值 6
+      })
   }, [open])
 
-  // 根据后端错误关键词获取国际化文本
-  const getLocalizedError = (detail: string, _fieldName: 'old_password' | 'new_password' | 'confirm_password'): string => {
-    // 旧密码错误
-    if (detail.includes('旧密码错误')) {
-      return t('changePassword.errors.oldPasswordIncorrect')
-    }
-    // 两次输入不一致
-    if (detail.includes('两次输入')) {
-      return t('changePassword.confirmPasswordMismatch')
-    }
-    // 新密码与旧密码相同
-    if (detail.includes('新密码不能与旧密码相同')) {
-      return t('changePassword.errors.sameAsOld')
-    }
-    // 密码长度
-    if (detail.includes('密码长度') || detail.includes('少于')) {
-      return t('changePassword.rules.minLength')
-    }
-    // 复杂度
-    if (detail.includes('至少3种')) {
-      return t('changePassword.rules.complexity')
-    }
-    // 连续重复字符
-    if (detail.includes('连续重复')) {
-      return t('changePassword.rules.noRepeat')
-    }
-    // 连续序列
-    if (detail.includes('连续的字符序列')) {
-      return t('changePassword.rules.noSequence')
-    }
-    // 与账号相同
-    if (detail.includes('与账号相同')) {
-      return t('changePassword.rules.notUsername')
-    }
-    // 常见单词
-    if (detail.includes('常见单词') || detail.includes('常见英文单词') || detail.includes('拼音')) {
-      return t('changePassword.rules.notCommon')
-    }
-    // 键盘序列
-    if (detail.includes('键盘序列')) {
-      return t('changePassword.rules.notKeyboard')
-    }
-    // 默认返回原始错误
-    return detail
-  }
-
   const handleSubmit = async () => {
+    let values: FormValues
     try {
-      const values = await form.validateFields()
-      setLoading(true)
+      values = await form.validateFields()
+    } catch {
+      // 表单校验失败，错误已显示在对应字段上，无需额外提示
+      return
+    }
+    setLoading(true)
+    try {
       await changePassword({
         old_password: values.old_password,
         new_password: values.new_password,
@@ -101,36 +70,32 @@ export default function ChangePasswordModal({
       })
       void message.success(t('changePassword.success'))
       form.resetFields()
-      onClose()
+      onSuccess?.()
+      // 修改密码成功后登出并跳转到登录页
+      try {
+        await logout()
+      } catch {
+        // 后端登出失败也继续清理本地状态
+      }
+      authStore.logout()
+      navigate('/login', { replace: true })
     } catch (err: unknown) {
       if (isHandledError(err)) return
-      const error = err as { response?: { data?: { detail?: string } } }
+      const error = err as { response?: { data?: { error_code?: string; detail?: string } } }
+      const errorCode = error.response?.data?.error_code
       const detail = error.response?.data?.detail
-      if (detail) {
-        // 根据错误信息判断是哪个字段的问题
-        if (detail.includes('旧密码错误')) {
-          form.setFields([
-            {
-              name: 'old_password',
-              errors: [getLocalizedError(detail, 'old_password')],
-            },
-          ])
-        } else if (detail.includes('两次输入')) {
-          form.setFields([
-            {
-              name: 'confirm_password',
-              errors: [getLocalizedError(detail, 'confirm_password')],
-            },
-          ])
-        } else {
-          // 其他密码验证错误显示在新密码字段下方
-          form.setFields([
-            {
-              name: 'new_password',
-              errors: [getLocalizedError(detail, 'new_password')],
-            },
-          ])
-        }
+      if (errorCode === 'OLD_PASSWORD_INCORRECT') {
+        form.setFields([
+          { name: 'old_password', errors: [detail ?? ''] },
+        ])
+      } else if (errorCode === 'PASSWORDS_DO_NOT_MATCH') {
+        form.setFields([
+          { name: 'confirm_password', errors: [t('changePassword.confirmPasswordMismatch')] },
+        ])
+      } else if (detail) {
+        form.setFields([
+          { name: 'new_password', errors: [detail] },
+        ])
       } else {
         void message.error(t('changePassword.failed'))
       }
@@ -144,15 +109,15 @@ export default function ChangePasswordModal({
     onClose()
   }
 
-  // 验证密码长度
-  const validatePasswordLength = (_: unknown, value: string) => {
-    if (value && value.length < minLength) {
-      return Promise.reject(new Error(t('changePassword.rules.minLength')))
+  const validateNewPassword = (_: unknown, value: string) => {
+    if (!value) return Promise.resolve()
+    const errorCode = validatePassword(value, { username: authStore.user?.username, patternMinLen: patternMinLenRef.current })
+    if (errorCode) {
+      return Promise.reject(new Error(t(PASSWORD_ERROR_I18N_KEYS[errorCode])))
     }
     return Promise.resolve()
   }
 
-  // 验证重复密码与新密码是否一致
   const validateConfirmPassword = (_: unknown, value: string) => {
     const newPassword = form.getFieldValue('new_password')
     if (value && newPassword && value !== newPassword) {
@@ -165,11 +130,21 @@ export default function ChangePasswordModal({
     <Modal
       title={t('changePassword.title')}
       open={open}
+      closable={forceMode}
+      mask={{ closable: !forceMode }}
       onCancel={handleClose}
       footer={null}
       width={480}
-      destroyOnClose
+      destroyOnHidden
     >
+      {forceMode && (
+        <Alert
+          type="warning"
+          showIcon
+          message={t('changePassword.forceChangeHint')}
+          style={{ marginBottom: 16 }}
+        />
+      )}
       <Form form={form} layout="vertical">
         <Form.Item
           name="old_password"
@@ -188,9 +163,9 @@ export default function ChangePasswordModal({
           name="new_password"
           label={t('changePassword.newPassword')}
           rules={[
-            { required: true, message: t('changePassword.newPasswordRequired') },
-            { validator: validatePasswordLength },
-          ]}
+              { required: true, message: t('changePassword.newPasswordRequired') },
+              { validator: validateNewPassword },
+            ]}
         >
           <TrimInput.Password
             placeholder={t('changePassword.newPasswordPlaceholder')}
@@ -201,6 +176,7 @@ export default function ChangePasswordModal({
         <Form.Item
           name="confirm_password"
           label={t('changePassword.confirmPassword')}
+          dependencies={['new_password']}
           rules={[
             { required: true, message: t('changePassword.confirmPasswordRequired') },
             { validator: validateConfirmPassword },

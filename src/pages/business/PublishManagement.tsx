@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Button,
   DatePicker,
@@ -52,21 +53,38 @@ import { usePermission } from '../../hooks/usePermission'
 import { useI18n } from '../../i18n/useI18n'
 
 // ═══════════════════════════════════════════════════════════
+// 常量
+// ═══════════════════════════════════════════════════════════
+
+const CONTENT_TYPES = [
+  { label: 'MOVIE', value: 'MOVIE' },
+  { label: 'SEASON', value: 'SEASON' },
+  { label: 'SEASON_SERIES', value: 'SEASON_SERIES' },
+  { label: 'SERIES', value: 'SERIES' },
+  { label: 'SCHEDULE', value: 'SCHEDULE' },
+  { label: 'CHANNEL', value: 'CHANNEL' },
+  { label: 'EPISODE', value: 'EPISODE' },
+]
+
+// ═══════════════════════════════════════════════════════════
 // 辅助函数
 // ═══════════════════════════════════════════════════════════
 
 const getPublishStatusTag = (status: string, taskType?: string, scheduledTime?: string, t?: (key: MessageKey) => string) => {
-  if (status === 'none') return <Tag>{t ? t('publish.status.none') : '未发布'}</Tag>
+  if (status === 'none') return <Tag>{t ? t('publish.status.none') : 'None'}</Tag>
   if (status === 'plan') {
     const timeStr = scheduledTime ? dayjs(scheduledTime).format('YYYY-MM-DD HH:mm') : ''
     const planKey = taskType === 'unpublish' ? 'publish.plan.unpublish' : 'publish.plan.publish'
-    const planLabel = t ? t(planKey) : (taskType === 'unpublish' ? '下架计划' : '上架计划')
-    return <Tag color="blue">{planLabel}: {timeStr}</Tag>
+    const planLabel = t ? t(planKey) : (taskType === 'unpublish' ? 'Unpublish Plan' : 'Publish Plan')
+    if (timeStr) {
+      return <Tag color="blue">{planLabel}: {timeStr}</Tag>
+    }
+    return <Tag color="blue">{planLabel}</Tag>
   }
-  if (status === 'publishing') return <Tag color="processing">{t ? t('publish.status.publishing') : '发布中'}</Tag>
-  if (status === 'success') return <Tag color="success">{t ? t('publish.status.success') : '已发布'}</Tag>
-  if (status === 'failure') return <Tag color="error">{t ? t('publish.status.failure') : '失败'}</Tag>
-  if (status === 'closed') return <Tag>{t ? t('publish.status.closed') : '已下架'}</Tag>
+  if (status === 'publishing') return <Tag color="processing">{t ? t('publish.status.publishing') : 'Publishing'}</Tag>
+  if (status === 'success') return <Tag color="success">{t ? t('publish.status.success') : 'Published'}</Tag>
+  if (status === 'failure') return <Tag color="error">{t ? t('publish.status.failure') : 'Failed'}</Tag>
+  if (status === 'closed') return <Tag>{t ? t('publish.status.closed') : 'Closed'}</Tag>
   return <Tag>{status}</Tag>
 }
 
@@ -102,22 +120,22 @@ interface SearchValues extends Record<string, unknown> {
 
 export default function PublishManagement() {
   const { t } = useI18n()
+  const navigate = useNavigate()
   // 列表状态
   const [list, setList] = useState<PublishListItem[]>([])
   const [loading, setLoading] = useState(false)
   const [selectedIds, setSelectedIds] = useState<number[]>([])
-  const { pagination, updatePagination, resetSort, tablePaginationProps, handleTableChange } = useTablePagination({
-    onChange: ({ page, pageSize }) => {
-      void loadList(page, pageSize, filters)
+  const { pagination, updatePagination, sortField, sortOrder, resetSort, tablePaginationProps, handleTableChange } = useTablePagination({
+    onChange: ({ page, pageSize, sortField, sortOrder }) => {
+      void loadList(page, pageSize, filters, sortField, sortOrder)
     },
   })
 
   // 下拉选项
-  const [contentTypeOptions, setContentTypeOptions] = useState<{ label: string; value: string }[]>([])
   const [ingestStatusOptions, setIngestStatusOptions] = useState<{ label: string; value: string }[]>([])
   const publishStatusOptions = useMemo<{ label: string; value: string }[]>(() => [
     { label: t('publish.status.none'), value: 'none' },
-    { label: t('publish.status.plan') || '计划中', value: 'plan' },
+    { label: t('publish.status.plan'), value: 'plan' },
     { label: t('publish.status.publishing'), value: 'publishing' },
     { label: t('publish.status.success'), value: 'success' },
     { label: t('publish.status.failure'), value: 'failure' },
@@ -163,7 +181,7 @@ export default function PublishManagement() {
       label: t('publish.col.contentType'),
       type: 'multiSelect',
       placeholder: `${t('common.select')} ${t('publish.col.contentType')}`,
-      options: contentTypeOptions,
+      options: CONTENT_TYPES,
     },
     {
       name: 'ingest_statuses',
@@ -191,7 +209,7 @@ export default function PublishManagement() {
       type: 'dateRange',
       placeholder: [t('common.startTime'), t('common.endTime')],
     },
-  ], [contentTypeOptions, ingestStatusOptions, publishStatusOptions, t])
+  ], [ingestStatusOptions, publishStatusOptions, t])
 
   // ═══════════════════════════════════════════════════════════
   // 使用 useSearchForm Hook
@@ -200,6 +218,8 @@ export default function PublishManagement() {
   const {
     form: searchForm,
     filters,
+    expanded,
+    setExpanded,
     showExpand,
     handleSearch,
     handleReset,
@@ -224,13 +244,6 @@ export default function PublishManagement() {
   useEffect(() => {
     void (async () => {
       const dicts = await getDictTree()
-      
-      // 内容类型选项
-      const contentTypeRoot = dicts.find((d: DictNodeListItem) => d.code === 'Content_Type')
-      setContentTypeOptions((contentTypeRoot?.children ?? []).map((c: DictNodeListItem) => ({ 
-        label: c.name, 
-        value: c.code 
-      })))
 
       // Ingest 状态选项
       const ingestStatusRoot = dicts.find((d: DictNodeListItem) => d.code === 'Ingest_Status')
@@ -251,7 +264,9 @@ export default function PublishManagement() {
   const loadList = async (
     page: number,
     pageSize: number,
-    searchFilters: SearchValues
+    searchFilters: SearchValues,
+    nextSortField?: string | null,
+    nextSortOrder?: 'ascend' | 'descend' | null,
   ) => {
     setLoading(true)
     try {
@@ -273,12 +288,16 @@ export default function PublishManagement() {
         params.publish_statuses = searchFilters.publish_statuses
       }
       if (searchFilters.publish_time_range?.[0]) {
-        params.publish_time_from = searchFilters.publish_time_range[0].format('YYYY-MM-DD HH:mm:ss')
-        params.publish_time_to = searchFilters.publish_time_range[1].format('YYYY-MM-DD HH:mm:ss')
+        params.publish_time_from = searchFilters.publish_time_range[0].startOf('day').format('YYYY-MM-DD HH:mm:ss')
+        params.publish_time_to = searchFilters.publish_time_range[1].endOf('day').format('YYYY-MM-DD HH:mm:ss')
       }
       if (searchFilters.unpublish_time_range?.[0]) {
-        params.unpublish_time_from = searchFilters.unpublish_time_range[0].format('YYYY-MM-DD HH:mm:ss')
-        params.unpublish_time_to = searchFilters.unpublish_time_range[1].format('YYYY-MM-DD HH:mm:ss')
+        params.unpublish_time_from = searchFilters.unpublish_time_range[0].startOf('day').format('YYYY-MM-DD HH:mm:ss')
+        params.unpublish_time_to = searchFilters.unpublish_time_range[1].endOf('day').format('YYYY-MM-DD HH:mm:ss')
+      }
+      if (nextSortField) {
+        params.sort_by = nextSortField
+        params.sort_order = nextSortOrder === 'ascend' ? 'asc' : 'desc'
       }
 
       const res = await getPublishes(params)
@@ -298,36 +317,92 @@ export default function PublishManagement() {
       title: t('publish.col.contentName'),
       dataIndex: 'entity_name',
       key: 'entity_name',
-      render: (text) => text || '-',
+      ellipsis: { showTitle: false },
+      sorter: true,
+      sortOrder: sortField === 'entity_name' ? sortOrder : null,
+      render: (text, record) => {
+        if (!text) return '-'
+        const getContentPath = () => {
+          const { entity_type, entity_id, content_type } = record
+          if (entity_type === 'Content') {
+            // 根据 content_type 判断具体跳转路径
+            if (content_type === 'SCHEDULE') {
+              return `/live/schedules/${entity_id}?mode=edit`
+            }
+            // 其他类型默认跳转到 VOD 详情页
+            return `/contents/${entity_id}?mode=edit`
+          }
+          if (entity_type === 'Channel') {
+            return `/live/channels/${entity_id}?mode=edit`
+          }
+          if (entity_type === 'Schedule') {
+            return `/live/schedules/${entity_id}?mode=edit`
+          }
+          return null
+        }
+        const path = getContentPath()
+        if (path) {
+          return (
+            <Tooltip title={text} autoAdjustOverflow={false} placement="topLeft">
+              <span
+                style={{ color: '#1677ff', cursor: 'pointer' }}
+                onClick={() => navigate(path)}
+              >
+                {text}
+              </span>
+            </Tooltip>
+          )
+        }
+        return (
+          <Tooltip title={text} autoAdjustOverflow={false} placement="topLeft">
+            <span>{text}</span>
+          </Tooltip>
+        )
+      },
     },
     {
       title: t('publish.col.contentType'),
       dataIndex: 'content_type',
       key: 'content_type',
+      sorter: true,
+      sortOrder: sortField === 'content_type' ? sortOrder : null,
       render: (type) => getContentTypeLabel(type, t),
     },
     {
       title: t('publish.col.ingestStatus'),
       dataIndex: 'ingest_status',
       key: 'ingest_status',
+      sorter: true,
+      sortOrder: sortField === 'ingest_status' ? sortOrder : null,
       render: (status) => getIngestStatusTag(status, t),
     },
     {
       title: t('publish.col.publishStatus'),
       dataIndex: 'publish_status',
       key: 'publish_status',
-      render: (status, record) => getPublishStatusTag(status, record.task_type, record.scheduled_time, t),
+      width: 200,
+      sorter: true,
+      sortOrder: sortField === 'publish_status' ? sortOrder : null,
+      ellipsis: { showTitle: false },
+      render: (status, record) => {
+        const tag = getPublishStatusTag(status, record.task_type, record.scheduled_time, t)
+        return <Tooltip title={tag.props.children}>{tag}</Tooltip>
+      },
     },
     {
       title: t('publish.col.publishTime'),
       dataIndex: 'publish_time',
       key: 'publish_time',
+      sorter: true,
+      sortOrder: sortField === 'publish_time' ? sortOrder : null,
       render: (time) => time ? dayjs(time).format('YYYY-MM-DD HH:mm') : '-',
     },
     {
       title: t('publish.col.unpublishTime'),
       dataIndex: 'unpublish_time',
       key: 'unpublish_time',
+      sorter: true,
+      sortOrder: sortField === 'unpublish_time' ? sortOrder : null,
       render: (time) => time ? dayjs(time).format('YYYY-MM-DD HH:mm') : '-',
     },
     {
@@ -356,7 +431,7 @@ export default function PublishManagement() {
               </Tooltip>
             )}
 
-            {canOperate && (isNone || isClosed || isFailure) && (
+            {canOperate && (isNone || isClosed || isFailure || isSuccess) && (
               <Tooltip title={t('publish.tooltip.publishNow')}>
                 <Button
                   type="link"
@@ -367,7 +442,7 @@ export default function PublishManagement() {
               </Tooltip>
             )}
 
-            {canOperate && (isNone || isClosed || isFailure) && (
+            {canOperate && (isNone || isClosed || isFailure || isSuccess) && (
               <Tooltip title={t('publish.tooltip.setPublishPlan')}>
                 <Button
                   type="link"
@@ -523,6 +598,8 @@ export default function PublishManagement() {
         execution_mode: isPlanMode ? 'plan' : 'now',
         scheduled_time: scheduledTime,
         content_type: planModal.record?.content_type,
+        // 发布管理入口：级联发布忽略子内容状态，只要在发布任务表里都再次发布
+        cascade_ignore_status: true,
       }
 
       if (planModal.isBatch) {
@@ -541,20 +618,27 @@ export default function PublishManagement() {
           task_type: 'publish' | 'unpublish'
           execution_mode: 'now' | 'plan'
           scheduled_time: string | undefined
+          cascade_ignore_status: boolean
         } = {
           entity_ids: entityIds,
           entity_type: 'Content',
           task_type: planModal.type,
           execution_mode: isPlanMode ? 'plan' : 'now',
           scheduled_time: scheduledTime,
+          // 发布管理入口：级联发布忽略子内容状态
+          cascade_ignore_status: true,
         }
 
-        if (planModal.type === 'publish') {
-          await batchPublish(batchData)
+        const batchResults = planModal.type === 'publish'
+          ? await batchPublish(batchData)
+          : await batchUnpublish(batchData)
+        const failedItems = batchResults.filter((r) => !r.success)
+        if (failedItems.length === 0) {
+          message.success(t('publish.msg.batchPlanCreated', { type: planModal.type === 'publish' ? t('publish.type.publish') : t('publish.type.unpublish') }))
         } else {
-          await batchUnpublish(batchData)
+          const failedNames = failedItems.map((r) => r.entity_name || `#${r.entity_id}`).join(', ')
+          message.error(`${failedItems.length}/${batchResults.length} ${t('publish.msg.batchFailed')}: ${failedNames}`)
         }
-        message.success(t('publish.msg.batchPlanCreated', { type: planModal.type === 'publish' ? t('publish.type.publish') : t('publish.type.unpublish') }))
         setSelectedIds([])
       } else if (planModal.mode === 'edit' && planModal.record) {
         // 修改计划
@@ -591,15 +675,7 @@ export default function PublishManagement() {
       message.warning(t('publish.msg.selectPublishContentFirst'))
       return
     }
-    // 检验内容是否都是未发布或已下架状态
-    const selectedItems = list.filter(item => selectedIds.includes(item.id))
-    const invalidItems = selectedItems.filter(
-      item => item.publish_status !== 'none' && item.publish_status !== 'closed'
-    )
-    if (invalidItems.length > 0) {
-      message.warning(t('publish.msg.invalidPublishStatus'))
-      return
-    }
+    // 与单行发布保持一致：前端不拦截 publish_status，由后端统一校验
     handleOpenPlanModal('publish', 'create', undefined, true)
   }
 
@@ -608,15 +684,7 @@ export default function PublishManagement() {
       message.warning(t('publish.msg.selectUnpublishContentFirst'))
       return
     }
-    // 检验内容是否都是已发布状态
-    const selectedItems = list.filter(item => selectedIds.includes(item.id))
-    const invalidItems = selectedItems.filter(
-      item => item.publish_status !== 'published'
-    )
-    if (invalidItems.length > 0) {
-      message.warning(t('publish.msg.invalidUnpublishStatus'))
-      return
-    }
+    // 与单行下架保持一致：前端不拦截 ingest_status，由后端统一校验
     handleOpenPlanModal('unpublish', 'create', undefined, true)
   }
 
@@ -630,6 +698,8 @@ export default function PublishManagement() {
       <SearchForm
         form={searchForm}
         fields={searchFields}
+        expanded={expanded}
+        onExpandChange={setExpanded}
         showExpand={showExpand}
         onSearch={handleSearch}
         onReset={handleReset}
@@ -638,12 +708,12 @@ export default function PublishManagement() {
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16, gap: 8 }}>
           {canOperate && (
-            <Button type="primary" icon={<SendOutlined />} onClick={handleBatchPublish}>
+            <Button type="primary" icon={<SendOutlined />} onClick={handleBatchPublish} disabled={selectedIds.length === 0}>
               {t('publish.btn.batchPublish')}
             </Button>
           )}
           {canOperate && (
-            <Button danger icon={<MinusCircleOutlined />} onClick={handleBatchUnpublish}>
+            <Button danger icon={<MinusCircleOutlined />} onClick={handleBatchUnpublish} disabled={selectedIds.length === 0}>
               {t('publish.btn.batchUnpublish')}
             </Button>
           )}
@@ -675,7 +745,7 @@ export default function PublishManagement() {
         onCancel={() => setPlanModal({ ...planModal, open: false })}
         okText={t('common.confirm')}
         cancelText={t('common.cancel')}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={planForm} layout="vertical">
           <Form.Item
@@ -705,6 +775,7 @@ export default function PublishManagement() {
                     <DatePicker
                       style={{ width: '100%' }}
                       placeholder=""
+                      disabledDate={(current) => current && current < dayjs().startOf('day')}
                     />
                   </Form.Item>
 
@@ -717,6 +788,17 @@ export default function PublishManagement() {
                       style={{ width: '100%' }}
                       format="HH:mm"
                       placeholder=""
+                      disabledTime={(_current) => {
+                        const selectedDate = getFieldValue('publish_date')
+                        if (selectedDate && dayjs(selectedDate).isSame(dayjs(), 'day')) {
+                          const now = dayjs()
+                          return {
+                            disabledHours: () => [...Array(now.hour()).keys()],
+                            disabledMinutes: (hour) => hour === now.hour() ? [...Array(now.minute()).keys()] : [],
+                          }
+                        }
+                        return {}
+                      }}
                     />
                   </Form.Item>
                 </>
@@ -757,7 +839,7 @@ export default function PublishManagement() {
             pageSize: historyPagination.pageSize,
             total: historyPagination.total,
             showSizeChanger: true,
-            showQuickJumper: true,
+            showQuickJumper: true ,
             showTotal: (n: number) => t('pagination.total', { n }),
             onChange: (page, pageSize) => {
               if (historyModal.record) {
@@ -785,7 +867,6 @@ export default function PublishManagement() {
               key: 'end_date',
               render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
             },
-            { title: t('publish.ingestHistory.col.action'), dataIndex: 'action', key: 'action' },
             {
               title: t('publish.ingestHistory.col.status'),
               dataIndex: 'status',
@@ -803,7 +884,9 @@ export default function PublishManagement() {
               render: (_, record: IngestHistoryItem) => {
                 const handleDownload = async (url: string, filename: string) => {
                   try {
-                    const response = await api.get(url, {
+                    // 如果 URL 以 /api/v1 开头，去掉前缀，因为 axios baseURL 已经包含 /api/v1
+                    const requestUrl = url.startsWith('/api/v1') ? url.slice(7) : url
+                    const response = await api.get(requestUrl, {
                       responseType: 'blob',
                     })
                     const blob = new Blob([response.data])

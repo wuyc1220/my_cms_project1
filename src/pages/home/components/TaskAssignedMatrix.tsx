@@ -1,4 +1,4 @@
-import { Card, Table } from 'antd'
+import { Card, Table, Tooltip } from 'antd'
 import type { TablePaginationConfig } from 'antd/es/table'
 import { useState, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -58,19 +58,33 @@ const TaskAssignedMatrix: React.FC<TaskAssignedMatrixProps> = ({ data }) => {
     })
   }
 
-  const columns = [    {
+  const renderColumnTitle = (key: string) => (
+    <Tooltip title={t(key as never)} placement="topLeft">
+      <span>{t(key as never)}</span>
+    </Tooltip>
+  )
+
+  const columns = [
+    {
       title: t('dashboard.column.userName'),
       dataIndex: 'user_name',
       key: 'user_name',
       fixed: 'left' as const,
       width: 200,
+      ellipsis: { showTitle: false },
+      render: (text: string) => (
+        <Tooltip autoAdjustOverflow={false} placement="topLeft" title={text}>
+          <span>{text}</span>
+        </Tooltip>
+      ),
     },
     {
-      title: t('dashboard.column.arrangementPending'),
+      title: renderColumnTitle('dashboard.column.arrangementPending'),
       dataIndex: 'arrangement_pending',
       key: 'arrangement_pending',
-      width: 120,
+      width: 150,
       align: 'center' as const,
+      ellipsis: { showTitle: false },
       render: (value: number, record: TaskAssignedMatrixItem) => (
         <span
           style={{ cursor: 'pointer', color: '#1890ff' }}
@@ -81,11 +95,12 @@ const TaskAssignedMatrix: React.FC<TaskAssignedMatrixProps> = ({ data }) => {
       ),
     },
     {
-      title: t('dashboard.column.reviewL1Pending'),
+      title: renderColumnTitle('dashboard.column.reviewL1Pending'),
       dataIndex: 'review_l1_pending',
       key: 'review_l1_pending',
-      width: 120,
+      width: 150,
       align: 'center' as const,
+      ellipsis: { showTitle: false },
       render: (value: number, record: TaskAssignedMatrixItem) => (
         <span
           style={{ cursor: 'pointer', color: '#1890ff' }}
@@ -96,11 +111,12 @@ const TaskAssignedMatrix: React.FC<TaskAssignedMatrixProps> = ({ data }) => {
       ),
     },
     {
-      title: t('dashboard.column.reviewL2Pending'),
+      title: renderColumnTitle('dashboard.column.reviewL2Pending'),
       dataIndex: 'review_l2_pending',
       key: 'review_l2_pending',
-      width: 120,
+      width: 150,
       align: 'center' as const,
+      ellipsis: { showTitle: false },
       render: (value: number, record: TaskAssignedMatrixItem) => (
         <span
           style={{ cursor: 'pointer', color: '#1890ff' }}
@@ -111,11 +127,12 @@ const TaskAssignedMatrix: React.FC<TaskAssignedMatrixProps> = ({ data }) => {
       ),
     },
     {
-      title: t('dashboard.column.reviewL3Pending'),
+      title: renderColumnTitle('dashboard.column.reviewL3Pending'),
       dataIndex: 'review_l3_pending',
       key: 'review_l3_pending',
-      width: 120,
+      width: 150,
       align: 'center' as const,
+      ellipsis: { showTitle: false },
       render: (value: number, record: TaskAssignedMatrixItem) => (
         <span
           style={{ cursor: 'pointer', color: '#1890ff' }}
@@ -126,11 +143,12 @@ const TaskAssignedMatrix: React.FC<TaskAssignedMatrixProps> = ({ data }) => {
       ),
     },
     {
-      title: t('dashboard.column.arrangementCompleted'),
+      title: renderColumnTitle('dashboard.column.arrangementCompleted'),
       dataIndex: 'arrangement_completed',
       key: 'arrangement_completed',
-      width: 120,
+      width: 150,
       align: 'center' as const,
+      ellipsis: { showTitle: false },
       render: (value: number, record: TaskAssignedMatrixItem) => (
         <span
           style={{ cursor: 'pointer', color: '#1890ff' }}
@@ -141,11 +159,12 @@ const TaskAssignedMatrix: React.FC<TaskAssignedMatrixProps> = ({ data }) => {
       ),
     },
     {
-      title: t('dashboard.column.reviewCompleted'),
+      title: renderColumnTitle('dashboard.column.reviewCompleted'),
       dataIndex: 'review_completed',
       key: 'review_completed',
-      width: 120,
+      width: 150,
       align: 'center' as const,
+      ellipsis: { showTitle: false },
       render: (value: number, record: TaskAssignedMatrixItem) => (
         <span
           style={{ cursor: 'pointer', color: '#1890ff' }}
@@ -156,11 +175,12 @@ const TaskAssignedMatrix: React.FC<TaskAssignedMatrixProps> = ({ data }) => {
       ),
     },
     {
-      title: t('dashboard.column.completionRate'),
+      title: renderColumnTitle('dashboard.column.completionRate'),
       dataIndex: 'completion_rate',
       key: 'completion_rate',
-      width: 120,
+      width: 150,
       align: 'center' as const,
+      ellipsis: { showTitle: false },
       render: (value: number) => `${value}%`,
     },
   ]
@@ -177,6 +197,7 @@ const TaskAssignedMatrix: React.FC<TaskAssignedMatrixProps> = ({ data }) => {
     pageSize: paginationState.pageSize,
     total: matrixData.length,
     showSizeChanger: true,
+    showQuickJumper: true,
     pageSizeOptions: PAGINATION_CONFIG.pageSizeOptions.map(String),
     showTotal: (total: number) => t('pagination.total', { n: total }),
     style: { textAlign: 'right' },
@@ -189,7 +210,7 @@ const TaskAssignedMatrix: React.FC<TaskAssignedMatrixProps> = ({ data }) => {
         columns={columns}
         dataSource={matrixData}
         rowKey="user_name"
-        scroll={{ x: 700 }}
+        scroll={{ x: 1100 }}
         pagination={paginationConfig}
         onChange={handleTableChange}
         size="small"

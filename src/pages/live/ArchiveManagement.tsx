@@ -2,7 +2,7 @@
  * ArchiveManagement — 直播管理 归档管理列表页
  *
  * 需求规范（3.5.3.2）：
- *  - 展示 MOVIE / EPISODE / SEASON / SERIES 类型的已归档内容
+ *  - 展示 MOVIE / EPISODE / SEASON / SEASON_SERIES / SERIES 类型的已归档内容
  *  - 搜索：Content Name / Content Type / Ingest Status(数据字典) / Genre / Custom Tags /
  *          Category / Package / Provider / License Start/End Date(范围) /
  *          Channel Name(文本) / Program Name(文本) /
@@ -10,36 +10,43 @@
  *  - 列表列：Channel Name / Program Name / Content Type / Begin Time / End Time /
  *            Ingest Status / Genre / Custom Tags / Type / Category / Package /
  *            License Start / License End / Provider / Action
- *  - Action：Poster(图片)（详情/编辑/导入/导出暂不开发）
- *  - 海报 entityType：MOVIE/EPISODE → "program"；SERIES/SEASON → "series"
+ *  - Action：详情/编辑/导入/导出
  */
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Button,
+  Row,
+  Col,
   Select,
   Space,
   Table,
   Tag,
   Tooltip,
+  message,
 } from 'antd'
 import {
+  DownloadOutlined,
   EditOutlined,
   InfoCircleOutlined,
-  PictureOutlined,
+  UploadOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
-import { getArchives } from '../../api/live'
+import { getArchives, exportArchivesExcel } from '../../api/live'
 import { getGenres } from '../../api/genres'
+import { getMultiLanguageOptions } from '../../api/i18n'
 import { getProvidersSimple } from '../../api/providers'
 import { getCategoryTree } from '../../api/categories'
 import { getPackages } from '../../api/packages'
 import { getCustomTags } from '../../api/customTags'
+import { getContentTypes } from '../../api/contentTypes'
 import { getDictTree } from '../../api/dicts'
-import PostersModal from '../../components/PostersModal'
+import ArchiveImportModal from '../../components/ArchiveImportModal'
+import { EditContentModal } from '../../components/ContentModals'
 import SearchForm from '../../components/SearchForm'
+import { isHandledError } from '../../api'
 import type { ArchiveListItem, ArchiveQueryParams } from '../../types/live'
 import type { CategoryListItem, CustomTagListItem, GenreListItem } from '../../types/basic'
 import type { DictNodeListItem } from '../../types/dict'
@@ -55,6 +62,7 @@ const ARCHIVE_CONTENT_TYPES = [
   { label: 'MOVIE', value: 'MOVIE' },
   { label: 'EPISODE', value: 'EPISODE' },
   { label: 'SEASON', value: 'SEASON' },
+  { label: 'SEASON_SERIES', value: 'SEASON_SERIES' },
   { label: 'SERIES', value: 'SERIES' },
 ]
 
@@ -66,34 +74,40 @@ const STATUS_COLOR: Record<string, string> = {
   None: 'default',
 }
 
-/** 根据 content_type 确定海报 entityType */
-function resolveEntityType(contentType: string): string {
-  return contentType === 'MOVIE' || contentType === 'EPISODE' ? 'program' : 'series'
-}
-
 /** 根据 content_type 确定详情页路由前缀 */
 function resolveDetailPath(contentType: string): string {
   if (contentType === 'CHANNEL') return '/live/channels'
   if (contentType === 'SCHEDULE') return '/live/schedules'
-  // MOVIE / EPISODE / SEASON / SERIES → 点播管理
   return '/contents'
+}
+
+/** 获取完整的详情页 URL（带 source 参数） */
+function getDetailUrl(record: ArchiveListItem, options?: { mode?: string }): string {
+  const basePath = resolveDetailPath(record.content_type)
+  const params = new URLSearchParams({ source: 'archive_management' })
+  if (options?.mode) params.set('mode', options.mode)
+  return `${basePath}/${record.id}?${params.toString()}`
 }
 
 interface SearchValues {
   title?: string
   content_types?: string[]
   statuses?: string[]
-  genre_id?: number
-  provider_id?: number
-  package_id?: number
+  genre_ids?: number[]
+  provider_ids?: number[]
+  package_ids?: number[]
   category_id?: number
   custom_tag_ids?: number[]
+  deleted?: string
+  type_ids?: number[]
   channel_name?: string
   program_name?: string
   begin_time_range?: [dayjs.Dayjs, dayjs.Dayjs]
   end_time_range?: [dayjs.Dayjs, dayjs.Dayjs]
   license_start_range?: [dayjs.Dayjs, dayjs.Dayjs]
   license_end_range?: [dayjs.Dayjs, dayjs.Dayjs]
+  publish_date_range?: [dayjs.Dayjs, dayjs.Dayjs]
+  unpublish_date_range?: [dayjs.Dayjs, dayjs.Dayjs]
 }
 
 // ─── 主组件 ───────────────────────────────────────────────────────────────────
@@ -117,15 +131,18 @@ export default function ArchiveManagement() {
   const [categoryOptions, setCategoryOptions] = useState<{ label: string; value: number }[]>([])
   const [packageOptions, setPackageOptions] = useState<{ label: string; value: number }[]>([])
   const [customTagOptions, setCustomTagOptions] = useState<{ label: string; value: number }[]>([])
+  const [typeOptions, setTypeOptions] = useState<{ label: string; value: number }[]>([])
   const [ingestStatusOptions, setIngestStatusOptions] = useState<{ label: string; value: string }[]>([])
 
-  // 海报弹框
-  const [postersOpen, setPostersOpen] = useState(false)
-  const [postersTarget, setPostersTarget] = useState<{
-    id: number
-    title: string
-    entityType: string
-  } | null>(null)
+  // 行选择
+  const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([])
+
+  // 导入弹框
+  const [importModalOpen, setImportModalOpen] = useState(false)
+
+  // 编辑弹框
+  const [editModalOpen, setEditModalOpen] = useState(false)
+  const [editContentId, setEditContentId] = useState<number | null>(null)
 
   // ─── 搜索字段配置 ───────────────────────────────────────────────────────────
 
@@ -134,7 +151,7 @@ export default function ArchiveManagement() {
       name: 'title',
       labelKey: 'common.col.contentName',
       type: 'input',
-      placeholderKey: 'common.placeholder.programKeyword',
+      placeholderKey: 'common.placeholder.keyword',
     },
     {
       name: 'content_types',
@@ -149,27 +166,31 @@ export default function ArchiveManagement() {
       options: ingestStatusOptions,
     },
     {
-      name: 'genre_id',
+      name: 'genre_ids',
       labelKey: 'common.col.genre',
-      type: 'select',
-      render: () => (
-        <Select
-          placeholder={t('common.placeholder.select')}
-          options={genreOptions}
-          allowClear
-          showSearch
-          filterOption={(input, option) =>
-            (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-          }
-          style={{ width: '100%' }}
-        />
-      ),
+      type: 'multiSelect',
+      options: genreOptions,
     },
     {
       name: 'custom_tag_ids',
       labelKey: 'common.col.customTags',
       type: 'multiSelect',
       options: customTagOptions,
+    },
+    {
+      name: 'deleted',
+      labelKey: 'common.col.deleted',
+      type: 'select',
+      options: [
+        { label: t('common.no'), value: 'NO' },
+        { label: t('common.yes'), value: 'YES' },
+      ],
+    },
+    {
+      name: 'type_ids',
+      labelKey: 'common.col.type',
+      type: 'multiSelect',
+      options: typeOptions,
     },
     {
       name: 'category_id',
@@ -189,38 +210,16 @@ export default function ArchiveManagement() {
       ),
     },
     {
-      name: 'package_id',
+      name: 'package_ids',
       labelKey: 'common.col.package',
-      type: 'select',
-      render: () => (
-        <Select
-          placeholder={t('common.placeholder.select')}
-          options={packageOptions}
-          allowClear
-          showSearch
-          filterOption={(input, option) =>
-            (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-          }
-          style={{ width: '100%' }}
-        />
-      ),
+      type: 'multiSelect',
+      options: packageOptions,
     },
     {
-      name: 'provider_id',
+      name: 'provider_ids',
       labelKey: 'common.col.provider',
-      type: 'select',
-      render: () => (
-        <Select
-          placeholder={t('common.placeholder.select')}
-          options={providerOptions}
-          allowClear
-          showSearch
-          filterOption={(input, option) =>
-            (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-          }
-          style={{ width: '100%' }}
-        />
-      ),
+      type: 'multiSelect',
+      options: providerOptions,
     },
     {
       name: 'license_start_range',
@@ -236,7 +235,7 @@ export default function ArchiveManagement() {
       name: 'channel_name',
       labelKey: 'common.col.channelName',
       type: 'input',
-      placeholderKey: 'common.placeholder.programKeyword',
+      placeholderKey: 'common.placeholder.channelKeyword',
     },
     {
       name: 'program_name',
@@ -249,27 +248,26 @@ export default function ArchiveManagement() {
       labelKey: 'common.col.beginTime',
       type: 'dateRange',
       showTime: true,
+      colSpan: 12,
     },
     {
       name: 'end_time_range',
       labelKey: 'common.col.endTime',
       type: 'dateRange',
       showTime: true,
+      colSpan: 12,
     },
-    // TODO（需求 3.5.3.2）：Publish/Takedown Date 需发布管理落库 publish_date/takedown_date 后再启用
     {
-      name: '_publish_range',
+      name: 'publish_date_range',
       labelKey: 'common.col.publishDate',
       type: 'dateRange',
-      disabled: true,
     },
     {
-      name: '_takedown_range',
-      labelKey: 'common.col.takedownDate',
+      name: 'unpublish_date_range',
+      labelKey: 'common.col.unpublishDate',
       type: 'dateRange',
-      disabled: true,
     },
-  ], [genreOptions, providerOptions, categoryOptions, packageOptions, customTagOptions, ingestStatusOptions, t])
+  ], [genreOptions, providerOptions, categoryOptions, packageOptions, customTagOptions, typeOptions, ingestStatusOptions, t])
 
   // ─── 使用 useSearchForm Hook ─────────────────────────────────────────────────
 
@@ -283,16 +281,21 @@ export default function ArchiveManagement() {
     handleSearch,
     handleReset,
   } = useSearchForm<SearchValues>({
+    defaultValues: {
+      deleted: 'NO',
+    },
     onSearch: (values) => {
       const params: ArchiveQueryParams = {}
       if (values.title) params.title = values.title
       if (values.content_types?.length) params.content_types = values.content_types
       if (values.statuses?.length) params.statuses = values.statuses
-      if (values.genre_id) params.genre_id = values.genre_id
-      if (values.provider_id) params.provider_id = values.provider_id
-      if (values.package_id) params.package_id = values.package_id
+      if (values.genre_ids?.length) params.genre_ids = values.genre_ids
+      if (values.provider_ids?.length) params.provider_ids = values.provider_ids
+      if (values.package_ids?.length) params.package_ids = values.package_ids
       if (values.category_id) params.category_id = values.category_id
       if (values.custom_tag_ids?.length) params.custom_tag_ids = values.custom_tag_ids
+      if (values.deleted) params.deleted = values.deleted
+      if (values.type_ids?.length) params.type_ids = values.type_ids
       if (values.channel_name) params.channel_name = values.channel_name
       if (values.program_name) params.program_name = values.program_name
       if (values.begin_time_range?.[0]) {
@@ -311,6 +314,14 @@ export default function ArchiveManagement() {
         params.license_end_from = values.license_end_range[0].format('YYYY-MM-DD')
         params.license_end_to = values.license_end_range[1].format('YYYY-MM-DD')
       }
+      if (values.publish_date_range?.[0]) {
+        params.publish_date_from = values.publish_date_range[0].format('YYYY-MM-DD')
+        params.publish_date_to = values.publish_date_range[1].format('YYYY-MM-DD')
+      }
+      if (values.unpublish_date_range?.[0]) {
+        params.unpublish_date_from = values.unpublish_date_range[0].format('YYYY-MM-DD')
+        params.unpublish_date_to = values.unpublish_date_range[1].format('YYYY-MM-DD')
+      }
       setFilters(params)
       resetSort()
       void loadList(1, pagination.pageSize, params, null, null)
@@ -327,18 +338,24 @@ export default function ArchiveManagement() {
 
   useEffect(() => {
     void loadOptions()
-    void loadList(1, pagination.pageSize, {})
+    searchForm.setFieldsValue({ deleted: 'NO' })
+    const params: ArchiveQueryParams = { deleted: 'NO' }
+    void loadList(1, pagination.pageSize, params)
   }, [])
 
   const loadOptions = async () => {
     try {
-      const [genres, providers, categories, packages, customTags, dicts] = await Promise.all([
-        getGenres({ page: 1, page_size: 500 }),
+      const langOptions = await getMultiLanguageOptions()
+      const defaultLang = langOptions.length > 0 ? langOptions[0].code : undefined
+      const langFilter = defaultLang ? [defaultLang] : undefined
+      const [genres, providers, categories, packages, customTags, dicts, types] = await Promise.all([
+        getGenres({ page: 1, page_size: 500, languages: langFilter }),
         getProvidersSimple(),
         getCategoryTree(),
         getPackages({ page: 1, page_size: 500 }),
         getCustomTags({ page: 1, page_size: 500 }),
         getDictTree(),
+        getContentTypes({ page: 1, page_size: 500 }),
       ])
       setGenreOptions(genres.items.map((g: GenreListItem) => ({ label: g.name, value: g.id })))
       setProviderOptions(providers.map((p) => ({ label: p.name, value: p.id })))
@@ -354,6 +371,7 @@ export default function ArchiveManagement() {
       setCategoryOptions(flatCategories)
       setPackageOptions(packages.items.map((p) => ({ label: p.name, value: p.id })))
       setCustomTagOptions(customTags.items.map((ct: CustomTagListItem) => ({ label: ct.name, value: ct.id })))
+      setTypeOptions(types.items.map((t: { name: string; id: number }) => ({ label: t.name, value: t.id })))
       // Ingest 状态选项来源于数据字典 Ingest_Status
       const ingestRoot = dicts.find((d: DictNodeListItem) => d.code === 'Ingest_Status')
       setIngestStatusOptions((ingestRoot?.children ?? []).map((c: DictNodeListItem) => ({ label: c.name, value: c.code })))
@@ -391,19 +409,30 @@ export default function ArchiveManagement() {
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'channel_name' ? sortOrder : null,
-      render: (v?: string) => <Tooltip title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>,
+      render: (v?: string) => <Tooltip autoAdjustOverflow={false} placement="topLeft" title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>,
     },
     {
-      title: t('common.col.programName'),
+      title: t('common.col.contentName'),
       dataIndex: 'title',
       key: 'title',
       width: 200,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'title' ? sortOrder : null,
-      render: (v: string) => (
+      render: (v: string, record) => (
         <Tooltip title={v}>
-          <span>{v}</span>
+          <a
+            onClick={() => {
+              sessionStorage.removeItem('archive_list_context')
+              sessionStorage.setItem(
+                'archive_list_context',
+                JSON.stringify({ ids: archives.map((a) => a.id) }),
+              )
+              navigate(getDetailUrl(record, { mode: record.is_discarded ? undefined : 'edit' }))
+            }}
+          >
+            {v}
+          </a>
         </Tooltip>
       ),
     },
@@ -426,7 +455,7 @@ export default function ArchiveManagement() {
       sorter: true,
       sortOrder: sortField === 'begin_time' ? sortOrder : null,
       render: (v?: string) => {
-        const text = v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '—'
+        const text = v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '—'
         return <Tooltip title={text}><span>{text}</span></Tooltip>
       },
     },
@@ -439,7 +468,7 @@ export default function ArchiveManagement() {
       sorter: true,
       sortOrder: sortField === 'end_time' ? sortOrder : null,
       render: (v?: string) => {
-        const text = v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '—'
+        const text = v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '—'
         return <Tooltip title={text}><span>{text}</span></Tooltip>
       },
     },
@@ -475,7 +504,7 @@ export default function ArchiveManagement() {
       ellipsis: { showTitle: false },
       render: (names: string[]) => {
         const text = names.length ? names.join(', ') : '—'
-        return <Tooltip title={text}><span>{text}</span></Tooltip>
+        return <Tooltip autoAdjustOverflow={false} placement="topLeft" title={text}><span>{text}</span></Tooltip>
       },
     },
     {
@@ -484,7 +513,7 @@ export default function ArchiveManagement() {
       key: 'type_name',
       width: 120,
       ellipsis: { showTitle: false },
-      render: (v?: string) => <Tooltip title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>,
+      render: (v?: string) => <Tooltip autoAdjustOverflow={false} placement="topLeft" title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>,
     },
     {
       title: t('common.col.category'),
@@ -512,17 +541,17 @@ export default function ArchiveManagement() {
       title: t('common.col.licenseStart'),
       dataIndex: 'license_start',
       key: 'license_start',
-      width: 120,
+      width: 130,
       ellipsis: { showTitle: false },
-      render: (v?: string) => <Tooltip title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>,
+      render: (v?: string) => <Tooltip autoAdjustOverflow={false} placement="topLeft" title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>,
     },
     {
       title: t('common.col.licenseEnd'),
       dataIndex: 'license_end',
       key: 'license_end',
-      width: 120,
+      width: 130,
       ellipsis: { showTitle: false },
-      render: (v?: string) => <Tooltip title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>,
+      render: (v?: string) => <Tooltip autoAdjustOverflow={false} placement="topLeft" title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>,
     },
     {
       title: t('common.col.provider'),
@@ -532,7 +561,7 @@ export default function ArchiveManagement() {
       ellipsis: { showTitle: false },
       render: (names: string[]) => {
         const text = names.length ? names.join(', ') : '—'
-        return <Tooltip title={text}><span>{text}</span></Tooltip>
+        return <Tooltip autoAdjustOverflow={false} placement="topLeft" title={text}><span>{text}</span></Tooltip>
       },
     },
     {
@@ -547,30 +576,15 @@ export default function ArchiveManagement() {
               type="link"
               size="small"
               icon={<InfoCircleOutlined />}
-              onClick={() => navigate(`${resolveDetailPath(record.content_type)}/${record.id}`)}
+              onClick={() => navigate(`/trade/contents/${record.id}`)}
             />
           </Tooltip>
           {canOperate && (
             <Tooltip title={t('common.edit')}>
-              <Button
-                type="link"
-                size="small"
-                icon={<EditOutlined />}
-                onClick={() => navigate(`${resolveDetailPath(record.content_type)}/${record.id}?mode=edit`)}
-              />
+              <Button type="link" size="small" icon={<EditOutlined />}
+                onClick={() => { setEditContentId(record.id); setEditModalOpen(true) }} />
             </Tooltip>
           )}
-          <Tooltip title={t('common.tooltip.posterManagement')}>
-            <Button type="link" size="small" icon={<PictureOutlined />}
-              onClick={() => {
-                setPostersTarget({
-                  id: record.id,
-                  title: record.title,
-                  entityType: resolveEntityType(record.content_type),
-                })
-                setPostersOpen(true)
-              }} />
-          </Tooltip>
         </Space>
       ),
     },
@@ -592,6 +606,43 @@ export default function ArchiveManagement() {
         loading={loading}
       />
 
+      {/* 操作按钮区 */}
+      <Row justify="end" style={{ marginBottom: 16 }}>
+        <Col>
+          <Space>
+            <Button
+              icon={<DownloadOutlined />}
+              disabled={selectedRowKeys.length === 0}
+              onClick={async () => {
+                try {
+                  const blob = await exportArchivesExcel(selectedRowKeys)
+                  const url = window.URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  const timestamp = dayjs().format('YYYYMMDDHHmmss')
+                  a.download = `archives_${timestamp}.xlsx`
+                  document.body.appendChild(a)
+                  a.click()
+                  document.body.removeChild(a)
+                  window.URL.revokeObjectURL(url)
+                  void message.success(t('live.archive.msg.exportSuccess'))
+                } catch (err) {
+                  if (isHandledError(err)) return
+                  void message.error(t('live.archive.msg.exportFailed'))
+                }
+              }}
+            >
+              {t('common.btn.excelExport')}
+            </Button>
+            {canOperate && (
+              <Button icon={<UploadOutlined />} onClick={() => setImportModalOpen(true)}>
+                {t('common.btn.excelImport')}
+              </Button>
+            )}
+          </Space>
+        </Col>
+      </Row>
+
       {/* 列表区 */}
       <Table<ArchiveListItem>
         rowKey="id"
@@ -600,21 +651,33 @@ export default function ArchiveManagement() {
         dataSource={archives}
         loading={loading}
         scroll={{ x: 2200 }}
+        rowSelection={{
+          type: 'checkbox',
+          fixed: true,
+          selectedRowKeys,
+          onChange: (keys) => setSelectedRowKeys(keys as number[]),
+        }}
         pagination={tablePaginationProps}
         onChange={handleTableChange}
       />
 
-      {/* 海报管理弹框 */}
-      {postersTarget && (
-        <PostersModal
-          open={postersOpen}
-          entityType={postersTarget.entityType}
-          entityId={postersTarget.id}
-          entityName={postersTarget.title}
-          readOnly={!canOperate}
-          onClose={() => { setPostersOpen(false); setPostersTarget(null) }}
-        />
-      )}
+      {/* 导入弹框 */}
+      <ArchiveImportModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onSuccess={() => {
+          setSelectedRowKeys([])
+          void loadList(1, pagination.pageSize, filters)
+        }}
+      />
+
+      {/* 编辑内容弹窗 */}
+      <EditContentModal
+        open={editModalOpen}
+        contentId={editContentId}
+        onClose={() => { setEditModalOpen(false); setEditContentId(null) }}
+        onSuccess={() => { setEditModalOpen(false); setEditContentId(null); void loadList(pagination.current, pagination.pageSize, filters) }}
+      />
     </div>
   )
 }

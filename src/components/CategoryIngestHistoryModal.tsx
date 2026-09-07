@@ -70,9 +70,9 @@ export default function CategoryIngestHistoryModal({
 
   const columns: ColumnsType<IngestHistoryDetailItem> = [
     {
-      title: t('publish.ingestHistory.col.type') || '内容名称',
-      dataIndex: 'trigger_content_name',
-      key: 'trigger_content_name',
+      title: t('publish.ingestHistory.col.type'),
+      dataIndex: 'entity_name',
+      key: 'entity_name',
       width: 180,
       render: (v: string | null) => v || '—',
     },
@@ -94,8 +94,8 @@ export default function CategoryIngestHistoryModal({
       width: 100,
       align: 'center',
       render: (action: string) => {
-        if (action === 'REGIST') return <Tag color="blue">{action}</Tag>
-        if (action === 'UPDATE') return <Tag color="orange">{action}</Tag>
+        if (action === 'REGIST') return <Tag color="blue">{t('ingestHistory.action.regist')}</Tag>
+        if (action === 'UPDATE') return <Tag color="orange">{t('ingestHistory.action.update')}</Tag>
         return <Tag>{action}</Tag>
       },
     },
@@ -105,8 +105,8 @@ export default function CategoryIngestHistoryModal({
       width: 100,
       align: 'center',
       render: (status: string | null) => {
-        if (status === 'success') return <Tag color="success">{status}</Tag>
-        if (status === 'failure') return <Tag color="error">{status}</Tag>
+        if (status === 'success') return <Tag color="success">{t(`common.ingestStatus.${status}` as any)}</Tag>
+        if (status === 'failure') return <Tag color="error">{t(`common.ingestStatus.${status}` as any)}</Tag>
         return <Tag>{status || '—'}</Tag>
       },
     },

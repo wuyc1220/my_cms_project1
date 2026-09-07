@@ -70,9 +70,9 @@ export default function ObjectIngestHistoryModal({
 
   const columns: ColumnsType<IngestHistoryDetailItem> = [
     {
-      title: t('publish.ingestHistory.col.type') || '内容名称',
-      dataIndex: 'trigger_content_name',
-      key: 'trigger_content_name',
+      title: t('publish.ingestHistory.col.type'),
+      dataIndex: 'entity_name',
+      key: 'entity_name',
       width: 180,
       render: (v: string | null) => v || '—',
     },

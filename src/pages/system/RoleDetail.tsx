@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Button, Spin, Table, message } from 'antd'
+import { Button, Spin, message } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import { getRole } from '../../api/roles'
 import type { RoleListItem } from '../../types/user'
 import { useI18n } from '../../i18n/useI18n'
 import TrimInput from '../../components/TrimInput'
+import SectionTitle from '../../components/SectionTitle'
+import ProcessedHistoryTab from '../../components/ProcessedHistoryTab'
 
 export default function RoleDetail() {
   const { t } = useI18n()
@@ -66,20 +68,10 @@ export default function RoleDetail() {
               </div>
             </div>
             <div>
-              <h4 style={{ borderLeft: '3px solid #1890ff', paddingLeft: 8, marginBottom: 16 }}>{t('system.role.detailSection.history')}</h4>
-              <Table
-                size="small"
-                pagination={false}
-                dataSource={[]}
-                columns={[
-                  { title: t('system.role.detail.colProcessedAt'), dataIndex: 'processedAt', key: 'processedAt', align: 'center' },
-                  { title: t('system.role.detail.colProcessedBy'), dataIndex: 'processedBy', key: 'processedBy', align: 'center' },
-                  { title: t('system.role.detail.colProcessedType'), dataIndex: 'processedType', key: 'processedType', align: 'center' },
-                  { title: t('system.role.detail.colPreviousValue'), dataIndex: 'previousValue', key: 'previousValue', align: 'center' },
-                  { title: t('system.role.detail.colUpdatedValue'), dataIndex: 'updatedValue', key: 'updatedValue', align: 'center' },
-                ]}
-                locale={{ emptyText: t('common.noData') }}
-              />
+              <SectionTitle title={t('system.role.detailSection.history')} />
+              <div style={{ paddingLeft: 20 }}>
+                <ProcessedHistoryTab entityType="role" entityId={Number(id)} mode="full" />
+              </div>
             </div>
           </div>
         )}

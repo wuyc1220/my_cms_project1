@@ -20,7 +20,6 @@ import {
 import {
   DeleteOutlined,
   EditOutlined,
-  FileAddOutlined,
   InfoCircleOutlined,
   PlusOutlined,
 } from '@ant-design/icons'
@@ -98,10 +97,25 @@ export default function ProviderManagement() {
 
   const currentReviewLevel = Form.useWatch('review_level', itemForm)
 
-  const selectedLevelIndex = reviewLevelOptions.findIndex((o) => o.value === currentReviewLevel)
-  const showL1 = selectedLevelIndex >= 1
-  const showL2 = selectedLevelIndex >= 2
-  const showL3 = selectedLevelIndex >= 3
+  const currentLevel = currentReviewLevel || ''
+  // 根据审核级别代码(L1/L2/L3)决定显示哪些审批人字段
+  const showL1 = ['L1', 'L2', 'L3'].includes(currentLevel)  // 所有级别都需要 L1 审批人
+  const showL2 = ['L2', 'L3'].includes(currentLevel)         // L2 及以上需要 L2
+  const showL3 = currentLevel === 'L3'                        // L3 需要 L3
+
+  // 将审核层级原始值解析为字典 code：优先按 code 精确匹配，
+  // 兼容历史数据中按字典名称存储的值（字典改名后仍能按当前名称匹配），
+  // 均无法匹配时返回 undefined
+  const resolveReviewLevelCode = (raw: string | null | undefined): string | undefined => {
+    if (!raw) return undefined
+    const trimmed = raw.trim()
+    if (reviewLevelOptions.some((o) => o.value === trimmed)) return trimmed
+    return reviewLevelOptions.find((o) => o.label === trimmed)?.value
+  }
+
+  // 默认审核层级：优先取 code 为 L1（一层）的选项，避免按排序取到"免审"
+  const defaultReviewLevelCode = (): string | undefined =>
+    reviewLevelOptions.find((o) => o.value === 'L1')?.value ?? reviewLevelOptions[0]?.value
 
   // ─── 合同弹窗状态 ───────────────────────────────────────────────────────────────
 
@@ -147,12 +161,10 @@ export default function ProviderManagement() {
     fieldsCount: searchFields.length,
     onSearch: (values) => {
       setFilters(values)
-      setSelectedRowKeys([])
       void loadList(1, pagination.pageSize, values, sortField, sortOrder)
     },
     onReset: () => {
       setFilters({})
-      setSelectedRowKeys([])
       resetSort()
       void loadList(1, pagination.pageSize, {}, null, null)
     },
@@ -178,7 +190,7 @@ export default function ProviderManagement() {
 
         setUserOptions(
           users.items.map((u) => ({
-            label: u.display_name ?? u.username,
+            label: u.display_name ? `${u.display_name}(${u.username})` : u.username,
             value: u.id,
           })),
         )
@@ -197,6 +209,8 @@ export default function ProviderManagement() {
     nextSortField?: string | null,
     nextSortOrder?: 'ascend' | 'descend' | null,
   ) => {
+    // 数据集刷新后旧勾选失效，统一在此重置（覆盖新增/编辑/删除/搜索/翻页等全部刷新路径）
+    setSelectedRowKeys([])
     setLoading(true)
     try {
       const data = await getProviders({
@@ -224,12 +238,17 @@ export default function ProviderManagement() {
     itemForm.resetFields()
     try {
       const cfg = await getConfigs({ config_key: 'DEFAULT_REVIEW_LEVEL', page: 1, page_size: 1 })
-      const defaultLevelCode = cfg.items[0]?.config_value
-      if (defaultLevelCode) {
-        itemForm.setFieldsValue({ review_level: defaultLevelCode })
+      // 配置值统一解析为字典 code（兼容误存为名称的历史值），解析失败时降级为一层(L1)
+      const resolvedLevel = resolveReviewLevelCode(cfg.items[0]?.config_value) ?? defaultReviewLevelCode()
+      if (resolvedLevel) {
+        itemForm.setFieldsValue({ review_level: resolvedLevel })
       }
     } catch (err) {
       // 读取失败不影响弹框打开
+      const fallbackLevel = defaultReviewLevelCode()
+      if (fallbackLevel) {
+        itemForm.setFieldsValue({ review_level: fallbackLevel })
+      }
     }
     setModalOpen(true)
   }
@@ -237,9 +256,11 @@ export default function ProviderManagement() {
   const openEdit = (record: ProviderListItem) => {
     setEditRecord(record)
     itemForm.setFieldsValue({
+      provider_code: record.provider_code ?? undefined,
       name: record.name,
       country: record.country ?? undefined,
-      review_level: record.review_level ?? undefined,
+      // 兼容历史数据中按名称存储的审核层级，统一解析为字典 code
+      review_level: resolveReviewLevelCode(record.review_level) ?? record.review_level ?? undefined,
       l1_assignee_id: record.l1_assignee_id ?? undefined,
       l2_assignee_id: record.l2_assignee_id ?? undefined,
       l3_assignee_id: record.l3_assignee_id ?? undefined,
@@ -308,7 +329,6 @@ export default function ProviderManagement() {
     try {
       await deleteProvider(record.id)
       void message.success(t('common.msg.deleted'), 3)
-      setSelectedRowKeys(prev => prev.filter(id => id !== record.id))
       void loadList(pagination.current, pagination.pageSize, filters, sortField, sortOrder)
     } catch (err) {
       // 错误已由拦截器处理
@@ -320,7 +340,6 @@ export default function ProviderManagement() {
     try {
       await batchDeleteProviders({ ids: selectedRowKeys })
       void message.success(t('common.msg.deleteSuccess'), 3)
-      setSelectedRowKeys([])
       void loadList(1, pagination.pageSize, filters, sortField, sortOrder)
     } catch (err) {
       // 错误已由拦截器处理
@@ -411,7 +430,7 @@ export default function ProviderManagement() {
               <Button
                 type="link"
                 size="small"
-                icon={<FileAddOutlined />}
+                icon={<PlusOutlined />}
                 onClick={() => handleAddContract(record)}
               />
             </Tooltip>
@@ -509,7 +528,7 @@ export default function ProviderManagement() {
                 label={t('provider.form.code')}
                 rules={[formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}
               >
-                <TrimInput placeholder={t('provider.placeholder.code')} style={{ width: '100%' }} />
+                <TrimInput placeholder={t('provider.placeholder.code')} style={{ width: '100%' }} disabled={!!editRecord} />
               </Form.Item>
             </Col>
 

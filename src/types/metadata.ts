@@ -99,7 +99,7 @@ export interface ContentMetadataUpdate {
   metalayout?: string | null
 }
 
-/* ── Series 元数据 (SERIES / SEASON) ── */
+/* ── Series 元数据 (SERIES / SEASON_SERIES / SEASON) ── */
 
 export interface SeriesMetadataItem {
   id: number
@@ -126,6 +126,7 @@ export interface SeriesMetadataItem {
   end_duration?: number | null
   status_flag: boolean
   keywords?: string[] | null
+  metalayout?: string | null
   sections_info?: SectionInfoItem[] | null
   volume_count?: number | null
   series_type?: number | null
@@ -159,6 +160,7 @@ export interface SeriesMetadataCreate {
   end_duration?: number | null
   status_flag?: boolean | null
   keywords?: string[] | null
+  metalayout?: string | null
   sections_info?: SectionInfoItem[] | null
   volume_count?: number | null
   series_type?: number | null
@@ -189,6 +191,7 @@ export interface SeriesMetadataUpdate {
   end_duration?: number | null
   status_flag?: boolean | null
   keywords?: string[] | null
+  metalayout?: string | null
   sections_info?: SectionInfoItem[] | null
   volume_count?: number | null
   series_type?: number | null
@@ -385,14 +388,15 @@ export interface MovieItem {
   content_id: number
   file_name: string
   file_path?: string
+  relative_path?: string
   movie_type: string
   file_size: string
   sequence?: number | null
   audio_type: string
   screen_format: string
   closed_captioning: boolean
-  duration: string
-  definition: string
+  duration: string | null
+  definition: string | null
   mediaservice?: string | null
   encryption: boolean
   publish_flag: boolean

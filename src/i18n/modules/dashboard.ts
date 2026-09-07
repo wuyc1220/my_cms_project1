@@ -45,8 +45,6 @@ export const cnDashboard = {
   'dashboard.status.published': '已发布',
   'dashboard.status.publishFailed': '发布失败',
   'dashboard.status.noActiveLicense': '无有效授权',
-  'dashboard.status.expired': '内容已过期',
-  'dashboard.status.nearExpiry': '临近过期',
   'dashboard.status.closed': '已下架',
   'dashboard.status.none': '无状态',
 
@@ -81,7 +79,8 @@ export const cnDashboard = {
   // 内容类型
   'dashboard.contentType.MOVIE': '电影',
   'dashboard.contentType.SERIES': '剧集',
-  'dashboard.contentType.SEASON': '季',
+  'dashboard.contentType.SEASON_SERIES': '单季连续剧',
+  'dashboard.contentType.SEASON': '总季',
   'dashboard.contentType.EPISODE': '集',
   'dashboard.contentType.CHANNEL': '频道',
   'dashboard.contentType.SCHEDULE': '节目单',
@@ -104,6 +103,7 @@ export const cnDashboard = {
   'dashboard.loadFailed': '加载看板数据失败',
   'dashboard.loadConfigFailed': '加载配置失败',
   'dashboard.dragSortHint': '支持拖拽排序',
+  'dashboard.matrixEmptyHint': '当前无可显示的题材/状态，请在右上角自定义设置中勾选',
 
   // 分配任务
   'dashboard.assign': '分配',
@@ -129,14 +129,14 @@ export const enDashboard = {
   'placeholder.inDevelopment': 'This feature is under development. Stay tuned.',
 
   // Dashboard Modules
-  'dashboard.contentPublishedStats': 'Content Published Statistics',
-  'dashboard.contentStatusCount': 'Content Status Count',
-  'dashboard.genreStatusTable': 'Content Genre/Status Table',
-  'dashboard.assignedToMe': 'Assigned To Me',
+  'dashboard.contentPublishedStats': 'Vod Published Statistics',
+  'dashboard.contentStatusCount': 'Vod Status Count',
+  'dashboard.genreStatusTable': 'Vod Genre/Status Table',
+  'dashboard.assignedToMe': 'Assigned To Me Table',
   'dashboard.taskCompletionStats': 'Task Completion Statistics',
   'dashboard.taskStatusCount': 'Task Status Count',
   'dashboard.taskAssignedTable': 'Task Assigned/Status Table',
-  'dashboard.notAssignedTasks': 'Not Assigned Tasks',
+  'dashboard.notAssignedTasks': 'Not Assigned Tasks Table',
 
   // Buttons
   'dashboard.customize': 'Customize',
@@ -166,8 +166,6 @@ export const enDashboard = {
   'dashboard.status.published': 'Published',
   'dashboard.status.publishFailed': 'Publish Failed',
   'dashboard.status.noActiveLicense': 'No Active License',
-  'dashboard.status.expired': 'Expired',
-  'dashboard.status.nearExpiry': 'Near Expiry',
   'dashboard.status.closed': 'Closed',
   'dashboard.status.none': 'None',
 
@@ -202,6 +200,7 @@ export const enDashboard = {
   // Content Type
   'dashboard.contentType.MOVIE': 'Movie',
   'dashboard.contentType.SERIES': 'Series',
+  'dashboard.contentType.SEASON_SERIES': 'Season Series',
   'dashboard.contentType.SEASON': 'Season',
   'dashboard.contentType.EPISODE': 'Episode',
   'dashboard.contentType.CHANNEL': 'Channel',
@@ -225,6 +224,7 @@ export const enDashboard = {
   'dashboard.loadFailed': 'Failed to load dashboard data',
   'dashboard.loadConfigFailed': 'Failed to load configuration',
   'dashboard.dragSortHint': 'Drag to sort',
+  'dashboard.matrixEmptyHint': 'No genres/statuses to display. Please check items in the customize settings',
 
   // Assign Task
   'dashboard.assign': 'Assign',

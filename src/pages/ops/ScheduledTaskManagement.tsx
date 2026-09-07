@@ -2,12 +2,17 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Button,
+  Form,
+  Input,
   Modal,
+  Space,
   Table,
   Tag,
+  Tooltip,
   message,
 } from 'antd'
 import {
+  EditOutlined,
   InfoCircleOutlined,
   PlayCircleOutlined,
 } from '@ant-design/icons'
@@ -16,6 +21,7 @@ import dayjs from 'dayjs'
 import {
   getScheduledTasks,
   triggerScheduledTasks,
+  updateScheduledTaskCron,
 } from '../../api/scheduledTasks'
 import type {
   ScheduledTask,
@@ -46,6 +52,10 @@ export default function ScheduledTaskManagement() {
   const [loading, setLoading] = useState(false)
   const [triggering, setTriggering] = useState(false)
   const [selectedIds, setSelectedIds] = useState<number[]>([])
+  const [editModalVisible, setEditModalVisible] = useState(false)
+  const [editingTask, setEditingTask] = useState<ScheduledTask | null>(null)
+  const [editLoading, setEditLoading] = useState(false)
+  const [form] = Form.useForm()
   const filtersRef = useRef<ScheduledTaskQueryParams>({})
   const navigate = useNavigate()
 
@@ -138,6 +148,38 @@ export default function ScheduledTaskManagement() {
     navigate(`/ops/cron/${record.id}`)
   }
 
+  const handleEditCron = (record: ScheduledTask) => {
+    setEditingTask(record)
+    form.setFieldsValue({
+      cron_expression: record.cron_expression,
+    })
+    setEditModalVisible(true)
+  }
+
+  const handleEditSubmit = async () => {
+    if (!editingTask) return
+    
+    try {
+      const values = await form.validateFields()
+      setEditLoading(true)
+      await updateScheduledTaskCron(editingTask.id, values.cron_expression)
+      message.success(t('ops.scheduledTask.msgCronUpdateSuccess'), 3)
+      setEditModalVisible(false)
+      setEditingTask(null)
+      loadList(pagination.current, pagination.pageSize, filtersRef.current, sortField, sortOrder)
+    } catch (err: unknown) {
+      if (isHandledError(err)) return
+      message.error(t('ops.scheduledTask.msgCronUpdateFailed'), 3)
+    } finally {
+      setEditLoading(false)
+    }
+  }
+
+  const handleEditCancel = () => {
+    setEditModalVisible(false)
+    setEditingTask(null)
+  }
+
   const getTaskTypeLabel = (type: string) => {
     return t(`ops.scheduledTask.taskType.${type}` as 'ops.scheduledTask.taskType.ContentOffline') || type
   }
@@ -206,15 +248,29 @@ export default function ScheduledTaskManagement() {
     {
       title: t('common.action'),
       key: 'action',
-      width: 140,
+      width: 180,
       fixed: 'right',
       render: (_, record) => (
-        <Button
-          type="link"
-          size="small"
-          icon={<InfoCircleOutlined />}
-          onClick={() => handleViewDetail(record)}
-        />
+        <Space size={0}>
+          {hasOperationPermission && (
+            <Tooltip title={t('common.edit')}>
+              <Button
+                type="link"
+                size="small"
+                icon={<EditOutlined />}
+                onClick={() => handleEditCron(record)}
+              />
+            </Tooltip>
+          )}
+          <Tooltip title={t('common.detail')}>
+            <Button
+              type="link"
+              size="small"
+              icon={<InfoCircleOutlined />}
+              onClick={() => handleViewDetail(record)}
+            />
+          </Tooltip>
+        </Space>
       ),
     },
   ]
@@ -252,6 +308,34 @@ export default function ScheduledTaskManagement() {
             : undefined
         }
       />
+
+      {/* 编辑 Cron 表达式弹窗 */}
+      <Modal
+        title={t('ops.scheduledTask.editCronTitle')}
+        open={editModalVisible}
+        onOk={handleEditSubmit}
+        onCancel={handleEditCancel}
+        confirmLoading={editLoading}
+        destroyOnClose
+      >
+        <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
+          <Form.Item
+            name="cron_expression"
+            label={t('ops.scheduledTask.cronExpression')}
+            rules={[
+              { required: true, message: t('ops.scheduledTask.cronRequired') },
+            ]}
+          >
+            <Input
+              placeholder={t('ops.scheduledTask.cronPlaceholder')}
+              maxLength={100}
+            />
+          </Form.Item>
+          <div style={{ color: '#666', fontSize: 12, marginTop: -8 }}>
+            {t('ops.scheduledTask.cronHelp')}
+          </div>
+        </Form>
+      </Modal>
     </div>
   )
 }

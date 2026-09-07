@@ -52,11 +52,35 @@ export const exportSensitiveWordsExcel = async (ids: number[]): Promise<Blob> =>
   return response.data
 }
 
+export const downloadSensitiveWordImportTemplate = async (): Promise<Blob> => {
+  const response = await request.get('/sensitive-words/import-template', { responseType: 'blob' })
+  return response.data
+}
+
 export const importSensitiveWordsExcel = async (file: File): Promise<ImportResultPayload> => {
   const formData = new FormData()
   formData.append('file', file)
   const response = await request.post<ImportResultPayload>('/sensitive-words/import', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    // Excel 导入含逐行解析与写库，放宽超时（全局默认 30s 易在大文件时超时）
+    timeout: 120000,
   })
+  return response.data
+}
+
+// ── 敏感词预校验 ────────────────────────────────────────────
+
+export interface SensitiveCheckResult {
+  has_sensitive: boolean
+  matched_fields: string[]
+}
+
+/**
+ * 敏感词预校验：提交表单前先检查数据中是否包含敏感词。
+ * @param data 任意键值对（支持嵌套对象/数组），递归检查所有字符串值
+ * @returns 命中敏感词的字段路径列表
+ */
+export const checkSensitiveWords = async (data: Record<string, unknown>): Promise<SensitiveCheckResult> => {
+  const response = await request.post<SensitiveCheckResult>('/sensitive-words/check', { data })
   return response.data
 }

@@ -20,6 +20,7 @@ import {
   message,
 } from 'antd'
 import { CheckOutlined, CloseOutlined } from '@ant-design/icons'
+import dayjs from 'dayjs'
 import { getDictTree } from '../api/dicts'
 import { initiateReview, submitReview, getReviewStatus } from '../api/live'
 import { useI18n } from '../i18n/useI18n'
@@ -93,6 +94,7 @@ interface ReviewModalProps {
   contentName?: string
   mode: 'initiate' | 'review'
   readOnly?: boolean
+  hasInitiatedReview?: boolean  // 是否已提交审核
   onClose: () => void
   onSuccess?: () => void
 }
@@ -105,6 +107,7 @@ export default function ReviewModal({
   contentName: _contentName,
   mode,
   readOnly = false,
+  hasInitiatedReview = false,
   onClose,
   onSuccess,
 }: ReviewModalProps) {
@@ -226,6 +229,9 @@ export default function ReviewModal({
         onSuccess?.()
         onClose()
       } catch (err: unknown) {
+        // 表单校验失败（如描述超长）：字段下方已展示具体错误，不再额外弹提示
+        const validationError = err as { errorFields?: unknown[] }
+        if (validationError && Array.isArray(validationError.errorFields)) return
         if (isHandledError(err)) return
         // 从 axios 错误中提取后端返回的详细错误消息
         const axiosError = err as { response?: { data?: { detail?: string } }; message?: string }
@@ -245,6 +251,47 @@ export default function ReviewModal({
 
   /* ── 渲染发起审核模式 ──────────────────────────────────────────────────── */
   if (mode === 'initiate') {
+    // 可编辑模式：保持原有逻辑不变
+    if (!readOnly) {
+      return (
+        <Modal
+          open={open}
+          title={t('content.review.initiateTitle')}
+          onCancel={onClose}
+          footer={
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 16 }}>
+              <Button onClick={onClose} style={{ minWidth: 100 }}>
+                {t('common.cancel')}
+              </Button>
+              <Button
+                type="primary"
+                onClick={handleInitiate}
+                loading={submitting}
+                style={{ minWidth: 100 }}
+              >
+                {t('content.review.confirm')}
+              </Button>
+            </div>
+          }
+          destroyOnHidden
+          mask={{ closable: false }}
+          width={480}
+        >
+          <div style={{ padding: '20px 0', textAlign: 'center' }}>
+            <p style={{ fontSize: 16, marginBottom: 16 }}>
+              {t('content.review.confirmInitiate')}
+            </p>
+            <p style={{ color: '#666', fontSize: 14 }}>
+              {t('content.review.initiateDetail')}
+            </p>
+          </div>
+        </Modal>
+      )
+    }
+    
+    // 只读模式：根据是否已提交审核显示不同提示
+    const isInitiated = hasInitiatedReview || (reviewStatus && reviewStatus.final_status !== 'None')
+    
     return (
       <Modal
         open={open}
@@ -255,35 +302,77 @@ export default function ReviewModal({
             <Button onClick={onClose} style={{ minWidth: 100 }}>
               {t('common.cancel')}
             </Button>
-            {!readOnly && (
-              <Button
-                type="primary"
-                onClick={handleInitiate}
-                loading={submitting}
-                style={{ minWidth: 100 }}
-              >
-                {t('content.review.confirm')}
-              </Button>
-            )}
           </div>
         }
         destroyOnHidden
-        maskClosable={false}
+        mask={{ closable: false }}
         width={480}
       >
         <div style={{ padding: '20px 0', textAlign: 'center' }}>
-          <p style={{ fontSize: 16, marginBottom: 16 }}>
-            {t('content.review.confirmInitiate')}
-          </p>
-          <p style={{ color: '#666', fontSize: 14 }}>
-            {t('content.review.initiateDetail')}
-          </p>
+          {isInitiated ? (
+            <>
+              <p style={{ fontSize: 16, marginBottom: 16, color: '#52c41a' }}>
+                {t('content.review.alreadyInitiated')}
+              </p>
+              <p style={{ color: '#666', fontSize: 14 }}>
+                {t('content.review.alreadyInitiatedDetail')}
+              </p>
+            </>
+          ) : (
+            <>
+              <p style={{ fontSize: 16, marginBottom: 16 }}>
+                {t('content.review.notInitiated')}
+              </p>
+              <p style={{ color: '#666', fontSize: 14 }}>
+                {t('content.review.notInitiatedDetail')}
+              </p>
+            </>
+          )}
         </div>
       </Modal>
     )
   }
 
   /* ── 渲染审批操作模式 ──────────────────────────────────────────────────── */
+
+  // 免审自动通过场景：有 ContentProcess(Passed) 但无 ContentReview 记录，展示「无需审核」
+  // 注意：该分支必须独立于下方「未发起审核」判断，否则 final_status 为 AutoApproved 时
+  // 不会进入 final_status === 'None' 的外层条件，导致分支永远不可达
+  if (!statusLoading && reviewStatus && reviewStatus.final_status === 'AutoApproved') {
+    return (
+      <Modal
+        open={open}
+        title={t('content.review.title')}
+        onCancel={onClose}
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 16 }}>
+            <Button onClick={onClose} style={{ minWidth: 100 }}>
+              {t('common.cancel')}
+            </Button>
+          </div>
+        }
+        destroyOnHidden
+        mask={{ closable: false }}
+        width={480}
+      >
+        <div style={{ padding: '20px 0', textAlign: 'center' }}>
+          <p style={{ fontSize: 16, marginBottom: 16, color: '#52c41a' }}>
+            {t('content.review.autoApprovedTitle')}
+          </p>
+          <p style={{ color: '#666', fontSize: 14 }}>
+            {t('content.review.autoApprovedDetail')}
+          </p>
+          {reviewStatus.completed_at && (
+            <p style={{ color: '#999', fontSize: 12, marginTop: 8 }}>
+              {t('content.review.completedAt', {
+                time: dayjs(reviewStatus.completed_at).format('YYYY-MM-DD HH:mm:ss'),
+              })}
+            </p>
+          )}
+        </div>
+      </Modal>
+    )
+  }
 
   // 如果没有审核记录，显示提示并引导发起审核
   if (!statusLoading && (!reviewStatus || reviewStatus.final_status === 'None')) {
@@ -310,7 +399,7 @@ export default function ReviewModal({
           </div>
         }
         destroyOnHidden
-        maskClosable={false}
+        mask={{ closable: false }}
         width={480}
       >
         <div style={{ padding: '20px 0', textAlign: 'center' }}>
@@ -389,14 +478,14 @@ export default function ReviewModal({
     }
 
     const items: {
-      title: string
+      title: React.ReactNode
       description?: string
       status: 'finish' | 'error' | 'process' | 'wait'
       icon?: React.ReactNode
     }[] = []
 
     items.push({
-      title: t('content.review.initiator'),
+      title: <span style={{ whiteSpace: 'nowrap' }}>{t('content.review.initiator')}</span>,
       description: reviewStatus.initiated_by,
       status: 'finish',
       icon: finishIcon,
@@ -408,7 +497,7 @@ export default function ReviewModal({
       const s = reviewStatus.level_1_status
       const stepStatus = getStepStatus(s)
       items.push({
-        title: t('content.review.level1'),
+        title: <span style={{ whiteSpace: 'nowrap' }}>{t('content.review.level1')}</span>,
         description: reviewStatus.level_1_by
           ? `${reviewStatus.level_1_by} · ${STATUS_LABEL[s] ?? s}`
           : STATUS_LABEL[s] ?? t('content.review.pending'),
@@ -427,7 +516,7 @@ export default function ReviewModal({
       const s = reviewStatus.level_2_status
       const stepStatus = getStepStatus(s)
       items.push({
-        title: t('content.review.level2'),
+        title: <span style={{ whiteSpace: 'nowrap' }}>{t('content.review.level2')}</span>,
         description: reviewStatus.level_2_by
           ? `${reviewStatus.level_2_by} · ${STATUS_LABEL[s] ?? s}`
           : STATUS_LABEL[s] ?? t('content.review.pending'),
@@ -446,7 +535,7 @@ export default function ReviewModal({
       const s = reviewStatus.level_3_status
       const stepStatus = getStepStatus(s)
       items.push({
-        title: t('content.review.level3'),
+        title: <span style={{ whiteSpace: 'nowrap' }}>{t('content.review.level3')}</span>,
         description: reviewStatus.level_3_by
           ? `${reviewStatus.level_3_by} · ${STATUS_LABEL[s] ?? s}`
           : STATUS_LABEL[s] ?? t('content.review.pending'),
@@ -500,7 +589,7 @@ export default function ReviewModal({
       onCancel={onClose}
       footer={footer}
       destroyOnHidden
-      maskClosable={false}
+      mask={{ closable: false }}
       width={560}
     >
       <Spin spinning={dictLoading || statusLoading}>

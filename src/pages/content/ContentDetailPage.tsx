@@ -31,10 +31,12 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Button,
   Col,
+  Dropdown,
   Empty,
   Image,
   Modal,
   Row,
+  Space,
   Spin,
   Switch,
   Table,
@@ -47,6 +49,8 @@ import {
 import {
   CheckCircleFilled,
   CloseCircleFilled,
+  DownloadOutlined,
+  InfoCircleOutlined,
   LeftOutlined,
   MinusCircleOutlined,
   PictureOutlined,
@@ -55,45 +59,47 @@ import {
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
-import { getContent, getContentChildren, getContentLicenses, getAdjacentContent } from '../../api/contents'
+import { getContent, getContentChildren, getContentLicenses, getAdjacentContent, getNodeStatus } from '../../api/contents'
 import { getPictures } from '../../api/pictures'
 import { getMoviesByContentId } from '../../api/movies'
-import { getProcesses, getContentPackages, getContentCategories, getReviewStatus } from '../../api/live'
-import { getDictChildren } from '../../api/dicts'
+import { getProcesses } from '../../api/live'
+import { getDictChildren, getDictTree } from '../../api/dicts'
 import { getMetadataDetail } from '../../api/metadata'
-import { getPosterSizes } from '../../api/posterSizes'
-import { getCastRoleMaps } from '../../api/castRoleMap'
-import { getPublishes, getCurrentPublishPlan } from '../../api/publishes'
+import { getCurrentPublishPlan } from '../../api/publishes'
 import { getPublishedWorkflow } from '../../api/workflow'
 import { useI18n } from '../../i18n/useI18n'
 import PostersModal from '../../components/PostersModal'
 import { useReviewAndPublish } from '../../hooks/useReviewAndPublish'
 import { useTaskAssigneePermission } from '../../hooks/useTaskAssigneePermission'
+import { useNodeEditPermission } from '../../hooks/useNodeEditPermission'
 import { useAuthStore } from '../../stores/authStore'
 import MetadataModal from '../../components/MetadataModal'
 import MaterialsModal from '../../components/MaterialsModal'
 import CastRoleMapModal from '../../components/CastRoleMapModal'
 import CategoryLinkModal from '../../components/CategoryLinkModal'
+import PhysicalChannelModal from '../../components/PhysicalChannelModal'
 import ReviewModal from '../../components/ReviewModal'
 import PublishPlanModal from '../../components/PublishPlanModal'
 import PackageLinkModal from '../../components/PackageLinkModal'
 import EpisodeInjectModal from '../../components/EpisodeInjectModal'
 import SeasonSeriesInjectModal from '../../components/SeasonSeriesInjectModal'
 import type { ContentListItem, ContentLicenseRef, ContentTaskAssignees } from '../../types/content'
+import type { NodeStatus } from '../../api/contents'
+import type { DictNodeListItem } from '../../types/dict'
 import type { PictureItem } from '../../api/pictures'
 import type { MovieItem } from '../../types/metadata'
 import type { LanguageOption } from '../../types/i18n'
-import type { PosterSizeListItem } from '../../types/basic'
 import type { ProcessListItem } from '../../types/live'
 import type { MessageKey } from '../../i18n/messages'
 import type { WorkflowConfigDetail, WorkflowNodeConfigItem } from '../../types/workflow'
-import { isStartOrEndNode, normalizeNodeCode } from '../../utils/workflow'
+import { isStartOrEndNode, normalizeNodeCode, findPrevPendingNodeName } from '../../utils/workflow'
 import ProcessesTab from '../../components/ProcessesTab'
 import LicenseTab from '../../components/LicenseTab'
 import StatusLogsTab from '../../components/StatusLogsTab'
 import ProcessedHistoryTab from '../../components/ProcessedHistoryTab'
-import ObjectIngestHistoryModal from '../../components/ObjectIngestHistoryModal'
-import { isHandledError } from '../../api'
+import { getIngestHistories } from '../../api/ingestHistory'
+import type { IngestHistoryItem } from '../../types/ingestHistory'
+import api, { isHandledError } from '../../api'
 import { getClientPaginationProps } from '../../constants/pagination'
 
 
@@ -121,28 +127,35 @@ const INGEST_STAGES: { statusKey: string; labelKey: MessageKey }[] = [
 
 /**
  * 根据 content_type 返回对应的 entityType（用于 getPictures API）
- * MOVIE/EPISODE → "program" | SERIES/SEASON → "series" | CHANNEL → "channel"
+ * MOVIE/EPISODE → "program" | SERIES/SEASON_SERIES/SEASON → "series" | CHANNEL → "channel"
  */
 function getEntityType(contentType: string): string {
   if (contentType === 'MOVIE' || contentType === 'EPISODE') return 'program'
-  if (contentType === 'SERIES' || contentType === 'SEASON') return 'series'
+  if (contentType === 'SERIES' || contentType === 'SEASON_SERIES' || contentType === 'SEASON') return 'series'
   if (contentType === 'CHANNEL') return 'channel'
   return 'program'
 }
 
 /**
  * 根据 content_type 返回对应的流程配置所属模块
- * MOVIE/EPISODE → "PROGRAM" | SERIES/SEASON → "SEASON" | CHANNEL → "CHANNEL" | SCHEDULE → "SCHEDULE"
+ * MOVIE → "MOVIE" | EPISODE → "EPISODE" | SERIES/SEASON → "SEASON" | CHANNEL → "CHANNEL" | SCHEDULE → "SCHEDULE"
  */
 function getWorkflowBelonging(contentType: string, isArchived?: boolean): string {
-  // 归档内容使用 ARCHIVED 流程配置
-  if (isArchived) return 'ARCHIVED'
-  if (contentType === 'MOVIE' || contentType === 'EPISODE') return 'PROGRAM'
+  // 归档内容根据 content_type 使用不同的流程配置
+  if (isArchived) {
+    if (contentType === 'MOVIE') return 'ARCHIVED_MOVIE'
+    if (contentType === 'EPISODE') return 'ARCHIVED_EPISODE'
+    // 其他归档内容类型(如 SERIES/SEASON)暂时使用 ARCHIVED_MOVIE
+    return 'ARCHIVED_MOVIE'
+  }
+  if (contentType === 'MOVIE') return 'MOVIE'
+  if (contentType === 'EPISODE') return 'EPISODE'
   if (contentType === 'SERIES') return 'SERIES'
+  if (contentType === 'SEASON_SERIES') return 'SEASON_SERIES'
   if (contentType === 'SEASON') return 'SEASON'
   if (contentType === 'CHANNEL') return 'CHANNEL'
   if (contentType === 'SCHEDULE') return 'SCHEDULE'
-  return 'PROGRAM'
+  return 'MOVIE'
 }
 
 /**
@@ -252,6 +265,7 @@ function getOperationButtonKeys(contentType: string): { key: string; labelKey: M
       case 'EPISODE':
         return { key: 'Materials', labelKey: 'content.op.materials' }
       case 'SERIES':
+      case 'SEASON_SERIES':
         return { key: 'Episodes', labelKey: 'content.op.episodes' }
       case 'SEASON':
         return { key: 'SeasonSeries', labelKey: 'content.op.seasonSeries' }
@@ -263,7 +277,7 @@ function getOperationButtonKeys(contentType: string): { key: string; labelKey: M
   }
 
   const typeSpecific = getTypeSpecificButton()
-  const isVod = ['MOVIE', 'EPISODE', 'SERIES', 'SEASON'].includes(contentType)
+  const isVod = ['MOVIE', 'EPISODE', 'SERIES', 'SEASON_SERIES', 'SEASON'].includes(contentType)
 
   // 按列组织按钮（每列最多4个，保持对齐）
   // 第1列按钮
@@ -306,124 +320,20 @@ function getOperationButtonKeys(contentType: string): { key: string; labelKey: M
 
 type OpStatus = 'completed' | 'warning' | 'pending'
 
-interface OpStatusContext {
-  movies: MovieItem[]
-  pictures: PictureItem[]
-  licenses: ContentLicenseRef[]
-  content: ContentListItem | null
-  posterSizes: PosterSizeListItem[]
-  processes: ProcessListItem[]
-  hasCastRoleMap: boolean
-  hasPackage: boolean
-  hasCategory: boolean
-  hasReview: boolean
-  hasInitiatedReview: boolean
-  hasPublishPlan: boolean
-  episodes: ContentListItem[]
-  seasonSeries: ContentListItem[]
-}
-
-/**
- * 检测各操作入口的完成状态
- * - completed: 绿色对勾（已完成）
- * - warning: 黄色感叹号（部分完成/可选未完成）
- * - pending: 红色叉号（未完成/必填缺失）
- */
-function getOperationStatus(key: string, ctx: OpStatusContext): OpStatus {
-  const { pictures, content, posterSizes, processes, hasReview, episodes, seasonSeries } = ctx
-
-  // 标准化 key（支持中文按钮名称）
-  const normalizeKey = normalizeNodeCode
-
-  const normalizedKey = normalizeKey(key)
-
-  switch (normalizedKey) {
-    case 'Materials':
-      return processes.some((p: ProcessListItem) => p.node_code === 'Materials' && p.status === 'Passed') ? 'completed' : 'pending'
-
-    case 'Metadata':
-      // 使用流程表判断：有 Passed 状态的 Metadata 流程记录即算完成
-      return processes.some((p: ProcessListItem) => p.node_code === 'Metadata' && p.status === 'Passed') ? 'completed' : 'pending'
-
-    case 'Posters': {
-      if (!content?.content_type) return 'pending'
-      // 获取 entityType（与 PostersModal 保持一致）
-      const entityType = getEntityType(content.content_type)
-      // belongings 中存储的是首字母大写的 entityType，如 "Program", "Series", "Channel"
-      const belongingToMatch = entityType.charAt(0).toUpperCase() + entityType.slice(1)
-      // 筛选出当前内容类型适用的海报规格
-      const applicableSizes = posterSizes.filter((ps) =>
-        ps.belongings.some((b) => b === belongingToMatch || b === 'ALL')
-      )
-      // 筛选出必传的海报规格
-      const mandatorySizes = applicableSizes.filter((ps) => ps.mandatory)
-      if (mandatorySizes.length === 0) {
-        // 没有必传规格，有任意海报即算完成
-        return pictures.length > 0 ? 'completed' : 'warning'
-      }
-      // 检查所有必传规格是否都有海报
-      const mandatorySizeIds = new Set(mandatorySizes.map((ps) => ps.id))
-      const uploadedMandatoryCount = pictures.filter((p) =>
-        mandatorySizeIds.has(p.poster_size_id)
-      ).length
-      if (uploadedMandatoryCount === 0) {
-        return 'pending'
-      }
-      if (uploadedMandatoryCount < mandatorySizes.length) {
-        return 'warning'
-      }
-      return 'completed'
-    }
-
-    case 'CastRoleMap':
-      return processes.some((p: ProcessListItem) => p.node_code === 'CastRoleMap' && p.status === 'Passed') ? 'completed' : 'pending'
-
-    case 'Trailer':
-      return processes.some((p: ProcessListItem) => p.node_code === 'Trailer' && p.status === 'Passed') ? 'completed' : 'warning'
-
-    case 'MusicEffects':
-      return processes.some((p: ProcessListItem) => p.node_code === 'MusicEffects' && p.status === 'Passed') ? 'completed' : 'warning'
-
-    case 'Package':
-      return processes.some((p: ProcessListItem) => p.node_code === 'Package' && p.status === 'Passed') ? 'completed' : 'pending'
-
-    case 'Category':
-      return processes.some((p: ProcessListItem) => p.node_code === 'Category' && p.status === 'Passed') ? 'completed' : 'pending'
-
-    case 'ApplicationReview':
-      return processes.some((p: ProcessListItem) => p.node_code === 'ApplicationReview') ? 'completed' : 'pending'
-
-    case 'ContentReview':
-      return hasReview ? 'completed' : 'pending'
-
-    case 'PublishPlan':
-      return processes.some((p: ProcessListItem) => p.node_code === 'PublishPlan' && p.status === 'Passed') ? 'completed' : 'pending'
-
-    case 'Episodes':
-    case 'InjectSubContent':
-      if (content?.content_type === 'SERIES') {
-        return episodes && episodes.length > 0 ? 'completed' : 'pending'
-      } else if (content?.content_type === 'SEASON') {
-        return seasonSeries && seasonSeries.length > 0 ? 'completed' : 'pending'
-      } else if (content?.content_type === 'CHANNEL') {
-        return processes.some((p: ProcessListItem) => (p.node_code === 'InjectSubContent' || p.node_code === 'PhysicalChannel') && p.status === 'Passed') ? 'completed' : 'pending'
-      }
-      return 'pending'
-
-    case 'SeasonSeries':
-      return seasonSeries && seasonSeries.length > 0 ? 'completed' : 'pending'
-
-    case 'PhysicalChannel':
-      return processes.some((p: ProcessListItem) => (p.node_code === 'InjectSubContent' || p.node_code === 'PhysicalChannel') && p.status === 'Passed') ? 'completed' : 'pending'
-
-    case 'Start':
-    case 'End':
-      // Start/End 节点不参与校验，默认返回 completed
-      return 'completed'
-
-    default:
-      return 'pending'
-  }
+function getOperationStatus(
+  key: string,
+  nodeStatus: Record<string, NodeStatus>,
+  mandatory?: boolean
+): OpStatus {
+  const normalizedKey = normalizeNodeCode(key)
+  if (normalizedKey === 'Start' || normalizedKey === 'End') return 'completed'
+  const node = nodeStatus[normalizedKey]
+  if (!node) return 'pending'
+  if (node.completed) return 'completed'
+  // 非必填节点：未完成以 warning（可选未完成）展示
+  // 必填节点：warning 视为未完成（pending），前端按必填显示红叉，且阻塞后续节点
+  if (node.warning && mandatory === false) return 'warning'
+  return 'pending'
 }
 
 // ─── 节点可用性判断逻辑 ──────────────────────────────────────────────────────
@@ -509,7 +419,7 @@ function isNodeAvailable(
   nodes: WorkflowNodeConfigItem[],
   edges: Array<{ source: string | number; target: string | number }>,
   nodeBatchMap: Map<number, number>,  // 接收缓存的批次映射
-  getNodeStatus: (nodeCode: string) => 'completed' | 'warning' | 'pending'
+  getNodeStatus: (nodeCode: string, mandatory?: boolean) => 'completed' | 'warning' | 'pending'
 ): boolean {
   if (nodes.length === 0) return true
 
@@ -548,9 +458,10 @@ function isNodeAvailable(
 
   // 检查前置批次的所有必填节点是否都已完成（warning 表示可选未完成，不阻塞）
   for (const node of prevBatchNodes) {
-    const status = getNodeStatus(node.node_code)
-    // completed 为完成，warning 为可选未完成，只有 pending 才阻塞
-    if (status === 'pending') {
+    const status = getNodeStatus(node.node_code, node.mandatory)
+    // completed 为完成，warning 为可选未完成，只有必填节点的 pending 才阻塞
+    // mandatory: false 的节点（非必须环节），即使 pending 也不阻塞后续操作
+    if (status === 'pending' && node.mandatory !== false) {
       return false
     }
   }
@@ -761,6 +672,9 @@ export default function ContentDetailPage() {
   const [licensesLoading, setLicensesLoading] = useState(false)
   const [licensesLoaded, setLicensesLoaded]   = useState(false)
 
+  // 平台编码→名称映射
+  const [platformNameMap, setPlatformNameMap] = useState<Record<string, string>>({})
+
   // Media File Tab 数据
   const [movies, setMovies] = useState<MovieItem[]>([])
   const [moviesLoading, setMoviesLoading] = useState(false)
@@ -771,14 +685,9 @@ export default function ContentDetailPage() {
   const [dictOptionsLoaded, setDictOptionsLoaded] = useState(false)
 
   // 操作按钮状态检测所需数据
-  const [posterSizes, setPosterSizes] = useState<PosterSizeListItem[]>([])
-  const [hasCastRoleMap, setHasCastRoleMap] = useState(false)
-  const [hasPackage, setHasPackage] = useState(false)
-  const [hasCategory, setHasCategory] = useState(false)
-  const [hasReview, setHasReview] = useState(false)
   const [hasInitiatedReview, setHasInitiatedReview] = useState(false)
-  const [hasPublishPlan, setHasPublishPlan] = useState(false)
   const [processes, setProcesses] = useState<ProcessListItem[]>([])
+  const [nodeStatus, setNodeStatus] = useState<Record<string, NodeStatus>>({})
   const [statusDataVersion, setStatusDataVersion] = useState(0)
   const [opStatusLoading, setOpStatusLoading] = useState(true)
 
@@ -798,25 +707,36 @@ export default function ContentDetailPage() {
     const isReviewL3Assignee = taskAssignees.review_l3_assignee_id === user.id && taskAssignees.review_l3_task_status === 'Pending'
     return isArrangementAssignee || isReviewL1Assignee || isReviewL2Assignee || isReviewL3Assignee
   }, [taskAssignees, user?.id, isAdmin])
+  
+  // 节点级编辑权限判断
+  const nodeEditPermission = useNodeEditPermission({
+    taskAssignees,
+    isAdmin,
+    currentUserId: user?.id ?? null,
+    forceReadOnly: searchParams.get('mode') !== 'edit', // 非edit模式强制只读，包括Admin
+  })
+
+  // 判断指定节点是否只读（用于弹框）
+  const isNodeReadOnlyMemo = useCallback(
+    (nodeCode: string) => {
+      return nodeEditPermission.isNodeReadOnly(nodeCode)
+    },
+    [nodeEditPermission]
+  )
+  
+  // 全局readOnly：保留用于兼容，基于URL mode判断
+  // 具体节点的可编辑状态由 canEditNode 动态判断
   const readOnly = useMemo(() => {
     const modeIsEdit = searchParams.get('mode') === 'edit'
-      
-    // 如果 URL 不是 edit 模式,只读
     if (!modeIsEdit) return true
-      
-    // ADMIN 用户永远不受限制
     if (isAdmin) return false
-      
-    // 基于 arrangement 任务状态判断是否锁定
-    // 任务已完成(Completed) → 锁定(不允许编辑)
-    // 任务待处理/处理中(Pending/InProgress) → 允许编辑
-    const arrangementStatus = taskAssignees?.arrangement_task_status
-    if (arrangementStatus === 'Completed') {
-      return true
-    }
-      
     return false
-  }, [searchParams, isAdmin, taskAssignees?.arrangement_task_status])
+  }, [searchParams, isAdmin])
+
+  // 发布计划弹框的只读状态：使用节点级权限判断（与其他节点一致）
+  const publishPlanReadOnly = useMemo(() => {
+    return isNodeReadOnlyMemo('PublishPlan')
+  }, [isNodeReadOnlyMemo])
 
   // 操作按钮弹框状态
   const [postersOpen, setPostersOpen]           = useState(false)
@@ -825,11 +745,13 @@ export default function ContentDetailPage() {
   const [materialsFixedType, setMaterialsFixedType] = useState<number | undefined>(undefined)
   const [castRoleMapOpen, setCastRoleMapOpen] = useState(false)
   const [categoryLinkOpen, setCategoryLinkOpen] = useState(false)
+  const [physicalChannelOpen, setPhysicalChannelOpen] = useState(false)
   const [packageLinkOpen, setPackageLinkOpen] = useState(false)
 
   // 发布计划回显状态（独立于 useReviewAndPublish）
   const [localPublishPlanOpen, setLocalPublishPlanOpen] = useState(false)
   const [existingPlanTime, setExistingPlanTime] = useState<string | undefined>(undefined)
+  const [publishInfo, setPublishInfo] = useState<import('../../components/PublishPlanModal').PublishInfo | undefined>(undefined)
 
   const {
     reviewOpen,
@@ -842,15 +764,18 @@ export default function ContentDetailPage() {
   } = useReviewAndPublish({
     contentId: contentId,
     contentStatus: content?.status,
+    contentType: content?.content_type,
     licenses,
     hasInitiatedReview,
-    processes,  // ✅ 传递流程列表，用于判断审核状态
-    isTaskAssignee,  // 传递任务分配人权限
+    processes,
+    isTaskAssignee,
+    pageReadOnly: readOnly,
+    isNodeReadOnly: isNodeReadOnlyMemo,
     onSuccess: () => void refreshAfterOp(),
   })
 
   // 任务指派人权限校验
-  const { checkPermissionAsync, getNoPermissionMessage } = useTaskAssigneePermission({
+  const { checkPermissionAsync } = useTaskAssigneePermission({
     taskAssignees,
     contentId,
     enforceAssignment: true,
@@ -875,6 +800,33 @@ export default function ContentDetailPage() {
 
   // 注入历史弹框
   const [ingestHistoryModal, setIngestHistoryModal] = useState<{ open: boolean }>({ open: false })
+  const [ingestHistoryList, setIngestHistoryList] = useState<IngestHistoryItem[]>([])
+  const [ingestHistoryLoading, setIngestHistoryLoading] = useState(false)
+  const [ingestHistoryPagination, setIngestHistoryPagination] = useState({ current: 1, pageSize: 10, total: 0 })
+
+  const loadIngestHistory = async (page: number, pageSize: number) => {
+    if (!content) return
+    setIngestHistoryLoading(true)
+    try {
+      const res = await getIngestHistories({
+        entity_type: 'Content',
+        entity_id: content.id,
+        page,
+        page_size: pageSize,
+      })
+      setIngestHistoryList(res.items)
+      setIngestHistoryPagination({ current: page, pageSize, total: res.total })
+    } catch (err) {
+      if (!isHandledError(err)) void message.error(t('ingestHistory.msg.loadFailed'), 5)
+    } finally {
+      setIngestHistoryLoading(false)
+    }
+  }
+
+  const handleOpenIngestHistory = () => {
+    setIngestHistoryModal({ open: true })
+    void loadIngestHistory(1, 10)
+  }
 
   // ── 初始化：加载内容详情 + 许可证（用于顶部 Provider 展示）+ 海报 ──────
   useEffect(() => {
@@ -884,28 +836,37 @@ export default function ContentDetailPage() {
       return
     }
     void (async () => {
-      setLoading(true)
-      try {
-        const [detailResp, lics] = await Promise.all([
+        setLoading(true)
+        try {
+        // 元数据接口不依赖第一批返回数据，提前启动与第一批并行请求
+        const metadataPromise = getMetadataDetail(contentId)
+        const [detailResp, lics, dicts] = await Promise.all([
           getContent(contentId),
           getContentLicenses(contentId),
+          getDictTree(),
         ])
         // detailResp 是 ContentDetailResponse，包含 content 和 task_assignees
         const detail = detailResp.content
-        console.log('[DEBUG] Content detail:', detail)
-        console.log('[DEBUG] is_archived:', detail.is_archived)
-        console.log('[DEBUG] Task assignees:', detailResp.task_assignees)
         setContent(detail)
         setTaskAssignees(detailResp.task_assignees)
         setLicenses(lics)
         setLicensesLoaded(true)
 
-        // 并行加载第一批数据：海报 + 元数据 + 海报规格（页面展示所需）
+        // 构建平台编码→名称映射
+        const platformRoot = dicts.find((d: DictNodeListItem) => d.code === 'Platform')
+        const nameMap: Record<string, string> = {}
+        if (platformRoot?.children) {
+          platformRoot.children.forEach((c) => {
+            nameMap[c.code] = c.name
+          })
+        }
+        setPlatformNameMap(nameMap)
+
+        // 并行加载第二批数据：海报 + 元数据（元数据已提前启动，此处仅等结果）
         const entityType = getEntityType(detail.content_type)
-        const [picsResult, _metadataResult, sizesResult] = await Promise.allSettled([
+        const [picsResult, _metadataResult] = await Promise.allSettled([
           getPictures(entityType, contentId),
-          getMetadataDetail(contentId),
-          getPosterSizes({ page: 1, page_size: 200 }),
+          metadataPromise,
         ])
 
         // 处理海报结果
@@ -929,59 +890,44 @@ export default function ContentDetailPage() {
           ).then(blobs => setPicBlobUrls(blobs)).catch(() => {})
         }
 
-        // 处理海报规格结果
-        if (sizesResult.status === 'fulfilled') {
-          setPosterSizes(sizesResult.value.items)
-        } else {
-          setPosterSizes([])
-        }
-
         // 并行加载第二批数据：操作按钮状态检测数据（不阻塞主页面展示）
         const belonging = getWorkflowBelonging(detail.content_type, detail.is_archived)
         const isVodType = detail.content_type === 'MOVIE' || detail.content_type === 'EPISODE'
-        const isSeriesType = detail.content_type === 'SERIES'
+        const isSeriesType = detail.content_type === 'SERIES' || detail.content_type === 'SEASON_SERIES'
         const isSeasonType = detail.content_type === 'SEASON'
 
         Promise.allSettled([
-          getCastRoleMaps({ content_id: contentId, page: 1, page_size: 1 }),
-          getContentPackages(contentId),
-          getContentCategories(contentId),
           getProcesses(contentId),
-          getPublishes({ page: 1, page_size: 100 }),
+          getNodeStatus(contentId),
           isVodType ? getMoviesByContentId(contentId) : Promise.resolve({ items: [] }),
           getPublishedWorkflow(belonging),
-          getAdjacentContent(contentId),
+          (() => {
+            const source = searchParams.get('source')
+            const strategies: Record<string, { contentTypes?: string[]; isArchived?: boolean }> = {
+              content_management: {},
+              channel_management: { contentTypes: ['CHANNEL'] },
+              schedule_management: { contentTypes: ['SCHEDULE'] },
+              archive_management: { contentTypes: ['MOVIE', 'EPISODE', 'SERIES', 'SEASON', 'SEASON_SERIES'], isArchived: true },
+              vod_management: { contentTypes: ['MOVIE', 'EPISODE', 'SERIES', 'SEASON', 'SEASON_SERIES'] },
+            }
+            const strategy = source ? strategies[source] : undefined
+            if (strategy) {
+              return getAdjacentContent(contentId, strategy.contentTypes, strategy.isArchived)
+            } else {
+              return getAdjacentContent(contentId, [detail.content_type], detail.is_archived)
+            }
+          })(),
           isSeriesType ? getContentChildren(contentId, 'EPISODE') : Promise.resolve({ items: [] }),
-          isSeasonType ? getContentChildren(contentId, 'SERIES') : Promise.resolve({ items: [] }),
-        ]).then(([castResult, pkgResult, catResult, procResult, pubResult, movieResult, wfResult, adjResult, episodesResult, seasonSeriesResult]) => {
-          // 处理演员角色映射
-          if (castResult.status === 'fulfilled') {
-            setHasCastRoleMap(castResult.value.items.length > 0)
-          }
-          // 处理服务包
-          if (pkgResult.status === 'fulfilled') {
-            setHasPackage(pkgResult.value.length > 0)
-          }
-          // 处理栏目
-          if (catResult.status === 'fulfilled') {
-            setHasCategory(catResult.value.length > 0)
-          }
-          // 处理流程列表
+          isSeasonType ? getContentChildren(contentId, 'SEASON_SERIES') : Promise.resolve({ items: [] }),
+        ]).then(([procResult, nodeStatusResult, movieResult, wfResult, adjResult, episodesResult, seasonSeriesResult]) => {
           if (procResult.status === 'fulfilled') {
             const processesResp = procResult.value
             setProcesses(processesResp)
-            // ApplicationReview 节点表示申请已发起
             const applicationReview = processesResp.find((p) => p.node_code === 'ApplicationReview')
             setHasInitiatedReview(!!applicationReview)
-            // 注意：hasReview 状态在下面通过 getReviewStatus API 判断，不要在这里设置
           }
-          // 处理发布计划
-          if (pubResult.status === 'fulfilled') {
-            const completedStatuses = ['plan', 'publishing', 'success']
-            const contentPublishes = pubResult.value.items.filter(
-              (item: { entity_id: number; publish_status: string }) => item.entity_id === contentId && completedStatuses.includes(item.publish_status)
-            )
-            setHasPublishPlan(contentPublishes.length > 0)
+          if (nodeStatusResult.status === 'fulfilled') {
+            setNodeStatus(nodeStatusResult.value)
           }
           // 处理媒资文件
           if (movieResult.status === 'fulfilled') {
@@ -997,10 +943,20 @@ export default function ContentDetailPage() {
                 const edges = configJson.edges || []
                 setWorkflowEdges(edges)
                 const orderMap = edges.length > 0 ? calculateOrderFromEdges(configJson.nodes, edges) : new Map()
+                
                 const filteredNodes = configJson.nodes
                   .filter((n: WorkflowNodeConfigItem) => !isStartOrEndNode(n.node_code))
                   .map((n: WorkflowNodeConfigItem) => ({ ...n, sequence: orderMap.get(n.id) ?? n.sequence }))
-                  .sort((a: WorkflowNodeConfigItem, b: WorkflowNodeConfigItem) => a.sequence - b.sequence)
+                  .sort((a: WorkflowNodeConfigItem, b: WorkflowNodeConfigItem) => {
+                    // 优先按视觉位置排序（从上到下，从左到右）
+                    const yDiff = (a.position_y || 0) - (b.position_y || 0)
+                    if (Math.abs(yDiff) > 30) return yDiff // y 差距较大时按行排序
+                    const xDiff = (a.position_x || 0) - (b.position_x || 0)
+                    if (xDiff !== 0) return xDiff // 同一行按 x 排序
+                    // 如果位置相同，使用 sequence 排序
+                    return a.sequence - b.sequence
+                  })
+                
                 setWorkflowNodes(filteredNodes)
               }
             }
@@ -1038,61 +994,19 @@ export default function ContentDetailPage() {
     if (!contentId || isNaN(contentId) || statusDataVersion === 0) return
     void (async () => {
       try {
-        const castRoleMapsResp = await getCastRoleMaps({
-          content_id: contentId,
-          page: 1,
-          page_size: 1,
-        })
-        setHasCastRoleMap(castRoleMapsResp.items.length > 0)
+        const ns = await getNodeStatus(contentId)
+        setNodeStatus(ns)
       } catch (err) {
-        setHasCastRoleMap(false)
-      }
-
-      try {
-        const packagesResp = await getContentPackages(contentId)
-        setHasPackage(packagesResp.length > 0)
-      } catch (err) {
-        setHasPackage(false)
-      }
-
-      try {
-        const categoriesResp = await getContentCategories(contentId)
-        setHasCategory(categoriesResp.length > 0)
-      } catch (err) {
-        setHasCategory(false)
+        setNodeStatus({})
       }
 
       try {
         const processesResp = await getProcesses(contentId)
         setProcesses(processesResp)
-        // ApplicationReview 节点表示申请已发起
         const applicationReview = processesResp.find((p) => p.node_code === 'ApplicationReview')
         setHasInitiatedReview(!!applicationReview)
       } catch (err) {
         setHasInitiatedReview(false)
-      }
-
-      // 使用 getReviewStatus API 判断审核状态（根据 final_status 判断）
-      try {
-        const reviewStatus = await getReviewStatus(contentId)
-        // final_status 为 Passed 表示所有级别的审批都通过了
-        setHasReview(reviewStatus?.final_status === 'Passed')
-      } catch (err) {
-        setHasReview(false)
-      }
-
-      try {
-        const publishesResp = await getPublishes({
-          page: 1,
-          page_size: 100,
-        })
-        const completedStatuses = ['plan', 'publishing', 'success']
-        const contentPublishes = publishesResp.items.filter(
-          (item) => item.entity_id === contentId && completedStatuses.includes(item.publish_status)
-        )
-        setHasPublishPlan(contentPublishes.length > 0)
-      } catch (err) {
-        setHasPublishPlan(false)
       }
 
       try {
@@ -1125,7 +1039,7 @@ export default function ContentDetailPage() {
         }
       }
 
-      if (content?.content_type === 'SERIES') {
+      if (content?.content_type === 'SERIES' || content?.content_type === 'SEASON_SERIES') {
         try {
           const episodesResp = await getContentChildren(contentId, 'EPISODE')
           setEpisodes(episodesResp.items)
@@ -1137,7 +1051,7 @@ export default function ContentDetailPage() {
 
       if (content?.content_type === 'SEASON') {
         try {
-          const seasonSeriesResp = await getContentChildren(contentId, 'SERIES')
+          const seasonSeriesResp = await getContentChildren(contentId, 'SEASON_SERIES')
           setSeasonSeries(seasonSeriesResp.items)
           setSeasonSeriesLoaded(true)
         } catch (err) {
@@ -1151,6 +1065,15 @@ export default function ContentDetailPage() {
     try {
       const detailResp = await getContent(contentId)
       setContent(detailResp.content)
+      // 同步刷新任务指派人：审核提交会创建/改派 L1/L2/L3 审核任务，
+      // 不更新会导致 isTaskAssignee/页面只读态停留在操作前（此前只取 content 丢弃了 task_assignees）
+      setTaskAssignees(detailResp.task_assignees)
+    } catch (err) { /* ignore */ }
+    try {
+      // 许可证同样只在进页面时加载一次，包关联/审核等操作后需同步刷新（发布校验依赖）
+      const lics = await getContentLicenses(contentId)
+      setLicenses(lics)
+      setLicensesLoaded(true)
     } catch (err) { /* ignore */ }
     setStatusDataVersion((v) => v + 1)
   }, [contentId])
@@ -1225,7 +1148,7 @@ export default function ContentDetailPage() {
         setSeasonSeriesLoading(true)
         void (async () => {
           try {
-            const res = await getContentChildren(contentId, 'SERIES')
+            const res = await getContentChildren(contentId, 'SEASON_SERIES')
             setSeasonSeries(res.items)
             setSeasonSeriesLoaded(true)
           } catch (err) {
@@ -1249,15 +1172,19 @@ export default function ContentDetailPage() {
     async (key: string, label: string) => {
       const normalizedKey = normalizeNodeCode(key)
 
-      // ContentReview 节点特殊处理：不在这里拦截权限，让 handleReviewAction 处理
-      // 非审批人可以以只读模式查看审批流程
-      if (normalizedKey !== 'ContentReview' && !readOnly) {
-        const { allowed, message: permissionMsg } = await checkPermissionAsync(key)
-        if (!allowed) {
-          void message.error(permissionMsg || getNoPermissionMessage(key), 5)
-          return
-        }
+      // 审核与发布相关节点：仅有查看权限的账号（非任务分配人且非Admin）禁止操作，提示无权限
+      // 分配人即使节点临时只读（如审核进行中）仍可打开只读弹框查看进度
+      if (
+        !isTaskAssignee &&
+        ['ApplicationReview', 'ContentReview', 'Review', 'PublishPlan'].includes(normalizedKey)
+      ) {
+        message.warning(t('common.msg.noPermission'), 3)
+        return
       }
+
+      // 节点级权限判断：不可编辑时直接打开弹框（只读模式）
+      // 不再拦截，有数据权限的用户都可以查看节点内容
+      // 弹框的只读状态由 isNodeReadOnlyMemo(nodeCode) 控制
 
 
 
@@ -1296,31 +1223,60 @@ export default function ContentDetailPage() {
         setPackageLinkOpen(true)
         return
       }
+      if (normalizedKey === 'PhysicalChannel') {
+        setPhysicalChannelOpen(true)
+        return
+      }
       if (normalizedKey === 'InjectSubContent') {
-        if (content?.content_type === 'SERIES') {
+        if (content?.content_type === 'SERIES' || content?.content_type === 'SEASON_SERIES') {
           setEpisodeInjectOpen(true)
         } else if (content?.content_type === 'SEASON') {
           setSeasonSeriesInjectOpen(true)
+        } else if (content?.content_type === 'CHANNEL') {
+          setPhysicalChannelOpen(true)
         }
         return
       }
       if (normalizedKey === 'PublishPlan') {
-        // 获取当前发布计划时间用于回显
+        // 无论是只读还是可编辑模式，打开弹框前都获取当前计划信息用于回显
         if (contentId) {
           try {
             const plan = await getCurrentPublishPlan('Content', contentId)
             setExistingPlanTime(plan?.scheduled_time)
+            if (plan) {
+              setPublishInfo({
+                publish_status: plan.publish_status,
+                publish_time: plan.publish_time,
+                unpublish_time: plan.unpublish_time,
+                task_type: plan.task_type,
+                execution_mode: plan.execution_mode,
+                scheduled_time: plan.scheduled_time,
+              })
+            } else {
+              setPublishInfo(undefined)
+            }
           } catch {
             setExistingPlanTime(undefined)
+            setPublishInfo(undefined)
           }
         }
-        setLocalPublishPlanOpen(true)
+
+        if (isNodeReadOnlyMemo('PublishPlan')) {
+          // 只读模式：直接打开弹框
+          setLocalPublishPlanOpen(true)
+          return
+        }
+        // 可编辑模式：走 handleReviewAction 进行状态校验
+        const result = await handleReviewAction(key, label)
+        if (result) {
+          setLocalPublishPlanOpen(true)
+        }
         return
       }
       // ApplicationReview、ContentReview 统一走 handleReviewAction
       await handleReviewAction(key, label)
     },
-    [handleReviewAction, content?.content_type, checkPermissionAsync, readOnly, t, message],
+    [handleReviewAction, content?.content_type, checkPermissionAsync, readOnly, t, message, isNodeReadOnlyMemo, contentId, isTaskAssignee],
   )
 
   // ── 列定义（使用 t() 翻译列名）────────────────────────────────────────────
@@ -1343,39 +1299,110 @@ export default function ContentDetailPage() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   }
 
+  const handleMovieDownload = async (movie: MovieItem) => {
+    try {
+      const downloadUrl = movie.relative_path
+        ? `/api/v1/attachments/download?path=${encodeURIComponent(movie.relative_path)}&inline=1`
+        : movie.file_path
+      if (!downloadUrl) {
+        message.error(t('common.downloadFailed'))
+        return
+      }
+      const token = localStorage.getItem('token')
+      const resp = await fetch(downloadUrl, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!resp.ok) throw new Error(`${resp.status}`)
+      const blob = await resp.blob()
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = (movie.file_name || '').split('/').pop() || 'download'
+      link.click()
+      window.URL.revokeObjectURL(url)
+    } catch {
+      message.error(t('common.downloadFailed'))
+    }
+  }
+
   const mediaFileColumns: ColumnsType<MovieItem> = [
-    { title: t('content.col.fileName'),        dataIndex: 'file_name',        key: 'file_name',        ellipsis: true },
-    { title: t('content.col.type'),            dataIndex: 'movie_type',       key: 'movie_type',       width: 100, render: (v: number) => getMovieTypeLabel(v) },
+    { title: t('content.col.fileName'),        dataIndex: 'file_name',        key: 'file_name',        ellipsis: true, render: (v: string) => v?.split('/').pop() ?? v },
+    { title: t('content.col.type'),            dataIndex: 'movie_type',       key: 'movie_type',       width: 100, render: (v: number) => getMovieTypeLabel(v), ellipsis: true },
     { title: t('content.col.fileSize'),        dataIndex: 'file_size',        key: 'file_size',        width: 100, render: (v: number) => formatFileSize(v) },
-    { title: t('content.col.audioType'),       dataIndex: 'audio_type',       key: 'audio_type',       width: 110, render: (v?: string) => (v ? getDictName(dictOptions.AudioType ?? [], v) : '—') },
-    { title: t('content.col.screenFormat'),    dataIndex: 'screen_format',    key: 'screen_format',    width: 120, render: (v?: string) => (v ? getDictName(dictOptions.ScreenFormat ?? [], v) : '—') },
-    { title: t('content.col.closedCaptioning'),dataIndex: 'closed_captioning',key: 'closed_captioning',width: 130, render: (v: boolean) => <Switch checked={v} disabled size="small" /> },
+    { title: t('content.col.audioType'),       dataIndex: 'audio_type',       key: 'audio_type',       width: 110, render: (v?: string) => (v ? getDictName(dictOptions.AudioType ?? [], v) : '—'), ellipsis: true },
+    { title: t('content.col.screenFormat'),    dataIndex: 'screen_format',    key: 'screen_format',    width: 120, render: (v?: string) => (v ? getDictName(dictOptions.ScreenFormat ?? [], v) : '—'), ellipsis: true },
+    { title: t('content.col.closedCaptioning'),dataIndex: 'closed_captioning',key: 'closed_captioning',width: 130, render: (v: boolean) => <Switch checked={v} disabled size="small" />, ellipsis: true },
     { title: t('content.col.duration'),        dataIndex: 'duration',         key: 'duration',         width: 90 },
-    { title: t('content.col.definition'),      dataIndex: 'definition',       key: 'definition',       width: 100, render: (v: string) => getDictName(dictOptions.Definition ?? [], v) },
-    { title: t('content.col.encryption'),      dataIndex: 'encryption',       key: 'encryption',       width: 100, render: (v: boolean) => <Switch checked={v} disabled size="small" /> },
-    { title: t('content.col.publishFlag'),     dataIndex: 'publish_flag',     key: 'publish_flag',     width: 110, render: (v: boolean) => <Switch checked={v} disabled size="small" /> },
+    { title: t('content.col.definition'),      dataIndex: 'definition',       key: 'definition',       width: 100, render: (v?: string) => (v ? getDictName(dictOptions.Definition ?? [], v) : '—'), ellipsis: true },
+    { title: t('content.col.encryption'),      dataIndex: 'encryption',       key: 'encryption',       width: 100, render: (v: boolean) => <Switch checked={v} disabled size="small" />, ellipsis: true },
+    { title: t('content.col.publishFlag'),     dataIndex: 'publish_flag',     key: 'publish_flag',     width: 110, render: (v: boolean) => <Switch checked={v} disabled size="small" />, ellipsis: true },
     { title: t('content.col.deeplink'),        dataIndex: 'deeplink',         key: 'deeplink',         ellipsis: true },
-    { title: t('content.col.action'),          key: 'action',                                          width: 80, fixed: 'right' as const },
+    { title: t('content.col.action'),          key: 'action',                                          width: 100, fixed: 'right' as const, render: (_: unknown, record: MovieItem) => (
+      <Tooltip title={record.publish_flag ? t('common.download') : t('common.tooltip.downloadDisabledUnpublished')}>
+        <Button
+          type="link"
+          size="small"
+          icon={<DownloadOutlined />}
+          disabled={!record.publish_flag}
+          aria-label={record.publish_flag ? t('common.download') : t('common.tooltip.downloadDisabledUnpublished')}
+          onClick={() => void handleMovieDownload(record)}
+        />
+      </Tooltip>
+    ) },
   ]
 
   const episodeColumns: ColumnsType<ContentListItem> = [
-    { title: t('content.col.sequence'),    dataIndex: 'sequence',     key: 'sequence',     width: 90 },
+    { title: t('content.col.sequence'),    dataIndex: 'sequence',     key: 'sequence',     width: 120, align: 'center' as const, render: (v?: number) => v ?? '—' },
     { title: t('content.col.contentName'), dataIndex: 'title',        key: 'title',        ellipsis: true },
     { title: t('content.col.contentType'), dataIndex: 'content_type', key: 'content_type', width: 120, render: () => 'EPISODE' },
-    { title: t('content.col.startDateTime'),dataIndex: 'begin_time',  key: 'begin_time',   width: 160, render: (v?: string) => v ?? '—' },
-    { title: t('content.col.endDateTime'), dataIndex: 'end_time',     key: 'end_time',     width: 160, render: (v?: string) => v ?? '—' },
+    { title: t('content.col.startDateTime'),dataIndex: 'task_start_time', key: 'task_start_time', width: 160, render: (v?: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '—' },
+    { title: t('content.col.endDateTime'), dataIndex: 'task_end_time',  key: 'task_end_time',   width: 160, render: (v?: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '—' },
+    { title: t('content.col.assigned'),    dataIndex: 'assignee_name', key: 'assignee_name', width: 120, render: (v?: string) => v ?? '—' },
     { title: t('content.col.status'),      dataIndex: 'status',       key: 'status',       width: 120 },
-    { title: t('content.col.action'),      key: 'action',                                  width: 120, fixed: 'right' as const },
+    {
+      title: t('content.col.action'),
+      key: 'action',
+      width: 80,
+      fixed: 'right' as const,
+      render: (_: unknown, record: ContentListItem) => (
+        <Tooltip title={t('content.col.details')}>
+          <Button
+            type="link"
+            size="small"
+            icon={<InfoCircleOutlined />}
+            onClick={() => navigate(`/contents/${record.id}?mode=edit`)}
+          />
+        </Tooltip>
+      ),
+    },
   ]
 
   const seasonSeriesColumns: ColumnsType<ContentListItem> = [
-    { title: t('content.col.seriesOrdinal'),dataIndex: 'series_ordinal', key: 'series_ordinal', width: 110 },
+    { title: t('content.col.seriesOrdinal'),dataIndex: 'series_ordinal', key: 'series_ordinal', width: 120 },
     { title: t('content.col.contentName'), dataIndex: 'title',           key: 'title',          ellipsis: true },
-    { title: t('content.col.contentType'), dataIndex: 'content_type',    key: 'content_type',   width: 120, render: () => 'SERIES' },
-    { title: t('content.col.startDateTime'),dataIndex: 'begin_time',     key: 'begin_time',      width: 160, render: (v?: string) => v ?? '—' },
-    { title: t('content.col.endDateTime'), dataIndex: 'end_time',         key: 'end_time',         width: 160, render: (v?: string) => v ?? '—' },
+    // Content Type 显示行数据真实类型（SEASON 的子内容为单季 SEASON_SERIES），
+    // 不能写死 'SERIES'，否则单季被误显示为 SERIES
+    { title: t('content.col.contentType'), dataIndex: 'content_type',    key: 'content_type',   width: 140, render: (v: string) => v },
+    { title: t('content.col.startDateTime'),dataIndex: 'task_start_time', key: 'task_start_time', width: 160, render: (v?: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '—' },
+    { title: t('content.col.endDateTime'), dataIndex: 'task_end_time',    key: 'task_end_time',   width: 160, render: (v?: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '—' },
+    { title: t('content.col.assigned'),    dataIndex: 'assignee_name',  key: 'assignee_name',  width: 120, render: (v?: string) => v ?? '—' },
     { title: t('content.col.status'),      dataIndex: 'status',            key: 'status',          width: 120 },
-    { title: t('content.col.action'),      key: 'action',                                        width: 120, fixed: 'right' as const },
+    {
+      title: t('content.col.action'),
+      key: 'action',
+      width: 80,
+      fixed: 'right' as const,
+      render: (_: unknown, record: ContentListItem) => (
+        <Tooltip title={t('content.col.details')}>
+          <Button
+            type="link"
+            size="small"
+            icon={<InfoCircleOutlined />}
+            onClick={() => navigate(`/contents/${record.id}?mode=edit`)}
+          />
+        </Tooltip>
+      ),
+    },
   ]
 
   // ── Tab 项目构建 ──────────────────────────────────────────────────────────
@@ -1406,7 +1433,7 @@ export default function ContentDetailPage() {
 
     const extraTabs = []
     const clientPagination = getClientPaginationProps((n: number) => t('pagination.total', { n }))
-    if (contentType === 'MOVIE' || contentType === 'EPISODE') {
+    if ((contentType === 'MOVIE' || contentType === 'EPISODE') && !content?.is_archived) {
       extraTabs.push({
         key: 'mediaFile',
         label: t('content.tab.mediaFile'),
@@ -1422,7 +1449,7 @@ export default function ContentDetailPage() {
           />
         ),
       })
-    } else if (contentType === 'SERIES') {
+    } else if (contentType === 'SERIES' || contentType === 'SEASON_SERIES') {
       extraTabs.push({
         key: 'episodes',
         label: t('content.tab.episodes'),
@@ -1470,7 +1497,7 @@ export default function ContentDetailPage() {
   }
 
   if (!content) {
-    return <Empty description="未找到内容详情" style={{ marginTop: 80 }} />
+    return <Empty description={t('content.detail.notFound')} style={{ marginTop: 80 }} />
   }
 
   // 从许可证推导供应商名称（去重）
@@ -1478,6 +1505,8 @@ export default function ContentDetailPage() {
     licenses.length > 0
       ? [...new Set(licenses.map((l) => l.provider_name))].filter(Boolean).join(', ')
       : '—'
+
+
 
   // 操作按钮列表（优先从流程配置获取，否则使用默认配置）
   // 按照图2编排：非必须项（Trailer、MusicEffects）放在最后
@@ -1489,6 +1518,7 @@ export default function ContentDetailPage() {
           .map((node) => ({
             id: node.id,
             key: node.node_code,
+            // 直接使用工作流配置中的 node_name，不做 i18n 映射
             label: node.node_name,
             mandatory: node.mandatory,
             bindStatusBefore: node.bind_status_before,
@@ -1538,12 +1568,12 @@ export default function ContentDetailPage() {
         bindStatusAfter: undefined,
       }))
 
-  // 生命周期状态条 - 使用内容状态（不是流程节点状态）
-  // Schedule 和 Archived 工作流不存在待上传素材状态，需要过滤掉
+  // 生命周期状态条 - 使用内容状态(不是流程节点状态)
+  // Schedule 和 Archived 工作流不存在待上传素材状态,需要过滤掉
   const filteredStages = INGEST_STAGES.filter((s) => {
     if (s.statusKey === 'WaitingForMaterials') {
       const belonging = getWorkflowBelonging(content.content_type, content.is_archived)
-      return belonging !== 'SCHEDULE' && belonging !== 'ARCHIVED'
+      return belonging !== 'SCHEDULE' && belonging !== 'ARCHIVED_MOVIE' && belonging !== 'ARCHIVED_EPISODE'
     }
     return true
   })
@@ -1568,36 +1598,36 @@ export default function ContentDetailPage() {
             />
           </Col>
 
-          {/* 中：内容,width:80,display:"inline-block" */}
+          {/* 中：内容基本信息 */}
           <Col flex="1" style={{ minWidth: 0 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 4 }}>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
+              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                <Text type="secondary" style={{ fontSize: 12, width: 100, flexShrink: 0, whiteSpace: 'nowrap' }}>
                   {t('content.detail.contentName')}:{' '}
                 </Text>
-                <Text strong style={{ fontSize: 15 }}>{content.title}</Text>
+                <Text strong style={{ fontSize: 15, wordBreak: 'break-all' }}>{content.title}</Text>
               </div>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
+              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                <Text type="secondary" style={{ fontSize: 12, width: 100, flexShrink: 0, whiteSpace: 'nowrap' }}>
                   {t('content.detail.contentType')}:{' '}
                 </Text>
                 <Tag color="blue">{content.content_type}</Tag>
               </div>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
+              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                <Text type="secondary" style={{ fontSize: 12, width: 100, flexShrink: 0, whiteSpace: 'nowrap' }}>
                   {t('content.detail.provider')}:{' '}
                 </Text>
-                <Text>{providerNames}</Text>
+                <Text style={{ wordBreak: 'break-all' }}>{providerNames}</Text>
               </div>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
+              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                <Text type="secondary" style={{ fontSize: 12, width: 100, flexShrink: 0, whiteSpace: 'nowrap' }}>
                   {t('content.detail.platform')}:{' '}
                 </Text>
                 {licenses.length > 0 && licenses[0].platforms && licenses[0].platforms.length > 0 ? (
                   <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
                     {licenses[0].platforms.map((p) => (
                       <Tag key={p.platform} style={{ fontSize: 11 }}>
-                        {p.platform}
+                        {platformNameMap[p.platform] || p.platform}
                       </Tag>
                     ))}
                   </span>
@@ -1605,8 +1635,14 @@ export default function ContentDetailPage() {
                   <Text type="secondary">—</Text>
                 )}
               </div>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
+              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                <Text type="secondary" style={{ fontSize: 12, width: 100, flexShrink: 0, whiteSpace: 'nowrap' }}>
+                  {t('content.detail.genre')}:{' '}
+                </Text>
+                <Text style={{ wordBreak: 'break-all' }}>{content.genre_name || '—'}</Text>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                <Text type="secondary" style={{ fontSize: 12, width: 100, flexShrink: 0, whiteSpace: 'nowrap' }}>
                   {t('content.detail.ingestStatus')}:{' '}
                 </Text>
                 <Tag
@@ -1624,46 +1660,12 @@ export default function ContentDetailPage() {
                               : 'blue'
                   }
                   style={{ fontSize: 12, cursor: 'pointer' }}
-                  onClick={() => setIngestHistoryModal({ open: true })}
+                  onClick={handleOpenIngestHistory}
                 >
                   {content.status}
                 </Tag>
               </div>
-              {content.genre_name && (
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
-                    {t('content.detail.genre')}:{' '}
-                  </Text>
-                  <Text>{content.genre_name}</Text>
-                </div>
-              )}
-              {content.created_at && (
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
-                    {t('content.detail.created')}:{' '}
-                  </Text>
-                  <Text>{dayjs(content.created_at).format('YYYY-MM-DD')}</Text>
-                </div>
-              )}
-              {content.parent_title && (
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
-                    {content.content_type === 'SCHEDULE'
-                      ? t('content.detail.channel')
-                      : t('content.detail.parent')}
-                    :{' '}
-                  </Text>
-                  <Text>{content.parent_title}</Text>
-                </div>
-              )}
-              {content.sequence != null && (
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
-                    {t('content.detail.sequence')}:{' '}
-                  </Text>
-                  <Text>{content.sequence}</Text>
-                </div>
-              )}
+
             </div>
           </Col>
 
@@ -1694,48 +1696,14 @@ export default function ContentDetailPage() {
                 const key = btn.key
                 const label = btn.label
                 const isMandatory = btn.mandatory !== false // 默认为必填
-                const status = getOperationStatus(key, {
-                  movies,
-                  pictures,
-                  licenses,
-                  content,
-                  posterSizes,
-                  processes,
-                  hasCastRoleMap,
-                  hasPackage,
-                  hasCategory,
-                  hasReview,
-                  hasInitiatedReview,
-                  hasPublishPlan,
-                  episodes,
-                  seasonSeries,
-                })
+                const status = getOperationStatus(key, nodeStatus, btn.mandatory)
                 // 判断节点是否可用（前置节点是否全部完成）
                 const available = isNodeAvailable(
                   btn.id,
                   workflowNodes,
                   workflowEdges,
                   nodeBatchMap,  // 传入缓存的批次映射
-                  (nodeCode) => {
-                    // 根据 nodeCode 获取节点完成状态
-                    const opStatus = getOperationStatus(nodeCode, {
-                      movies,
-                      pictures,
-                      licenses,
-                      content,
-                      posterSizes,
-                      processes,
-                      hasCastRoleMap,
-                      hasPackage,
-                      hasCategory,
-                      hasReview,
-                      hasInitiatedReview,
-                      hasPublishPlan,
-                      episodes,
-                      seasonSeries,
-                    })
-                    return opStatus
-                  }
+                  (nodeCode, mandatory) => getOperationStatus(nodeCode, nodeStatus, mandatory)
                 )
                 return (
                   <div
@@ -1748,52 +1716,14 @@ export default function ContentDetailPage() {
                       userSelect: 'none',
                     }}
                     onClick={() => {
-                      if (readOnly || available) {
-                        handleOpButtonClick(key, label)
-                      } else {
-                        const orderMap = calculateOrderFromEdges(workflowNodes, workflowEdges)
-                        const sortedNodes = [...workflowNodes]
-                          .filter((n) => n.node_type !== 'parallel_box' && !isStartOrEndNode(n.node_code))
-                          .sort((a, b) => {
-                            const orderA = orderMap.get(a.id)
-                            const orderB = orderMap.get(b.id)
-                            if (orderA !== undefined && orderB !== undefined) {
-                              return orderA - orderB
-                            }
-                            return a.sequence - b.sequence
-                          })
-                        // 使用缓存的 nodeBatchMap，不再重复调用 analyzeNodeBatches
-                        const currentBatch = nodeBatchMap.get(btn.id)
-                        const ctx = {
-                          movies,
-                          pictures,
-                          licenses,
-                          content,
-                          posterSizes,
-                          processes,
-                          hasCastRoleMap,
-                          hasPackage,
-                          hasCategory,
-                          hasReview,
-                          hasInitiatedReview,
-                          hasPublishPlan,
-                          episodes,
-                          seasonSeries,
-                        }
-                        const prevBatchNodes = sortedNodes.filter(
-                          (node) => {
-                            const batch = nodeBatchMap.get(node.id)
-                            return batch !== undefined && currentBatch !== undefined && batch < currentBatch
-                          }
-                        )
-                        const firstPendingNode = prevBatchNodes.find(
-                          (node) => getOperationStatus(node.node_code, ctx) === 'pending'
-                        )
-                        if (firstPendingNode) {
-                          const pendingNodeName = firstPendingNode.node_name
-                          message.warning(t('content.detail.prevNodeIncomplete', { name: pendingNodeName }), 3)
-                        }
+                      // 有数据权限就可以点击查看（只读模式），不检查前置节点
+                      // 编辑模式需要检查前置节点是否全部完成
+                      if (!isNodeReadOnlyMemo(key) && !available) {
+                        const pendingName = findPrevPendingNodeName(btn.id, workflowNodes, workflowEdges, nodeBatchMap, (nodeCode, mandatory) => getOperationStatus(nodeCode, nodeStatus, mandatory))
+                        message.warning(t('content.detail.prevNodeIncomplete', { name: pendingName ?? '' }), 3)
+                        return
                       }
+                      handleOpButtonClick(key, label)
                     }}
                   >
                     {status === 'completed' && (
@@ -1828,13 +1758,21 @@ export default function ContentDetailPage() {
 
           {/* 最右：记录导航 */}
           <Col flex="0 0 auto" style={{ display: 'flex', alignItems: 'flex-start', paddingTop: 4 }}>
-            <Button.Group>
+            <Space.Compact>
               <Tooltip title={t('content.detail.prevRecord')}>
                 <Button
                   icon={<LeftOutlined />}
                   disabled={!adjacentPrevId}
                   onClick={() => {
-                    if (adjacentPrevId) navigate(`/contents/${adjacentPrevId}`)
+                    if (adjacentPrevId) {
+                      const params = new URLSearchParams()
+                      const source = searchParams.get('source')
+                      const mode = searchParams.get('mode')
+                      if (source) params.set('source', source)
+                      if (mode) params.set('mode', mode)
+                      const qs = params.toString()
+                      navigate(`/contents/${adjacentPrevId}${qs ? `?${qs}` : ''}`)
+                    }
                   }}
                 />
               </Tooltip>
@@ -1843,11 +1781,19 @@ export default function ContentDetailPage() {
                   icon={<RightOutlined />}
                   disabled={!adjacentNextId}
                   onClick={() => {
-                    if (adjacentNextId) navigate(`/contents/${adjacentNextId}`)
+                    if (adjacentNextId) {
+                      const params = new URLSearchParams()
+                      const source = searchParams.get('source')
+                      const mode = searchParams.get('mode')
+                      if (source) params.set('source', source)
+                      if (mode) params.set('mode', mode)
+                      const qs = params.toString()
+                      navigate(`/contents/${adjacentNextId}${qs ? `?${qs}` : ''}`)
+                    }
                   }}
                 />
               </Tooltip>
-            </Button.Group>
+            </Space.Compact>
           </Col>
         </Row>
       </div>
@@ -1876,7 +1822,7 @@ export default function ContentDetailPage() {
         entityName={content.title}
         onClose={() => {
           setPostersOpen(false)
-          setStatusDataVersion((v) => v + 1)
+          void refreshAfterOp()  // 刷新内容详情和状态
           void (async () => {
             const entityType = getEntityType(content.content_type)
             const pics = await getPictures(entityType, content.id)
@@ -1900,7 +1846,7 @@ export default function ContentDetailPage() {
             setPicBlobUrls(blobs)
           })()
         }}
-        readOnly={readOnly}
+        readOnly={isNodeReadOnlyMemo('Posters')}
       />
 
       {/* Metadata：元数据编辑弹框 */}
@@ -1911,7 +1857,7 @@ export default function ContentDetailPage() {
         contentName={content.title}
         onClose={() => { setMetadataOpen(false) }}
         onSuccess={() => { setMetadataOpen(false); void refreshAfterOp() }}
-        readOnly={readOnly}
+        readOnly={isNodeReadOnlyMemo('Metadata')}
         sourceScheduleId={content.source_schedule_id}
       />
 
@@ -1927,7 +1873,7 @@ export default function ContentDetailPage() {
           setStatusDataVersion((v) => v + 1)
         }}
         fixedType={materialsFixedType}
-        readOnly={readOnly}
+        readOnly={isNodeReadOnlyMemo('Materials')}
         disableMovieType={content.is_archived === true}
       />
 
@@ -1937,8 +1883,9 @@ export default function ContentDetailPage() {
         contentId={contentId}
         contentName={content?.title}
         contentType={content?.content_type}
-        readOnly={readOnly}
+        readOnly={isNodeReadOnlyMemo('CastRoleMap')}
         onClose={() => { setCastRoleMapOpen(false); setStatusDataVersion((v) => v + 1) }}
+        onSuccess={() => { void refreshAfterOp() }}
       />
 
       {/* Category：栏目关联弹框 */}
@@ -1946,9 +1893,19 @@ export default function ContentDetailPage() {
         open={categoryLinkOpen}
         contentId={contentId}
         contentName={content?.title ?? ''}
-        readOnly={readOnly}
+        readOnly={isNodeReadOnlyMemo('Category')}
         onClose={() => setCategoryLinkOpen(false)}
         onSuccess={() => { setCategoryLinkOpen(false); void refreshAfterOp() }}
+      />
+
+      {/* PhysicalChannel：物理频道弹框 */}
+      <PhysicalChannelModal
+        open={physicalChannelOpen}
+        channelId={contentId}
+        readOnly={isNodeReadOnlyMemo('PhysicalChannel')}
+        onClose={() => setPhysicalChannelOpen(false)}
+        // onSuccess 仅刷新父页数据；新增成功后弹框内部自动关闭，删除后停留弹框内
+        onSuccess={() => void refreshAfterOp()}
       />
 
       {/* Review：审核弹框 */}
@@ -1958,6 +1915,7 @@ export default function ContentDetailPage() {
         contentName={content?.title}
         mode={reviewMode}
         readOnly={reviewReadOnly}
+        hasInitiatedReview={hasInitiatedReview}
         onClose={closeReview}
         onSuccess={() => { closeReview(); void refreshAfterOp() }}
       />
@@ -1969,9 +1927,11 @@ export default function ContentDetailPage() {
         contentName={content?.title}
         contentType={content?.content_type}
         initialScheduledTime={existingPlanTime}
-        readOnly={readOnly}
-        onClose={() => { setLocalPublishPlanOpen(false); setExistingPlanTime(undefined) }}
-        onSuccess={() => { setLocalPublishPlanOpen(false); setExistingPlanTime(undefined); void refreshAfterOp() }}
+        publishInfo={publishInfo}
+        hasPublishHistory={!!publishInfo}
+        readOnly={publishPlanReadOnly}
+        onClose={() => { setLocalPublishPlanOpen(false); setExistingPlanTime(undefined); setPublishInfo(undefined) }}
+        onSuccess={() => { setLocalPublishPlanOpen(false); setExistingPlanTime(undefined); setPublishInfo(undefined); void refreshAfterOp() }}
       />
 
       {/* Package：服务包关联弹框 */}
@@ -1979,13 +1939,13 @@ export default function ContentDetailPage() {
         open={packageLinkOpen}
         contentId={contentId}
         contentName={content?.title ?? ''}
-        readOnly={readOnly}
+        readOnly={isNodeReadOnlyMemo('Package')}
         onClose={() => setPackageLinkOpen(false)}
         onSuccess={() => { setPackageLinkOpen(false); void refreshAfterOp() }}
       />
 
       {/* Episode 注入弹框 */}
-      {content?.content_type === 'SERIES' && (
+      {(content?.content_type === 'SERIES' || content?.content_type === 'SEASON_SERIES') && (
         <EpisodeInjectModal
           open={episodeInjectOpen}
           parentId={contentId}
@@ -1994,9 +1954,9 @@ export default function ContentDetailPage() {
           onSuccess={() => {
             setEpisodeInjectOpen(false)  // ✅ 关闭弹框
             setEpisodesLoaded(false)
-            setStatusDataVersion((v) => v + 1)
+            void refreshAfterOp()
           }}
-          readOnly={readOnly}
+          readOnly={isNodeReadOnlyMemo('InjectSubContent')}
         />
       )}
 
@@ -2011,8 +1971,9 @@ export default function ContentDetailPage() {
             setSeasonSeriesInjectOpen(false)  // ✅ 关闭弹框
             // 刷新底部 Tab 数据
             setSeasonSeriesLoaded(false)
+            void refreshAfterOp()
           }}
-          readOnly={readOnly}
+          readOnly={isNodeReadOnlyMemo('InjectSubContent')}
         />
       )}
 
@@ -2045,15 +2006,126 @@ export default function ContentDetailPage() {
       </Modal>
 
       {/* 注入历史弹框 */}
-      {content && (
-        <ObjectIngestHistoryModal
-          open={ingestHistoryModal.open}
-          entityType="Content"
-          entityId={content.id}
-          entityName={content.title || `Content #${content.id}`}
-          onClose={() => setIngestHistoryModal({ open: false })}
+      <Modal
+        title={`${content?.title || ''} - ${t('ingestHistory.title')}`}
+        open={ingestHistoryModal.open}
+        onCancel={() => setIngestHistoryModal({ open: false })}
+        width={1000}
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <Button type="primary" onClick={() => setIngestHistoryModal({ open: false })}>
+              {t('ingestHistory.btn.close')}
+            </Button>
+          </div>
+        }
+      >
+        <Table
+          rowKey="id"
+          dataSource={ingestHistoryList}
+          loading={ingestHistoryLoading}
+          size="small"
+          pagination={{
+            current: ingestHistoryPagination.current,
+            pageSize: ingestHistoryPagination.pageSize,
+            total: ingestHistoryPagination.total,
+            showSizeChanger: true,
+            showQuickJumper: true,
+            showTotal: (n: number) => t('pagination.total', { n }),
+            onChange: (page, pageSize) => void loadIngestHistory(page, pageSize),
+          }}
+          columns={[
+            { title: t('publish.ingestHistory.col.type'), dataIndex: 'entity_name', key: 'entity_name' },
+            {
+              title: t('publish.ingestHistory.col.createDate'),
+              dataIndex: 'create_date',
+              key: 'create_date',
+              render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
+            },
+            {
+              title: t('publish.ingestHistory.col.sendDate'),
+              dataIndex: 'send_date',
+              key: 'send_date',
+              render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
+            },
+            {
+              title: t('publish.ingestHistory.col.endDate'),
+              dataIndex: 'end_date',
+              key: 'end_date',
+              render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
+            },
+            {
+              title: t('publish.ingestHistory.col.status'),
+              dataIndex: 'status',
+              key: 'status',
+              render: (v) => (
+                <Tag color={v === 'success' ? 'success' : v === 'failure' ? 'error' : 'default'}>
+                  {v === 'success' ? t('publish.ingestHistory.status.success') : v === 'failure' ? t('publish.ingestHistory.status.failure') : v}
+                </Tag>
+              ),
+            },
+            {
+              title: t('publish.ingestHistory.col.getXml'),
+              key: 'getXml',
+              align: 'center',
+              render: (_, record: IngestHistoryItem) => {
+                const handleDownload = async (url: string, filename: string) => {
+                  try {
+                    const requestUrl = url.startsWith('/api/v1') ? url.slice(7) : url
+                    const response = await api.get(requestUrl, { responseType: 'blob' })
+                    const blob = new Blob([response.data])
+                    const link = document.createElement('a')
+                    link.href = URL.createObjectURL(blob)
+                    link.download = filename
+                    document.body.appendChild(link)
+                    link.click()
+                    document.body.removeChild(link)
+                    URL.revokeObjectURL(link.href)
+                  } catch (err) {
+                    if (!isHandledError(err)) message.error(t('ingestHistory.msg.loadFailed'))
+                  }
+                }
+                const menuItems = []
+                if (record.ingest_xml_url) {
+                  menuItems.push({
+                    key: 'ingest',
+                    label: t('publish.ingestHistory.xml.ingest'),
+                    onClick: () => {
+                      const ingestUrl = record.ingest_xml_url!
+                      const urlParams = new URLSearchParams(ingestUrl.split('?')[1])
+                      const path = urlParams.get('path') || ''
+                      const filename = path.split('/').pop() || 'ingest.xml'
+                      void handleDownload(ingestUrl, filename)
+                    },
+                  })
+                }
+                if (record.result_xml_url) {
+                  menuItems.push({
+                    key: 'result',
+                    label: t('publish.ingestHistory.xml.result'),
+                    onClick: () => {
+                      const resultUrl = record.result_xml_url!
+                      const urlParams = new URLSearchParams(resultUrl.split('?')[1])
+                      const path = urlParams.get('path') || ''
+                      const filename = path.split('/').pop() || 'result.xml'
+                      void handleDownload(resultUrl, filename)
+                    },
+                  })
+                }
+                if (menuItems.length === 0) {
+                  return '—'
+                }
+                return (
+                  <Dropdown menu={{ items: menuItems }} placement="bottom">
+                    <Button type="link" size="small">
+                      {t('publish.ingestHistory.col.getXml')}
+                    </Button>
+                  </Dropdown>
+                )
+              },
+            },
+          ]}
         />
-      )}
+      </Modal>
     </div>
   )
 }

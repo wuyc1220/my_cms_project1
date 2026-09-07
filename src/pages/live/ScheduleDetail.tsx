@@ -13,9 +13,11 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Button,
   Col,
+  Dropdown,
   Empty,
   Image,
   Modal,
+  Popconfirm,
   Row,
   Space,
   Spin,
@@ -40,25 +42,27 @@ import {
   WarningFilled,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import dayjs from 'dayjs'
-import { getContent, getContentLicenses, deleteContent } from '../../api/contents'
+import { getContent, getContentLicenses, deleteContent, getNodeStatus } from '../../api/contents'
+import type { NodeStatus } from '../../api/contents'
 import {
   getProcesses,
   getChannelDetail,
   getArchives,
 } from '../../api/live'
+import api, { isHandledError } from '../../api'
 import { getPictures } from '../../api/pictures'
+import { getDictTree } from '../../api/dicts'
 import { useI18n } from '../../i18n/useI18n'
 import { useWorkflowNodes } from '../../hooks/useWorkflowNodes'
 import { useReviewAndPublish } from '../../hooks/useReviewAndPublish'
-import { normalizeNodeCode, type OpStatus, analyzeNodeBatches, calculateOrderFromEdges, isStartOrEndNode } from '../../utils/workflow'
+import { normalizeNodeCode, type OpStatus, analyzeNodeBatches, findPrevPendingNodeName } from '../../utils/workflow'
 import { useTaskAssigneePermission } from '../../hooks/useTaskAssigneePermission'
+import { useNodeEditPermission } from '../../hooks/useNodeEditPermission'
 import { useAuthStore } from '../../stores/authStore'
 import ProcessesTab from '../../components/ProcessesTab'
 import LicenseTab from '../../components/LicenseTab'
 import StatusLogsTab from '../../components/StatusLogsTab'
 import ProcessedHistoryTab from '../../components/ProcessedHistoryTab'
-import ObjectIngestHistoryModal from '../../components/ObjectIngestHistoryModal'
 import PostersModal from '../../components/PostersModal'
 import ReviewModal from '../../components/ReviewModal'
 import PublishPlanModal from '../../components/PublishPlanModal'
@@ -74,8 +78,10 @@ import type {
 } from '../../types/live'
 import type { PictureItem } from '../../api/pictures'
 import type { MessageKey } from '../../i18n/messages'
-import { isHandledError } from '../../api'
 import { getClientPaginationProps } from '../../constants/pagination'
+import { getIngestHistories } from '../../api/ingestHistory'
+import type { IngestHistoryItem } from '../../types/ingestHistory'
+import dayjs from 'dayjs'
 
 
 const { Text } = Typography
@@ -313,8 +319,33 @@ export default function ScheduleDetail() {
   const [picBlobUrls, setPicBlobUrls]       = useState<string[]>([])
   const [currentPicIndex, setCurrentPicIndex] = useState(0)
 
+  // 平台编码→名称映射
+  const [platformNameMap, setPlatformNameMap] = useState<Record<string, string>>({})
+
   // 注入历史弹框
   const [ingestHistoryModal, setIngestHistoryModal] = useState<{ open: boolean }>({ open: false })
+  const [ingestHistoryList, setIngestHistoryList] = useState<IngestHistoryItem[]>([])
+  const [ingestHistoryLoading, setIngestHistoryLoading] = useState(false)
+  const [ingestHistoryPagination, setIngestHistoryPagination] = useState({ current: 1, pageSize: 10, total: 0 })
+
+  const loadIngestHistory = useCallback(async (page: number, pageSize: number) => {
+    if (!schedule) return
+    setIngestHistoryLoading(true)
+    try {
+      const res = await getIngestHistories({
+        entity_type: 'Content',
+        entity_id: schedule.id,
+        page,
+        page_size: pageSize,
+      })
+      setIngestHistoryList(res.items)
+      setIngestHistoryPagination({ current: page, pageSize, total: res.total })
+    } catch (err) {
+      if (!isHandledError(err)) message.error(t('ingestHistory.msg.loadFailed'), 5)
+    } finally {
+      setIngestHistoryLoading(false)
+    }
+  }, [schedule, t])
 
   // License Tab 数据
   const [licenses, setLicenses]           = useState<ContentLicenseRef[]>([])
@@ -337,19 +368,29 @@ export default function ScheduleDetail() {
   // 操作按钮状态检测所需数据
   const [hasInitiatedReview, setHasInitiatedReview] = useState(false)
 
-  // 操作按钮状态检测所需数据
-  const [_hasCastRoleMap, setHasCastRoleMap] = useState(false)
-  const [hasReview, setHasReview] = useState(false)
-  const [_hasPublishPlan, setHasPublishPlan] = useState(false)
   const [processes, setProcesses] = useState<ProcessListItem[]>([])
+  const [nodeStatus, setNodeStatus] = useState<Record<string, NodeStatus>>({})
   const [statusDataVersion, setStatusDataVersion] = useState(0)
 
   // 发布计划回显状态
   const [localPublishPlanOpen, setLocalPublishPlanOpen] = useState(false)
   const [existingPlanTime, setExistingPlanTime] = useState<string | undefined>(undefined)
+  const [publishInfo, setPublishInfo] = useState<import('../../components/PublishPlanModal').PublishInfo | undefined>(undefined)
 
   // 任务指派人信息（权限校验用）
   const [taskAssignees, setTaskAssignees] = useState<ContentTaskAssignees | null>(null)
+
+  // 计算 Provider 和 Platform 显示
+  const providerNames = useMemo(() => {
+    if (licenses.length === 0) return '—'
+    const names = licenses.map(l => l.provider_name).filter(Boolean)
+    return names.length > 0 ? names.join(', ') : '—'
+  }, [licenses])
+
+  const platformTags = useMemo(() => {
+    if (licenses.length === 0 || !licenses[0].platforms) return []
+    return licenses[0].platforms.map(p => p.platform)
+  }, [licenses])
 
   // 判断是否只读：mode 不是 edit，或者当前用户不是任务分配人
   const isAdmin = user?.role_codes?.includes('ADMIN') ?? false
@@ -365,6 +406,29 @@ export default function ScheduleDetail() {
     return isArrangementAssignee || isReviewL1Assignee || isReviewL2Assignee || isReviewL3Assignee
   }, [taskAssignees, user?.id, isAdmin])
 
+  const readOnly = useMemo(() => {
+    const modeIsEdit = mode === 'edit'
+    if (!modeIsEdit) return true
+    if (isAdmin) return false
+    return false
+  }, [mode, isAdmin])
+
+  // 节点级编辑权限判断
+  const nodeEditPermission = useNodeEditPermission({
+    taskAssignees,
+    isAdmin,
+    currentUserId: user?.id ?? null,
+    forceReadOnly: mode === 'view', // 已废弃内容强制只读，包括Admin
+  })
+
+  // 判断指定节点是否只读（用于弹框）
+  const isNodeReadOnlyMemo = useCallback(
+    (nodeCode: string) => {
+      return nodeEditPermission.isNodeReadOnly(nodeCode)
+    },
+    [nodeEditPermission]
+  )
+
   // 审核与发布计划 Hook（依赖 processes）
   const {
     reviewOpen,
@@ -376,15 +440,23 @@ export default function ScheduleDetail() {
     closePlaceholder,
   } = useReviewAndPublish({
     contentId: schedule?.id,
+    contentStatus: schedule?.status,  // ★ 添加内容状态
+    contentType: schedule?.content_type,
+    parentId: schedule?.parent_id,
     licenses,
     hasInitiatedReview,
-    processes,  // ✅ 传递流程列表
-    isTaskAssignee,  // 传递任务分配人权限
+    processes,
+    isTaskAssignee,
+    pageReadOnly: readOnly,
+    isNodeReadOnly: isNodeReadOnlyMemo,
     onSuccess: () => void refreshAfterOp(),
   })
 
+  // 发布计划预检查失败状态
+  const [publishPlanPreCheckFailed, setPublishPlanPreCheckFailed] = useState(false)
+
   // 任务指派人权限校验
-  const { checkPermissionAsync, getNoPermissionMessage } = useTaskAssigneePermission({
+  const { checkPermissionAsync } = useTaskAssigneePermission({
     taskAssignees,
     contentId: scheduleId,
     enforceAssignment: true,
@@ -408,15 +480,28 @@ export default function ScheduleDetail() {
     void (async () => {
       setLoading(true)
       try {
-        const [detailResp, lics] = await Promise.all([
+        const [detailResp, lics, dicts] = await Promise.all([
           getContent(scheduleId),
           getContentLicenses(scheduleId),
+          getDictTree(),
         ])
         // detailResp 是 ContentDetailResponse，包含 content 和 task_assignees
         const detail = detailResp.content
         setSchedule(detail)
         setTaskAssignees(detailResp.task_assignees)
         setLicenses(lics)
+
+        // 构建平台编码→名称映射
+        if (dicts && dicts.length > 0) {
+          const platformRoot = dicts.find((d: any) => d.code === 'Platform')
+          const nameMap: Record<string, string> = {}
+          if (platformRoot?.children) {
+            platformRoot.children.forEach((c: any) => {
+              nameMap[c.code] = c.name
+            })
+          }
+          setPlatformNameMap(nameMap)
+        }
       } catch (err) {
       } finally {
         setLoading(false)
@@ -431,39 +516,29 @@ export default function ScheduleDetail() {
 
     void (async () => {
       try {
-        const { getCastRoleMaps } = await import('../../api/castRoleMap')
-        const castRoleMapsResp = await getCastRoleMaps({
-          content_id: scheduleId,
-          page: 1,
-          page_size: 1,
-        })
-        setHasCastRoleMap(castRoleMapsResp.items.length > 0)
+        // 刷新内容详情（包含 content.status）
+        const detailResp = await getContent(scheduleId)
+        const detail = detailResp.content
+        setSchedule(detail)
+        setTaskAssignees(detailResp.task_assignees)
       } catch (err) {
-        setHasCastRoleMap(false)
+        // 忽略错误
+      }
+
+      try {
+        const ns = await getNodeStatus(scheduleId)
+        setNodeStatus(ns)
+      } catch (err) {
+        setNodeStatus({})
       }
 
       try {
         const processesResp = await getProcesses(scheduleId)
         setProcesses(processesResp)
-        const anyReview = processesResp.find((p) => p.node_code === 'ContentReview')
-        setHasInitiatedReview(!!anyReview)
-        const passedReview = processesResp.find((p) => p.node_code === 'ContentReview' && p.status === 'Passed')
-        setHasReview(!!passedReview)
+        const applicationReview = processesResp.find((p) => p.node_code === 'ApplicationReview')
+        setHasInitiatedReview(!!applicationReview)
       } catch (err) {
         setHasInitiatedReview(false)
-        setHasReview(false)
-      }
-
-      try {
-        const { getPublishes } = await import('../../api/publishes')
-        const publishesResp = await getPublishes({ page: 1, page_size: 100 })
-        const completedStatuses = ['plan', 'publishing', 'success']
-        const contentPublishes = publishesResp.items.filter(
-          (item) => item.entity_id === scheduleId && completedStatuses.includes(item.publish_status)
-        )
-        setHasPublishPlan(contentPublishes.length > 0)
-      } catch (err) {
-        setHasPublishPlan(false)
       }
     })()
   }, [scheduleId, statusDataVersion])
@@ -507,10 +582,11 @@ export default function ScheduleDetail() {
 
 
   const loadChannelInfo = useCallback(async () => {
-    if (!schedule?.channel_id) return
+    const channelId = schedule?.channel_id ?? schedule?.parent_id
+    if (!channelId) return
     setChannelInfoLoading(true)
     try {
-      const data = await getChannelDetail(schedule.channel_id)
+      const data = await getChannelDetail(channelId)
       setChannelInfo(data)
       setChannelInfoLoaded(true)
     } catch (err) {
@@ -518,7 +594,7 @@ export default function ScheduleDetail() {
       setChannelInfoLoading(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schedule?.channel_id])
+  }, [schedule?.channel_id, schedule?.parent_id])
 
   const loadArchived = useCallback(async () => {
     setArchivedLoading(true)
@@ -563,40 +639,29 @@ export default function ScheduleDetail() {
   }, [scheduleId])
 
   // ── 操作按钮点击处理 ─────────────────────────────────────────────────────
-  // 判断是否只读：基于 arrangement 任务状态
-  const readOnly = useMemo(() => {
-    const modeIsEdit = mode === 'edit'
-    
-    // 如果 URL 不是 edit 模式,只读
-    if (!modeIsEdit) return true
-    
-    // ADMIN 用户永远不受限制
-    if (isAdmin) return false
-    
-    // 基于 arrangement 任务状态判断是否锁定
-    // 任务已完成(Completed) → 锁定(不允许编辑)
-    // 任务待处理/处理中(Pending/InProgress) → 允许编辑
-    const arrangementStatus = taskAssignees?.arrangement_task_status
-    if (arrangementStatus === 'Completed') {
-      return true
-    }
-    
-    return false
-  }, [mode, isAdmin, taskAssignees?.arrangement_task_status])
+
+  // 发布计划弹框的只读状态：使用节点级权限判断（与其他节点一致）
+  const publishPlanReadOnly = useMemo(() => {
+    return isNodeReadOnlyMemo('PublishPlan')
+  }, [isNodeReadOnlyMemo])
 
   const handleOpButtonClick = useCallback(
     async (key: string, label: string) => {
       const normalizedKey = normalizeNodeCode(key)
 
-      // ContentReview 节点特殊处理：不在这里拦截权限，让 handleReviewAction 处理
-      // 非审批人可以以只读模式查看审批流程
-      if (normalizedKey !== 'ContentReview' && !readOnly) {
-        const { allowed, message: permissionMsg } = await checkPermissionAsync(key)
-        if (!allowed) {
-          void message.error(permissionMsg || getNoPermissionMessage(key), 5)
-          return
-        }
+      // 审核与发布相关节点：仅有查看权限的账号（非任务分配人且非Admin）禁止操作，提示无权限
+      // 分配人即使节点临时只读（如审核进行中）仍可打开只读弹框查看进度
+      if (
+        !isTaskAssignee &&
+        ['ApplicationReview', 'ContentReview', 'Review', 'PublishPlan'].includes(normalizedKey)
+      ) {
+        message.warning(t('common.msg.noPermission'), 3)
+        return
       }
+
+      // 节点级权限判断：不可编辑时直接打开弹框（只读模式）
+      // 不再拦截，有数据权限的用户都可以查看节点内容
+      // 弹框的只读状态由 isNodeReadOnlyMemo(nodeCode) 控制
       if (normalizedKey === 'Posters') {
         setPostersOpen(true)
         return
@@ -610,21 +675,46 @@ export default function ScheduleDetail() {
         return
       }
       if (normalizedKey === 'PublishPlan') {
-        // 获取当前发布计划时间用于回显
+        // 无论是只读还是可编辑模式，打开弹框前都获取当前计划信息用于回显
         if (scheduleId) {
           try {
             const plan = await getCurrentPublishPlan('Content', scheduleId)
             setExistingPlanTime(plan?.scheduled_time)
+            if (plan) {
+              setPublishInfo({
+                publish_status: plan.publish_status,
+                publish_time: plan.publish_time,
+                unpublish_time: plan.unpublish_time,
+                task_type: plan.task_type,
+                execution_mode: plan.execution_mode,
+                scheduled_time: plan.scheduled_time,
+              })
+            } else {
+              setPublishInfo(undefined)
+            }
           } catch {
             setExistingPlanTime(undefined)
+            setPublishInfo(undefined)
           }
         }
-        setLocalPublishPlanOpen(true)
+
+        // 检查节点级权限（arrangement 任务完成后应只读）
+        if (isNodeReadOnlyMemo('PublishPlan')) {
+          // 只读模式：直接打开弹框
+          setLocalPublishPlanOpen(true)
+          return
+        }
+        // 可编辑模式：走 handleReviewAction 进行状态校验
+        const result = await handleReviewAction(key, label)
+        if (result) {
+          setLocalPublishPlanOpen(true)
+        }
         return
       }
+      // ApplicationReview、ContentReview 统一走 handleReviewAction
       await handleReviewAction(key, label)
     },
-    [handleReviewAction, checkPermissionAsync, readOnly, t, message],
+    [handleReviewAction, checkPermissionAsync, readOnly, t, message, isNodeReadOnlyMemo, scheduleId, isTaskAssignee],
   )
 
   // ── 列定义 ─────────────────────────────────────────────────────────────────
@@ -667,28 +757,44 @@ export default function ScheduleDetail() {
               dataIndex: 'channelName',
               key: 'channelName',
               width: 200,
-              render: (v: React.ReactNode) => v ?? '—',
+              ellipsis: { showTitle: false },
+              render: (v: React.ReactNode) => <Tooltip title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>,
             },
             {
               title: t('common.col.genre'),
               dataIndex: 'genre',
               key: 'genre',
-              width: 120,
-              render: (v: React.ReactNode) => v ?? '—',
+              width: 180,
+              ellipsis: { showTitle: false },
+              render: (v: React.ReactNode) => <Tooltip title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>,
+            },
+            {
+              title: t('common.col.customTags'),
+              dataIndex: 'customTags',
+              key: 'customTags',
+              width: 180,
+              ellipsis: { showTitle: false },
+              render: (v: React.ReactNode) => (
+                <Tooltip autoAdjustOverflow={false} placement="topLeft" title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>
+              ),
             },
             {
               title: t('common.col.category'),
               dataIndex: 'category',
               key: 'category',
               width: 180,
-              render: (v: React.ReactNode) => v ?? '—',
+              ellipsis: { showTitle: false },
+              render: (v: React.ReactNode) => (
+                <Tooltip autoAdjustOverflow={false} placement="topLeft" title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>
+              ),
             },
             {
               title: t('common.col.package'),
               dataIndex: 'package',
               key: 'package',
-              width: 180,
-              render: (v: React.ReactNode) => v ?? '—',
+              width: 200,
+              ellipsis: { showTitle: false },
+              render: (v: React.ReactNode) => <Tooltip title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>,
             },
             {
               title: t('common.col.licenseStart'),
@@ -708,9 +814,10 @@ export default function ScheduleDetail() {
           dataSource={channelInfo ? [{
             key: '1',
             channelName: (
-              <a onClick={() => navigate(`/live/channels/${channelInfo.id}`)}>{channelInfo.title}</a>
+              <a onClick={() => navigate(`/live/channels/${channelInfo.id}?mode=edit`)}>{channelInfo.title}</a>
             ),
             genre: channelInfo.genre_name ?? null,
+            customTags: channelInfo.custom_tag_names?.join(', ') || null,
             category: channelInfo.category_names?.join(', ') || null,
             package: channelInfo.package_names?.join(', ') || null,
             licenseStart: channelInfo.license_start ?? null,
@@ -721,13 +828,13 @@ export default function ScheduleDetail() {
         />
       ),
     },
-    {
-      key: 'archived',
-      label: t('content.tab.archived'),
-      children: (() => {
+    ...(schedule?.cutv_enable
+      ? [{
+          key: 'archived',
+          label: t('content.tab.archived'),
+          children: (() => {
         const hasSeason = archivedItems.some((i) => i.content_type === 'SEASON')
         const hasEpisode = archivedItems.some((i) => i.content_type === 'EPISODE')
-        const hasLicense = archivedItems.some((i) => i.license_start || i.license_end)
 
         const archivedColumns: ColumnsType<ArchiveListItem> = [
           ...(hasSeason
@@ -775,20 +882,18 @@ export default function ScheduleDetail() {
               </Tag>
             ),
           },
-          ...(hasLicense
-            ? [{
-                title: t('common.col.licenseStatus'),
-                dataIndex: 'license_start' as const,
-                key: 'license_status',
-                width: 80,
-                align: 'center' as const,
-                render: (_: unknown, record: ArchiveListItem) => (
-                  record.license_start || record.license_end
-                    ? <CheckCircleFilled style={{ color: '#52c41a', fontSize: 16 }} />
-                    : <ExclamationCircleFilled style={{ color: '#bfbfbf', fontSize: 16 }} />
-                ),
-              }]
-            : []),
+          {
+            title: t('common.col.licenseStatus'),
+            dataIndex: 'license_start',
+            key: 'license_status',
+            width: 80,
+            align: 'center' as const,
+            render: (_: unknown, record: ArchiveListItem) => (
+              record.license_start || record.license_end
+                ? <CheckCircleFilled style={{ color: '#52c41a', fontSize: 16 }} />
+                : <ExclamationCircleFilled style={{ color: '#bfbfbf', fontSize: 16 }} />
+            ),
+          },
           {
             title: t('common.col.licenseStart'),
             dataIndex: 'license_start',
@@ -820,10 +925,10 @@ export default function ScheduleDetail() {
             width: 120,
             fixed: 'right',
             render: (_, record) => (
-              <Space size={4}>
+              <Space size={0}>
                 <Tooltip title={t('common.detail')}>
                   <Button
-                    type="text"
+                    type="link"
                     size="small"
                     icon={<InfoCircleOutlined />}
                     onClick={() => {
@@ -839,7 +944,7 @@ export default function ScheduleDetail() {
                 </Tooltip>
                 <Tooltip title={t('common.edit')}>
                   <Button
-                    type="text"
+                    type="link"
                     size="small"
                     icon={<EditOutlined />}
                     onClick={() => {
@@ -853,29 +958,28 @@ export default function ScheduleDetail() {
                     }}
                   />
                 </Tooltip>
-                <Tooltip title={t('common.delete')}>
-                  <Button
-                    type="text"
-                    size="small"
-                    danger
-                    icon={<DeleteOutlined />}
-                    onClick={() => {
-                      Modal.confirm({
-                        title: t('common.confirmDelete', { name: record.title }),
-                        onOk: async () => {
-                          try {
-                            await deleteContent(record.id)
-                            message.success(t('common.msg.deleted'), 3)
-                            void loadArchived()
-                          } catch (err) {
-                            if (isHandledError(err)) return
-                            message.error(t('common.msg.deleteFailed'), 3)
-                          }
-                        },
-                      })
-                    }}
-                  />
-                </Tooltip>
+                <Popconfirm
+                  title={t('common.confirmDelete', { name: record.title })}
+                  onConfirm={async () => {
+                    try {
+                      await deleteContent(record.id)
+                      message.success(t('common.msg.deleted'), 3)
+                      void loadArchived()
+                    } catch (err) {
+                      if (isHandledError(err)) return
+                      message.error(t('common.msg.deleteFailed'), 3)
+                    }
+                  }}
+                >
+                  <Tooltip title={t('common.delete')}>
+                    <Button
+                      type="link"
+                      size="small"
+                      danger
+                      icon={<DeleteOutlined />}
+                    />
+                  </Tooltip>
+                </Popconfirm>
               </Space>
             ),
           },
@@ -893,7 +997,8 @@ export default function ScheduleDetail() {
           />
         )
       })(),
-    },
+    }]
+    : []),
   ]
 
   // ── 渲染 ──────────────────────────────────────────────────────────────────
@@ -910,24 +1015,15 @@ export default function ScheduleDetail() {
     return <Empty description={t('trade.content.detail.emptyContent')} style={{ marginTop: 80 }} />
   }
 
-  const getOperationStatus = (key: string): OpStatus => {
+  const getOperationStatus = (key: string, mandatory?: boolean): OpStatus => {
     const normalizedKey = normalizeNodeCode(key)
-    switch (normalizedKey) {
-      case 'Metadata':
-        return processes.some((p) => p.node_code === 'Metadata' && p.status === 'Passed') ? 'completed' : 'pending'
-      case 'Posters':
-        return pictures.length > 0 ? 'completed' : 'pending'
-      case 'CastRoleMap':
-        return processes.some((p) => p.node_code === 'CastRoleMap' && p.status === 'Passed') ? 'completed' : 'pending'
-      case 'ApplicationReview':
-        return processes.some((p) => p.node_code === 'ApplicationReview') ? 'completed' : 'pending'
-      case 'ContentReview':
-        return hasReview ? 'completed' : 'pending'
-      case 'PublishPlan':
-        return processes.some((p) => p.node_code === 'PublishPlan' && p.status === 'Passed') ? 'completed' : 'pending'
-      default:
-        return 'pending'
-    }
+    if (normalizedKey === 'Start' || normalizedKey === 'End') return 'completed'
+    const node = nodeStatus[normalizedKey]
+    if (!node) return 'pending'
+    if (node.completed) return 'completed'
+    // 必填节点 warning 视为未完成（pending，红叉）；非必填节点保持 warning（可选未完成）
+    if (node.warning && mandatory === false) return 'warning'
+    return 'pending'
   }
 
   const defaultButtons = [
@@ -971,78 +1067,61 @@ export default function ScheduleDetail() {
           {/* 中：节目单基本信息 */}
           <Col flex="1" style={{ minWidth: 0 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 4 }}>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
+              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                <Text type="secondary" style={{ fontSize: 12, width: 100, flexShrink: 0, whiteSpace: 'nowrap' }}>
                   {t('content.detail.contentName')}:{' '}
                 </Text>
-                <Text strong style={{ fontSize: 15 }}>{schedule.title}</Text>
+                <Text strong style={{ fontSize: 15, wordBreak: 'break-all' }}>{schedule.title}</Text>
               </div>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
+              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                <Text type="secondary" style={{ fontSize: 12, width: 100, flexShrink: 0, whiteSpace: 'nowrap' }}>
                   {t('content.detail.contentType')}:{' '}
                 </Text>
                 <Tag color="blue">{schedule.content_type ?? 'SCHEDULE'}</Tag>
               </div>
-              {schedule.channel_name && (
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
-                    {t('content.detail.channel')}:{' '}
-                  </Text>
-                  <Text>{schedule.channel_name}</Text>
-                </div>
-              )}
-              {schedule.begin_time && (
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
-                    {t('content.detail.beginTime')}:{' '}
-                  </Text>
-                  <Text>{dayjs(schedule.begin_time).format('YYYY-MM-DD HH:mm')}</Text>
-                </div>
-              )}
-              {schedule.end_time && (
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
-                    {t('content.detail.endTime')}:{' '}
-                  </Text>
-                  <Text>{dayjs(schedule.end_time).format('YYYY-MM-DD HH:mm')}</Text>
-                </div>
-              )}
-              <div>
-                <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
-                  {t('content.detail.cutvEnable')}:{' '}
+              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                <Text type="secondary" style={{ fontSize: 12, width: 100, flexShrink: 0, whiteSpace: 'nowrap' }}>
+                  {t('content.detail.provider')}:{' '}
                 </Text>
-                <Tag color={schedule.cutv_enable ? 'success' : 'default'}>
-                  {schedule.cutv_enable ? 'YES' : 'NO'}
-                </Tag>
+                <Text style={{ wordBreak: 'break-all' }}>{providerNames}</Text>
               </div>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
-                  {t('content.detail.archived')}:{' '}
+              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                <Text type="secondary" style={{ fontSize: 12, width: 100, flexShrink: 0, whiteSpace: 'nowrap' }}>
+                  {t('content.detail.platform')}:{' '}
                 </Text>
-                <Tag color={schedule.is_archived ? 'success' : 'warning'}>
-                  {schedule.is_archived ? 'YES' : 'NO'}
-                </Tag>
+                {platformTags.length > 0 ? (
+                  <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+                    {platformTags.map((p) => (
+                      <Tag key={p} style={{ fontSize: 11 }}>
+                        {platformNameMap[p] || p}
+                      </Tag>
+                    ))}
+                  </span>
+                ) : (
+                  <Text type="secondary">—</Text>
+                )}
               </div>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
+              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                <Text type="secondary" style={{ fontSize: 12, width: 100, flexShrink: 0, whiteSpace: 'nowrap' }}>
+                  {t('content.detail.genre')}:{' '}
+                </Text>
+                <Text style={{ wordBreak: 'break-all' }}>{schedule.genre_name || '—'}</Text>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                <Text type="secondary" style={{ fontSize: 12, width: 100, flexShrink: 0, whiteSpace: 'nowrap' }}>
                   {t('content.detail.ingestStatus')}:{' '}
                 </Text>
                 <Tag
                   color={STATUS_COLOR[schedule.status] ?? 'default'}
                   style={{ fontSize: 12, cursor: 'pointer' }}
-                  onClick={() => setIngestHistoryModal({ open: true })}
+                  onClick={() => {
+                    setIngestHistoryModal({ open: true })
+                    void loadIngestHistory(1, 10)
+                  }}
                 >
                   {schedule.status}
                 </Tag>
               </div>
-              {schedule.created_at && (
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12,width:80,display:"inline-block" }}>
-                    {t('content.detail.created')}:{' '}
-                  </Text>
-                  <Text>{dayjs(schedule.created_at).format('YYYY-MM-DD')}</Text>
-                </div>
-              )}
             </div>
           </Col>
 
@@ -1062,7 +1141,7 @@ export default function ScheduleDetail() {
               {operationButtons.map((btn) => {
                 const key = btn.key
                 const label = btn.label
-                const status = getOperationStatus(key)
+                const status = getOperationStatus(key, btn.mandatory)
                 const available = checkNodeAvailable(btn.id, getOperationStatus)
                 const statusIcon = (() => {
                   if (status === 'completed') return <CheckCircleFilled style={{ color: '#52c41a', fontSize: 14 }} />
@@ -1070,65 +1149,38 @@ export default function ScheduleDetail() {
                   return <CloseCircleFilled style={{ color: '#ff4d4f', fontSize: 14 }} />
                 })()
                 return (
-                  <Tooltip
+                  <div
                     key={key}
-                    title={!available ? t('content.detail.nodeNotAvailable') : undefined}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      cursor: 'pointer',
+                      userSelect: 'none',
+                    }}
+                    onClick={() => {
+                      // 有数据权限就可以点击查看（只读模式），不检查前置节点
+                      // 编辑模式需要检查前置节点是否全部完成
+                      if (!isNodeReadOnlyMemo(key) && !available) {
+                        const nodeBatchMap = analyzeNodeBatches(workflowNodes, workflowEdges)
+                        const pendingName = findPrevPendingNodeName(btn.id, workflowNodes, workflowEdges, nodeBatchMap, getOperationStatus)
+                        message.warning(t('content.detail.prevNodeIncomplete', { name: pendingName ?? '' }), 3)
+                        return
+                      }
+                      handleOpButtonClick(key, label)
+                    }}
                   >
-                    <div
+                    {statusIcon}
+                    <Text
                       style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        cursor: 'pointer',
-                        userSelect: 'none',
-                      }}
-                      onClick={() => {
-                        if (readOnly || available) {
-                          handleOpButtonClick(key, label)
-                        } else {
-                          const orderMap = calculateOrderFromEdges(workflowNodes, workflowEdges)
-                          const sortedNodes = [...workflowNodes]
-                            .filter((n) => n.node_type !== 'parallel_box' && !isStartOrEndNode(n.node_code))
-                            .sort((a, b) => {
-                              const orderA = orderMap.get(a.id)
-                              const orderB = orderMap.get(b.id)
-                              if (orderA !== undefined && orderB !== undefined) {
-                                return orderA - orderB
-                              }
-                              return a.sequence - b.sequence
-                            })
-                          const nodeBatchMap = analyzeNodeBatches(workflowNodes, workflowEdges)
-                          const currentBatch = nodeBatchMap.get(btn.id)
-                          const prevBatchNodes = sortedNodes.filter(
-                            (node) => {
-                              const batch = nodeBatchMap.get(node.id)
-                              return batch !== undefined && currentBatch !== undefined && batch < currentBatch
-                            }
-                          )
-                          const firstPendingNode = prevBatchNodes.find(
-                            (node) => getOperationStatus(node.node_code) === 'pending'
-                          )
-                          if (firstPendingNode) {
-                            const pendingNodeName = firstPendingNode.node_name
-                            message.warning(t('content.detail.prevNodeIncomplete', { name: pendingNodeName }), 3)
-                          } else {
-                            message.warning(t('content.detail.nodeNotAvailable'), 3)
-                          }
-                        }
+                        color: '#1677ff',
+                        fontSize: 13,
+                        whiteSpace: 'nowrap',
                       }}
                     >
-                      {statusIcon}
-                      <Text
-                        style={{
-                          color: '#1677ff',
-                          fontSize: 13,
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {label}
-                      </Text>
-                    </div>
-                  </Tooltip>
+                      {label}
+                    </Text>
+                  </div>
                 )
               })}
             </div>
@@ -1136,14 +1188,14 @@ export default function ScheduleDetail() {
 
           {/* 最右：记录导航 */}
           <Col flex="0 0 auto" style={{ display: 'flex', alignItems: 'flex-start', paddingTop: 4 }}>
-            <Button.Group>
+            <Space.Compact>
               <Tooltip title={t('content.detail.prevRecord')}>
                 <Button icon={<LeftOutlined />} disabled={prevId === null} onClick={() => prevId !== null && goToRecord(prevId)} />
               </Tooltip>
               <Tooltip title={t('content.detail.nextRecord')}>
                 <Button icon={<RightOutlined />} disabled={nextId === null} onClick={() => nextId !== null && goToRecord(nextId)} />
               </Tooltip>
-            </Button.Group>
+            </Space.Compact>
           </Col>
         </Row>
       </div>
@@ -1168,10 +1220,10 @@ export default function ScheduleDetail() {
         entityType="schedule"
         entityId={schedule.id}
         entityName={schedule.title}
-        readOnly={readOnly}
+        readOnly={isNodeReadOnlyMemo('Posters')}
         onClose={() => {
           setPostersOpen(false)
-          setStatusDataVersion((v) => v + 1)
+          void refreshAfterOp()  // 刷新内容详情和状态
           void (async () => {
             const pics = await getPictures('schedule', schedule.id)
             setPictures(pics)
@@ -1200,6 +1252,7 @@ export default function ScheduleDetail() {
         contentName={schedule.title}
         mode={reviewMode}
         readOnly={reviewReadOnly}
+        hasInitiatedReview={hasInitiatedReview}
         onClose={closeReview}
         onSuccess={() => { closeReview(); void refreshAfterOp() }}
       />
@@ -1208,10 +1261,14 @@ export default function ScheduleDetail() {
         open={localPublishPlanOpen}
         contentId={schedule?.id}
         contentName={schedule?.title}
+        contentType={schedule?.content_type ?? 'SCHEDULE'}
         initialScheduledTime={existingPlanTime}
-        readOnly={readOnly}
-        onClose={() => { setLocalPublishPlanOpen(false); setExistingPlanTime(undefined) }}
-        onSuccess={() => { setLocalPublishPlanOpen(false); setExistingPlanTime(undefined); void refreshAfterOp() }}
+        publishInfo={publishInfo}
+        hasPublishHistory={!!publishInfo}
+        readOnly={publishPlanReadOnly}
+        preCheckFailed={publishPlanPreCheckFailed}
+        onClose={() => { setLocalPublishPlanOpen(false); setExistingPlanTime(undefined); setPublishInfo(undefined); setPublishPlanPreCheckFailed(false) }}
+        onSuccess={() => { setLocalPublishPlanOpen(false); setExistingPlanTime(undefined); setPublishInfo(undefined); setPublishPlanPreCheckFailed(false); void refreshAfterOp() }}
       />
 
       <MetadataModal
@@ -1219,11 +1276,15 @@ export default function ScheduleDetail() {
         contentId={schedule.id}
         contentType={schedule.content_type ?? 'SCHEDULE'}
         contentName={schedule.title}
-        readOnly={readOnly}
+        readOnly={isNodeReadOnlyMemo('Metadata')}
         initialBeginTime={schedule.begin_time}
         initialEndTime={schedule.end_time}
         onClose={() => setMetadataOpen(false)}
-        onSuccess={() => { setMetadataOpen(false); void refreshAfterOp() }}
+        onSuccess={() => {
+          setMetadataOpen(false)
+          void refreshAfterOp()
+          window.dispatchEvent(new CustomEvent('scheduleMetadataUpdated'))
+        }}
       />
 
       <CastRoleMapModal
@@ -1231,7 +1292,7 @@ export default function ScheduleDetail() {
         contentId={schedule.id}
         contentName={schedule.title}
         contentType={schedule.content_type ?? 'SCHEDULE'}
-        readOnly={readOnly}
+        readOnly={isNodeReadOnlyMemo('CastRoleMap')}
         onClose={() => setCastRoleMapOpen(false)}
         onSuccess={() => { setCastRoleMapOpen(false); void refreshAfterOp() }}
       />
@@ -1264,15 +1325,129 @@ export default function ScheduleDetail() {
       </Modal>
 
       {/* 注入历史弹框 */}
-      {schedule && (
-        <ObjectIngestHistoryModal
-          open={ingestHistoryModal.open}
-          entityType="Content"
-          entityId={schedule.id}
-          entityName={schedule.title || `Schedule #${schedule.id}`}
-          onClose={() => setIngestHistoryModal({ open: false })}
+      <Modal
+        title={`${schedule?.title || ''} - ${t('ingestHistory.title')}`}
+        open={ingestHistoryModal.open}
+        onCancel={() => setIngestHistoryModal({ open: false })}
+        width={1000}
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <Button type="primary" onClick={() => setIngestHistoryModal({ open: false })}>
+              {t('ingestHistory.btn.close')}
+            </Button>
+          </div>
+        }
+      >
+        <Table
+          rowKey="id"
+          dataSource={ingestHistoryList}
+          loading={ingestHistoryLoading}
+          size="small"
+          pagination={{
+            current: ingestHistoryPagination.current,
+            pageSize: ingestHistoryPagination.pageSize,
+            total: ingestHistoryPagination.total,
+            showSizeChanger: true,
+            showQuickJumper: true,
+            showTotal: (n: number) => t('pagination.total', { n }),
+            onChange: (page, pageSize) => void loadIngestHistory(page, pageSize),
+          }}
+          columns={[
+            { title: t('publish.ingestHistory.col.type'), dataIndex: 'entity_name', key: 'entity_name' },
+            {
+              title: t('publish.ingestHistory.col.createDate'),
+              dataIndex: 'create_date',
+              key: 'create_date',
+              render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
+            },
+            {
+              title: t('publish.ingestHistory.col.sendDate'),
+              dataIndex: 'send_date',
+              key: 'send_date',
+              render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
+            },
+            {
+              title: t('publish.ingestHistory.col.endDate'),
+              dataIndex: 'end_date',
+              key: 'end_date',
+              render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
+            },
+            {
+              title: t('publish.ingestHistory.col.status'),
+              dataIndex: 'status',
+              key: 'status',
+              render: (v) => (
+                <Tag color={v === 'success' ? 'success' : v === 'failure' ? 'error' : 'default'}>
+                  {v === 'success' ? t('publish.ingestHistory.status.success') : v === 'failure' ? t('publish.ingestHistory.status.failure') : v}
+                </Tag>
+              ),
+            },
+            {
+              title: t('publish.ingestHistory.col.getXml'),
+              key: 'getXml',
+              align: 'center',
+              render: (_, record: IngestHistoryItem) => {
+                const handleDownload = async (url: string, filename: string) => {
+                  try {
+                    // 如果 URL 以 /api/v1 开头，去掉前缀，因为 axios baseURL 已经包含 /api/v1
+                    const requestUrl = url.startsWith('/api/v1') ? url.slice(7) : url
+                    const response = await api.get(requestUrl, {
+                      responseType: 'blob',
+                    })
+                    const blob = new Blob([response.data])
+                    const link = document.createElement('a')
+                    link.href = URL.createObjectURL(blob)
+                    link.download = filename
+                    document.body.appendChild(link)
+                    link.click()
+                    document.body.removeChild(link)
+                    URL.revokeObjectURL(link.href)
+                  } catch (err) {
+                    if (!isHandledError(err)) message.error(t('publish.msg.downloadFailed'))
+                  }
+                }
+                const menuItems = []
+                if (record.ingest_xml_url) {
+                  menuItems.push({
+                    key: 'ingest',
+                    label: t('publish.ingestHistory.xml.ingest'),
+                    onClick: () => {
+                      const ingestUrl = record.ingest_xml_url!
+                      const urlParams = new URLSearchParams(ingestUrl.split('?')[1])
+                      const path = urlParams.get('path') || ''
+                      const filename = path.split('/').pop() || 'ingest.xml'
+                      void handleDownload(ingestUrl, filename)
+                    },
+                  })
+                }
+                if (record.result_xml_url) {
+                  menuItems.push({
+                    key: 'result',
+                    label: t('publish.ingestHistory.xml.result'),
+                    onClick: () => {
+                      const resultUrl = record.result_xml_url!
+                      const urlParams = new URLSearchParams(resultUrl.split('?')[1])
+                      const path = urlParams.get('path') || ''
+                      const filename = path.split('/').pop() || 'result.xml'
+                      void handleDownload(resultUrl, filename)
+                    },
+                  })
+                }
+                if (menuItems.length === 0) {
+                  return '—'
+                }
+                return (
+                  <Dropdown menu={{ items: menuItems }} placement="bottom">
+                    <Button type="link" size="small">
+                      {t('publish.ingestHistory.col.getXml')}
+                    </Button>
+                  </Dropdown>
+                )
+              },
+            },
+          ]}
         />
-      )}
+      </Modal>
     </div>
   )
 }

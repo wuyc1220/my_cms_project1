@@ -20,22 +20,29 @@ interface UseIdleTimeoutOptions {
 export function useIdleTimeout(options: UseIdleTimeoutOptions) {
   const { timeoutMinutes, enabled = true, onTimeout } = options
   const navigate = useNavigate()
-  const { logout, isLoggedIn } = useAuthStore()
+  const { isLoggedIn, logout } = useAuthStore()
   const { t } = useI18n()
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastActivityRef = useRef<number>(Date.now())
 
-  const handleLogout = useCallback(async () => {
-    try {
-      await logoutApi()
-    } catch {
-      // ignore
-    }
+  const handleLogout = useCallback(() => {
+    const lastActivity = lastActivityRef.current
+    const now = Date.now()
+    const idleSeconds = Math.floor((now - lastActivity) / 1000)
+    console.warn(
+      `[IdleTimeout] 触发自动登出 | timeoutMinutes=${timeoutMinutes} ` +
+      `lastActivity=${new Date(lastActivity).toISOString()} ` +
+      `now=${new Date(now).toISOString()} idleSeconds=${idleSeconds} ` +
+      `enabled=${enabled} isLoggedIn=${isLoggedIn}`
+    )
+    // 通知后端清除当前会话（jti），失败不阻塞前端登出流程
+    void logoutApi().catch(() => {})
+    // 清除前端登录态（含 localStorage.token + 内存 state）
     logout()
     void message.warning(t('common.idleTimeout'))
     navigate('/login', { replace: true })
     onTimeout?.()
-  }, [logout, navigate, onTimeout, t])
+  }, [logout, navigate, onTimeout, t, timeoutMinutes, enabled, isLoggedIn])
 
   const resetTimer = useCallback(() => {
     lastActivityRef.current = Date.now()

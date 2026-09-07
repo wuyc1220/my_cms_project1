@@ -22,6 +22,7 @@ import {
   Row,
   Space,
   Table,
+  Tooltip,
   message,
 } from 'antd'
 import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
@@ -32,18 +33,23 @@ import {
   getCastRoleMaps,
   batchCreateCastRoleMaps,
   batchDeleteCastRoleMaps,
+  updateCastRoleMap,
+  saveCastRoleMapFieldValues,
+  saveCastRoleMapI18n,
 } from '../api/castRoleMap'
 import { getDictChildren } from '../api/dicts'
 import type { LanguageOption } from '../types/i18n'
 import { useI18n } from '../i18n/useI18n'
 import { isHandledError } from '../api'
+import { formatApiValue } from '../utils/customField'
 import { useTablePagination } from '../hooks/useTablePagination'
+import { useSensitiveCheck } from '../hooks/useSensitiveCheck'
 import type {
   CastListItem,
   CastRoleMapItem,
   CastRoleMapCreatePayload,
 } from '../types/basic'
-import CastRoleMapMetadataModal from './CastRoleMapMetadataModal'
+import CastRoleMapMetadataModal, { type MetadataEditResult } from './CastRoleMapMetadataModal'
 import CastFormModal from './CastFormModal'
 
 interface CastRoleMapModalProps {
@@ -70,6 +76,7 @@ export default function CastRoleMapModal({
   onSuccess,
 }: CastRoleMapModalProps) {
   const { t } = useI18n()
+  const { checkSensitive } = useSensitiveCheck()
 
   // ── 海报图片组件（加载失败时显示灰色占位符） ────────────
   const PosterImage: React.FC<{ src?: string | null; alt?: string }> = ({ src, alt }) => {
@@ -114,6 +121,9 @@ export default function CastRoleMapModal({
 
   // ── 前端暂存的删除映射 ──────────────────────────────────
   const [pendingDeletions, setPendingDeletions] = useState<CastRoleMapItem[]>([])
+
+  // ── 前端暂存的已存在项编辑（key: mapId） ───────────────────
+  const [pendingEdits, setPendingEdits] = useState<Record<number, MetadataEditResult>>({})
 
   // ── 正在编辑的临时项数据 ────────────────────────────────
   const [pendingEditItem, setPendingEditItem] = useState<CastRoleMapItem | null>(null)
@@ -194,17 +204,29 @@ export default function CastRoleMapModal({
       void loadPresetRoles()
       setEditingMapId(null)
       setPendingAdditions([])
+      setPendingDeletions([])
+      setPendingEdits({})
       setPendingEditItem(null)
     }
     prevOpenRef.current = open
   }, [open])
 
-  // ── 合并显示的映射列表（倒序：新增的显示在最前面） ───────
+  // ── 合并显示的映射列表（倒序：新增的显示在最前面，编辑项应用本地修改） ───────
   const displayMappings = useMemo(() => {
     // pendingAdditions 是新增的，放在最前面（倒序）
-    // mappings 是后端的，已经按 map_id 倒序
-    return [...pendingAdditions].reverse().concat(mappings)
-  }, [mappings, pendingAdditions])
+    const additions = [...pendingAdditions].reverse()
+    // mappings 是后端数据，应用 pendingEdits
+    const mergedMappings = mappings.map((m) => {
+      const edit = pendingEdits[m.map_id]
+      if (!edit) return m
+      return {
+        ...m,
+        ...(edit.basicData.role_name != null ? { role_name: edit.basicData.role_name } : {}),
+        ...(edit.basicData.role_code != null ? { role_code: edit.basicData.role_code } : {}),
+      }
+    })
+    return additions.concat(mergedMappings)
+  }, [mappings, pendingAdditions, pendingEdits])
 
   const displayTotal = displayMappings.length
 
@@ -247,8 +269,14 @@ export default function CastRoleMapModal({
     setMetadataModalOpen(true)
   }
 
+  // ── 元数据编辑确认回调（接收编辑数据，存入 pendingEdits） ──
   const handleMetadataSuccess = () => {
-    void loadMappings()
+    // 不再重新加载后端数据，所有编辑都缓存在前端
+  }
+
+  // ── 接收已存在项的编辑数据（由 MetadataModal 回调） ───────
+  const handleEditData = (mapId: number, result: MetadataEditResult) => {
+    setPendingEdits((prev) => ({ ...prev, [mapId]: result }))
   }
 
   // ── 更新临时项数据 ────────────────────────────────────
@@ -279,7 +307,26 @@ export default function CastRoleMapModal({
   // ── 批量提交（确定按钮） ─────────────────────────────────
   const handleConfirm = async () => {
     try {
+      // 敏感词预校验：检查所有新增和编辑的数据
+      const checkData: Record<string, unknown> = {
+        additions: pendingAdditions.map(item => ({
+          role_name: item.role_name,
+          role_code: item.role_code,
+          // 临时项的自定义字段值缓存在 pendingEdits 中（key 为临时 mapId）
+          customFieldValues: pendingEdits[item.map_id]?.customFieldValues,
+        })),
+        edits: Object.entries(pendingEdits).map(([mapId, edit]) => ({
+          mapId,
+          role_name: edit.basicData.role_name,
+          role_code: edit.basicData.role_code,
+          customFieldValues: edit.customFieldValues,
+        })),
+      }
+      const ok = await checkSensitive(checkData)
+      if (!ok) return
+
       // 处理新增
+      let createdItems: CastRoleMapItem[] = []
       if (pendingAdditions.length > 0) {
         const payloads: CastRoleMapCreatePayload[] = pendingAdditions.map(item => ({
           content_id: contentId,
@@ -289,7 +336,82 @@ export default function CastRoleMapModal({
           role_name: item.role_name ?? null,
           role_code: item.role_code ?? null,
         }))
-        await batchCreateCastRoleMaps(payloads)
+        createdItems = await batchCreateCastRoleMaps(payloads)
+      }
+
+      // 处理临时项的自定义字段值（需要在创建后使用新生成的 mapId）
+      // 创建映射：临时 mapId -> 新 mapId
+      const tempToNewMapId: Record<number, number> = {}
+      createdItems.forEach((item, index) => {
+        const tempMapId = pendingAdditions[index]?.map_id
+        if (tempMapId && tempMapId < 0 && item.map_id > 0) {
+          tempToNewMapId[tempMapId] = item.map_id
+        }
+      })
+
+      // 处理临时项的自定义字段值
+      for (const [tempMapIdStr, edit] of Object.entries(pendingEdits)) {
+        const tempMapId = Number(tempMapIdStr)
+        // 只处理临时项（mapId < 0）
+        if (tempMapId >= 0) continue
+
+        const newMapId = tempToNewMapId[tempMapId]
+        if (!newMapId) {
+          console.warn('[CastRoleMapModal] Cannot find new mapId for temp mapId:', tempMapId)
+          continue
+        }
+
+        const cfValues = edit.customFieldValues
+        const i18nVals = edit.i18nValues
+        const hasCf = !!(cfValues && Object.keys(cfValues).length > 0)
+        const hasI18n = !!(i18nVals && Object.keys(i18nVals).length > 0)
+        console.log('[CastRoleMapModal] Processing custom fields for temp item - tempMapId:', tempMapId, 'newMapId:', newMapId, 'cfValues:', cfValues, 'i18nVals:', i18nVals)
+
+        if (hasCf || hasI18n) {
+          try {
+            const { getCustomFields } = await import('../api/customFields')
+            const cfRes = await getCustomFields({
+              page: 1,
+              page_size: 500,
+              belongings: ['ALL', 'CastRoleMap'],
+            })
+            if (hasCf) {
+              const payload = {
+                values: cfRes.items.map(field => {
+                  const raw = cfValues[field.field_code]
+                  const val = (raw !== undefined && raw !== null && raw !== '')
+                    ? formatApiValue(field.field_type, raw)
+                    : null
+                  return {
+                    custom_field_id: field.id,
+                    value: val,
+                  }
+                }),
+              }
+              await saveCastRoleMapFieldValues(newMapId, payload)
+              console.log('[CastRoleMapModal] saveCastRoleMapFieldValues SUCCESS for temp item - newMapId:', newMapId)
+            }
+            // 保存多语言字段值（按语言分别保存）
+            if (hasI18n) {
+              for (const [lang, fields] of Object.entries(i18nVals)) {
+                const payloadFields: Record<string, string | null> = {}
+                for (const [fieldName, fieldValue] of Object.entries(fields)) {
+                  const field = cfRes.items.find(f => f.field_code === fieldName && f.multi_language)
+                  if (!field) continue
+                  payloadFields[fieldName] = (fieldValue !== undefined && fieldValue !== null && fieldValue !== '')
+                    ? formatApiValue(field.field_type, fieldValue)
+                    : null
+                }
+                if (Object.keys(payloadFields).length > 0) {
+                  await saveCastRoleMapI18n(newMapId, { language: lang, fields: payloadFields })
+                }
+              }
+              console.log('[CastRoleMapModal] saveCastRoleMapI18n SUCCESS for temp item - newMapId:', newMapId)
+            }
+          } catch (cfErr) {
+            console.error('[CastRoleMapModal] save custom fields/i18n FAILED for temp item - newMapId:', newMapId, cfErr)
+          }
+        }
       }
       // 处理删除
       if (pendingDeletions.length > 0) {
@@ -298,9 +420,79 @@ export default function CastRoleMapModal({
           await batchDeleteCastRoleMaps(mapIds)
         }
       }
+      // 处理编辑（已存在项的修改）
+      const editEntries = Object.entries(pendingEdits)
+      console.log('[CastRoleMapModal] handleConfirm - pendingEdits:', pendingEdits, 'editEntries count:', editEntries.length)
+      for (const [mapIdStr, edit] of editEntries) {
+        const mapId = Number(mapIdStr)
+        // 跳过临时项（mapId < 0），因为它们会在 pendingAdditions 中处理，并且自定义字段值已经在上面处理了
+        if (mapId < 0) {
+          console.log('[CastRoleMapModal] Skipping temp item in pendingEdits:', mapId)
+          continue
+        }
+        await updateCastRoleMap(mapId, {
+          role_name: edit.basicData.role_name ?? null,
+          role_code: edit.basicData.role_code ?? null,
+        })
+        // 提交自定义字段值
+        const cfValues = edit.customFieldValues
+        const i18nVals = edit.i18nValues
+        const hasCf = !!(cfValues && Object.keys(cfValues).length > 0)
+        const hasI18n = !!(i18nVals && Object.keys(i18nVals).length > 0)
+        console.log('[CastRoleMapModal] Processing edit for mapId:', mapId, 'cfValues:', cfValues, 'keys count:', cfValues ? Object.keys(cfValues).length : 0, 'i18nVals:', i18nVals)
+        if (hasCf || hasI18n) {
+          // 获取自定义字段配置来构建 payload
+          try {
+            const { getCustomFields } = await import('../api/customFields')
+            const cfRes = await getCustomFields({
+              page: 1,
+              page_size: 500,
+              belongings: ['ALL', 'CastRoleMap'],
+            })
+            if (hasCf) {
+              const payload = {
+                values: cfRes.items.map(field => {
+                  const raw = cfValues[field.field_code]
+                  const val = (raw !== undefined && raw !== null && raw !== '')
+                    ? formatApiValue(field.field_type, raw)
+                    : null
+                  return {
+                    custom_field_id: field.id,
+                    value: val,
+                  }
+                }),
+              }
+              await saveCastRoleMapFieldValues(mapId, payload)
+              console.log('[CastRoleMapModal] saveCastRoleMapFieldValues SUCCESS for mapId:', mapId, 'payload:', payload)
+            }
+            // 保存多语言字段值（按语言分别保存）
+            if (hasI18n) {
+              for (const [lang, fields] of Object.entries(i18nVals)) {
+                const payloadFields: Record<string, string | null> = {}
+                for (const [fieldName, fieldValue] of Object.entries(fields)) {
+                  const field = cfRes.items.find(f => f.field_code === fieldName && f.multi_language)
+                  if (!field) continue
+                  payloadFields[fieldName] = (fieldValue !== undefined && fieldValue !== null && fieldValue !== '')
+                    ? formatApiValue(field.field_type, fieldValue)
+                    : null
+                }
+                if (Object.keys(payloadFields).length > 0) {
+                  await saveCastRoleMapI18n(mapId, { language: lang, fields: payloadFields })
+                }
+              }
+              console.log('[CastRoleMapModal] saveCastRoleMapI18n SUCCESS for mapId:', mapId)
+            }
+          } catch (cfErr) {
+            console.error('[CastRoleMapModal] save custom fields/i18n FAILED for mapId:', mapId, cfErr)
+            // 自定义字段保存失败不阻断主流程
+          }
+        }
+      }
+
       void message.success(t('content.castRoleMap.addSuccess'), 3)
       setPendingAdditions([])
       setPendingDeletions([])
+      setPendingEdits({})
       await loadMappings()
       onSuccess?.()
       onClose()
@@ -314,6 +506,7 @@ export default function CastRoleMapModal({
   const handleCancel = () => {
     setPendingAdditions([])
     setPendingDeletions([])
+    setPendingEdits({})
     onClose()
   }
 
@@ -362,12 +555,14 @@ export default function CastRoleMapModal({
         )
         return (
           <Popover content={roleMenu} trigger={readOnly ? undefined : 'click'} placement="right">
-            <Button
-              type="link"
-              size="small"
-              icon={<PlusOutlined />}
-              disabled={readOnly}
-            />
+            <Tooltip title={t('common.add')}>
+              <Button
+                type="link"
+                size="small"
+                icon={<PlusOutlined />}
+                disabled={readOnly}
+              />
+            </Tooltip>
           </Popover>
         )
       },
@@ -379,7 +574,7 @@ export default function CastRoleMapModal({
     {
       title: t('content.col.poster'),
       key: 'cast_poster_url',
-      width: 50,
+      width: 80,
       render: (_, record) => (
         <PosterImage src={record.cast_poster_url} alt={record.cast_name ?? undefined} />
       ),
@@ -405,20 +600,24 @@ export default function CastRoleMapModal({
       hidden: readOnly,
       render: (_, record) => {
         return (
-          <Space size={4}>
-            <Button
-              type="link"
-              size="small"
-              icon={<EditOutlined />}
-              onClick={() => handleEditStart(record)}
-            />
+          <Space size={0}>
+            <Tooltip title={t('common.edit')}>
+              <Button
+                type="link"
+                size="small"
+                icon={<EditOutlined />}
+                onClick={() => handleEditStart(record)}
+              />
+            </Tooltip>
             <Popconfirm
               title={t('content.castRoleMap.deleteConfirm')}
               onConfirm={() => void handleDelete(record.map_id)}
               okText={t('common.confirm')}
               cancelText={t('common.cancel')}
             >
-              <Button type="link" danger size="small" icon={<DeleteOutlined />} />
+              <Tooltip title={t('common.delete')}>
+                <Button type="link" danger size="small" icon={<DeleteOutlined />} />
+              </Tooltip>
             </Popconfirm>
           </Space>
         )
@@ -559,7 +758,9 @@ export default function CastRoleMapModal({
         open={metadataModalOpen}
         mapId={editingMapId}
         pendingItem={pendingEditItem}
+        pendingEditValues={editingMapId ? pendingEdits[editingMapId] ?? null : null}
         onUpdatePendingItem={handleUpdatePendingItem}
+        onEditData={handleEditData}
         readOnly={readOnly}
         onClose={() => {
           setMetadataModalOpen(false)

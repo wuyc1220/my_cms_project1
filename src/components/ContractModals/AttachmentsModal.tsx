@@ -1,10 +1,12 @@
-﻿/**
+/**
  * AttachmentsModal - 合同附件管理弹窗
  */
 
+import dayjs from 'dayjs'
 import { useEffect, useState } from 'react'
 import {
   Button,
+  Popconfirm,
   Space,
   Table,
   Tooltip,
@@ -21,9 +23,9 @@ import type { UploadRequestOption } from '@rc-component/upload/lib/interface'
 import {
   getContractAttachments,
   deleteContractAttachment,
-  uploadContractAttachment,
-  downloadContractAttachment,
+  registerContractAttachment,
 } from '../../api/contracts'
+import { uploadAttachment } from '../../api/attachments'
 import type { ContractAttachmentItem, ContractListItem } from '../../types/trade'
 import { useI18n } from '../../i18n/useI18n'
 import { usePermission } from '../../hooks/usePermission'
@@ -72,13 +74,24 @@ export default function AttachmentsModal({
     if (!contract) return
     const { file, onSuccess, onError } = options
     const fileObj = file instanceof File ? file : await fetch(file as string).then((r) => r.blob())
-    const formData = new FormData()
-    formData.append('file', fileObj as File)
+    
     setUploading(true)
     try {
-      const result = await uploadContractAttachment(contract.id, formData)
+      // 步骤1：调用通用上传接口
+      const uploadResult = await uploadAttachment(fileObj as File, 'contracts')
+      
+      // 步骤2：注册附件记录到合同附件表(存储storage_url加密全路径)
+      const result = await registerContractAttachment(
+        contract.id,
+        uploadResult.file_path,
+        uploadResult.file_name,
+        uploadResult.file_size,
+        uploadResult.storage_url,  // 传递加密全路径
+      )
+      
+      const displayName = (uploadResult.file_name || '').replace(/^.*[/\\]/, '')
       setAttachments((prev) => [result, ...prev])
-      void message.success(`「${result.file_name}」${t('common.msg.saveSuccess')}`, 3)
+      void message.success(`"${displayName}" ${t('common.msg.saveSuccess')}`, 3)
       if (onSuccess) onSuccess(result)
     } catch (err) {
       if (isHandledError(err)) return
@@ -92,7 +105,16 @@ export default function AttachmentsModal({
   const handleDownload = async (attachment: ContractAttachmentItem) => {
     setDownloadingId(attachment.id)
     try {
-      const blob = await downloadContractAttachment(attachment.contract_id, attachment.id)
+      // 优先使用 relative_path 构造下载 URL，避免加密路径双重编码问题
+      const downloadUrl = attachment.relative_path
+        ? `/api/v1/attachments/download?path=${encodeURIComponent(attachment.relative_path)}&inline=1`
+        : (attachment.url || '')
+      const token = localStorage.getItem('token')
+      const resp = await fetch(downloadUrl, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!resp.ok) throw new Error(`${resp.status}`)
+      const blob = await resp.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -133,7 +155,10 @@ export default function AttachmentsModal({
       dataIndex: 'file_name',
       key: 'file_name',
       ellipsis: { showTitle: false },
-      render: (val: string) => <Tooltip title={val}><span>{val}</span></Tooltip>,
+      render: (val: string) => {
+        const displayName = val.replace(/^.*[/\\]/, '')
+        return <Tooltip title={displayName}><span>{displayName}</span></Tooltip>
+      },
     },
     {
       title: t('contract.col.size'),
@@ -148,7 +173,7 @@ export default function AttachmentsModal({
       key: 'created_at',
       width: 160,
       render: (val: string | null) =>
-        val ? new Date(val).toLocaleString(undefined, { hour12: false }) : '—',
+        val ? dayjs(val).format('YYYY-MM-DD HH:mm:ss') : '—',
     },
     {
       title: t('common.action'),
@@ -166,16 +191,21 @@ export default function AttachmentsModal({
               onClick={() => void handleDownload(row)}
             />
           </Tooltip>
-          <Tooltip title={canOperateContract ? t('common.delete') : t('common.msg.noPermission')}>
-            <Button
-              type="link"
-              size="small"
-              icon={<DeleteOutlined />}
-              danger
-              disabled={!canOperateContract}
-              onClick={() => canOperateContract && void handleDelete(row)}
-            />
-          </Tooltip>
+          <Popconfirm
+            title={t('contract.confirmDeleteAttachment', { name: row.file_name })}
+            disabled={!canOperateContract}
+            onConfirm={() => void handleDelete(row)}
+          >
+            <Tooltip title={canOperateContract ? t('common.delete') : t('common.msg.noPermission')}>
+              <Button
+                type="link"
+                size="small"
+                icon={<DeleteOutlined />}
+                danger
+                disabled={!canOperateContract}
+              />
+            </Tooltip>
+          </Popconfirm>
         </Space>
       ),
     },

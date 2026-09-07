@@ -8,8 +8,8 @@
  * - 底部：Cancel / Confirm
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Button, Modal, Select, Space, Spin, Table, Tag, message } from 'antd'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Button, Col, Form, Modal, Row, Select, Space, Spin, Table, Tag, Tooltip, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { CaretDownOutlined, CaretRightOutlined, CheckCircleFilled, MinusCircleOutlined, PlusCircleOutlined } from '@ant-design/icons'
 import TrimInput from './TrimInput'
@@ -104,24 +104,6 @@ const buildPlatformTree = (
     }))
 }
 
-/** 递归收集所有已选中栏目的父节点 key */
-const collectParentKeys = (
-  rows: CategoryRow[],
-  linkedIds: Set<number>,
-  parentKey?: string
-): string[] => {
-  const keys: string[] = []
-  for (const row of rows) {
-    if (linkedIds.has(row.id)) {
-      if (parentKey) keys.push(parentKey)
-    }
-    if (row.children?.length) {
-      keys.push(...collectParentKeys(row.children, linkedIds, row.key.toString()))
-    }
-  }
-  return keys
-}
-
 export default function CategoryLinkModal({
   open,
   contentId,
@@ -140,12 +122,17 @@ export default function CategoryLinkModal({
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyCategory, setHistoryCategory] = useState<{ id: number; name: string } | null>(null)
   const [expandedKeys, setExpandedKeys] = useState<React.Key[]>([])
+  // 记录上一次渲染时条件是否非空，用于检测「条件被清空」的时机
+  const prevHasFiltersRef = useRef(false)
 
   /* ── 搜索条件 ─────────────────────────────────────────────────────────── */
   const [searchPlatforms, setSearchPlatforms] = useState<string[]>([])
   const [searchName, setSearchName] = useState('')
   const [searchCategoryTypes, setSearchCategoryTypes] = useState<string[]>([])
   const [searchIngestStatuses, setSearchIngestStatuses] = useState<string[]>([])
+
+  // 是否存在筛选条件（提前声明，供展开策略/自动查询等 effect 使用）
+  const hasFilters = searchName || searchPlatforms.length > 0 || searchCategoryTypes.length > 0 || searchIngestStatuses.length > 0
 
   const platformOptions = useMemo(
     () => extractDictOptions(dictTree, 'Platform'),
@@ -157,12 +144,12 @@ export default function CategoryLinkModal({
   )
   const ingestStatusOptions = useMemo(
     () => [
-      { label: 'none', value: 'none' },
-      { label: 'processing', value: 'processing' },
-      { label: 'success', value: 'success' },
-      { label: 'failure', value: 'failure' },
+      { label: t('common.ingestStatus.none'), value: 'none' },
+      { label: t('common.ingestStatus.processing'), value: 'processing' },
+      { label: t('common.ingestStatus.success'), value: 'success' },
+      { label: t('common.ingestStatus.failure'), value: 'failure' },
     ],
-    []
+    [t]
   )
 
   /* ── 数据加载 ─────────────────────────────────────────────────────────── */
@@ -193,22 +180,38 @@ export default function CategoryLinkModal({
     }
   }, [open, loadData])
 
-  // 当数据加载完成后，自动展开包含已选中栏目的平台
+  // 关闭弹窗时清空查询条件，避免再次打开时残留上一次的筛选内容
   useEffect(() => {
-    if (open && categoryTree.length > 0 && platformOptions.length > 0) {
-      const treeData = buildPlatformTree(categoryTree, platformOptions, !hasFilters)
-      const parentKeys = collectParentKeys(
-        treeData.flatMap((p) => p.children),
-        pendingLinkedIds
-      )
-      // 展开所有包含选中项的平台
-      const platformKeys = treeData
-        .filter((p) => p.children.some((c) => pendingLinkedIds.has(c.id) || c.children?.some((gc) => pendingLinkedIds.has(gc.id))))
-        .map((p) => p.key)
-      
-      setExpandedKeys([...new Set([...parentKeys, ...platformKeys])])
+    if (!open) {
+      setSearchPlatforms([])
+      setSearchName('')
+      setSearchCategoryTypes([])
+      setSearchIngestStatuses([])
     }
-  }, [open, categoryTree, platformOptions, pendingLinkedIds])
+  }, [open])
+
+  // 自动展开策略：数据加载后默认展开所有层级（平台 + 各级父栏目），
+  // 无论是否带筛选条件，平台下的全部子集都直接可见，
+  // 避免只展示平台层或只展示两级
+  useEffect(() => {
+    if (!open || categoryTree.length === 0 || platformOptions.length === 0) return
+    const treeData = buildPlatformTree(categoryTree, platformOptions, !hasFilters)
+    const keys: React.Key[] = []
+    const walkChildren = (rows: CategoryRow[]) => {
+      for (const row of rows) {
+        if (row.children?.length) {
+          keys.push(row.key)
+          walkChildren(row.children)
+        }
+      }
+    }
+    for (const p of treeData) {
+      if (!p.children.length) continue
+      keys.push(p.key)
+      walkChildren(p.children)
+    }
+    setExpandedKeys([...new Set(keys)])
+  }, [open, categoryTree, platformOptions, hasFilters])
 
   /* ── 筛选 ─────────────────────────────────────────────────────────────── */
   const handleFilter = async () => {
@@ -234,6 +237,8 @@ export default function CategoryLinkModal({
     setSearchName('')
     setSearchCategoryTypes([])
     setSearchIngestStatuses([])
+    // Reset 自身会重新加载完整树，抑制下方「条件清空自动查询」的重复请求
+    prevHasFiltersRef.current = false
     void loadData()
   }
 
@@ -287,18 +292,31 @@ export default function CategoryLinkModal({
   }
 
   /* ── 表格数据 ─────────────────────────────────────────────────────────── */
-  const hasFilters = searchName || searchPlatforms.length > 0 || searchCategoryTypes.length > 0 || searchIngestStatuses.length > 0
-
   const tableData = useMemo(
     () => buildPlatformTree(categoryTree, platformOptions, !hasFilters),
     [categoryTree, platformOptions, hasFilters],
   )
 
+  // 条件由非空变为全空时，自动按空条件重新查询恢复完整树；
+  // 否则 categoryTree 仍为上次过滤后的剪枝子树，平台下的子集不会展示，
+  // 需要再点一次查询才能刷新
+  useEffect(() => {
+    if (!open) {
+      prevHasFiltersRef.current = false
+      return
+    }
+    const hadFilters = prevHasFiltersRef.current
+    prevHasFiltersRef.current = Boolean(hasFilters)
+    if (hadFilters && !hasFilters) {
+      void handleFilter()
+    }
+  }, [open, hasFilters])
+
   const columns: ColumnsType<TreeRow> = [
     {
       title: t('category.allocate.platform'),
       dataIndex: 'platform',
-      width: 120,
+      width: 300,
       render: (_: string, record) => {
         if (record.rowType === 'platform') return <strong>{record.platformLabel}</strong>
         // 栏目节点也显示平台名称
@@ -308,7 +326,7 @@ export default function CategoryLinkModal({
     {
       title: t('category.allocate.categoryId'),
       dataIndex: 'id',
-      width: 120,
+      width: 140,
       render: (id: number, record) => {
         if (record.rowType === 'platform') return null
         return id
@@ -335,26 +353,30 @@ export default function CategoryLinkModal({
     {
       title: t('category.allocate.categoryType'),
       dataIndex: 'category_type',
-      width: 140,
+      width: 160,
       render: (type: string | null, record) => {
         if (record.rowType === 'platform') return null
-        return type || '—'
+        if (!type) return '—'
+        return categoryTypeOptions.find((o) => o.value === type)?.label ?? type
       },
     },
     {
       title: t('category.allocate.ingestStatus'),
       dataIndex: 'ingest_status',
-      width: 120,
+      width: 160,
       render: (status: string, record) => {
         if (record.rowType === 'platform') return null
         if (!status || status === 'None') return '—'
+        const statusKey = status === 'Publishing' ? 'processing' : status === 'failed' ? 'failure' : status
         const tag =
-          status === 'success' ? (
-            <Tag color="success">{status}</Tag>
-          ) : status === 'failure' ? (
-            <Tag color="error">{status}</Tag>
+          statusKey === 'success' ? (
+            <Tag color="success">{t(`common.ingestStatus.${statusKey}` as any)}</Tag>
+          ) : statusKey === 'failure' ? (
+            <Tag color="error">{t(`common.ingestStatus.${statusKey}` as any)}</Tag>
+          ) : statusKey === 'processing' ? (
+            <Tag color="processing">{t(`common.ingestStatus.${statusKey}` as any)}</Tag>
           ) : (
-            <Tag>{status}</Tag>
+            <Tag>{t(`common.ingestStatus.${statusKey}` as any)}</Tag>
           )
         return (
           <Button
@@ -387,7 +409,10 @@ export default function CategoryLinkModal({
           <Button
             type="link"
             size="large"
-            onClick={() => toggleLink(record.id)}
+            onClick={(e) => {
+              e.stopPropagation()
+              toggleLink(record.id)
+            }}
             icon={isLinked ? <MinusCircleOutlined /> : <PlusCircleOutlined />}
           />
         )
@@ -405,7 +430,7 @@ export default function CategoryLinkModal({
         title={titleText}
         open={open}
         onCancel={onClose}
-        width={'60%'}
+        width={'70%'}
         destroyOnHidden
         footer={
           <Space>
@@ -418,55 +443,96 @@ export default function CategoryLinkModal({
           </Space>
         }
       >
-      <Space wrap style={{ marginBottom: 16 }}>
-        <Select
-          showSearch
-          optionFilterProp="label"
-          mode="multiple"
-          allowClear
-          maxTagCount="responsive"
-          style={{ minWidth: 160 }}
-          placeholder={t('category.allocate.placeholder.platform')}
-          value={searchPlatforms}
-          onChange={setSearchPlatforms}
-          options={platformOptions}
-        />
-        <TrimInput
-          style={{ width: 180 }}
-          placeholder={t('category.allocate.placeholder.categoryName')}
-          value={searchName}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchName(e.target.value)}
-          onPressEnter={handleFilter}
-        />
-        <Select
-          showSearch
-          optionFilterProp="label"
-          mode="multiple"
-          allowClear
-          maxTagCount="responsive"
-          style={{ minWidth: 160 }}
-          placeholder={t('category.allocate.placeholder.categoryType')}
-          value={searchCategoryTypes}
-          onChange={setSearchCategoryTypes}
-          options={categoryTypeOptions}
-        />
-        <Select
-          showSearch
-          optionFilterProp="label"
-          mode="multiple"
-          allowClear
-          maxTagCount="responsive"
-          style={{ minWidth: 160 }}
-          placeholder={t('category.allocate.placeholder.ingestStatus')}
-          value={searchIngestStatuses}
-          onChange={setSearchIngestStatuses}
-          options={ingestStatusOptions}
-        />
-        <Button onClick={handleReset}>{t('category.allocate.reset')}</Button>
-        <Button type="primary" onClick={handleFilter}>
-          {t('category.allocate.filter')}
-        </Button>
-      </Space>
+      <Form layout="vertical" style={{ marginBottom: 16 }}>
+        <Row gutter={16}>
+          <Col span={8}>
+            <Form.Item label={t('category.allocate.platform')}>
+              <Select
+                showSearch
+                optionFilterProp="label"
+                mode="multiple"
+                allowClear
+                maxTagCount="responsive"
+                maxTagPlaceholder={(omitted) => (
+                  <Tooltip title={omitted.map((o) => String(o.label)).join(', ')}>
+                    <span>+{omitted.length} ...</span>
+                  </Tooltip>
+                )}
+                style={{ width: '100%' }}
+                placeholder={t('category.allocate.placeholder.platform')}
+                value={searchPlatforms}
+                onChange={setSearchPlatforms}
+                options={platformOptions}
+              />
+            </Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item label={t('category.allocate.categoryName')}>
+              <TrimInput
+                style={{ width: '100%' }}
+                placeholder={t('category.allocate.placeholder.categoryName')}
+                value={searchName}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchName(e.target.value)}
+                onPressEnter={handleFilter}
+              />
+            </Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item label={t('category.allocate.categoryType')}>
+              <Select
+                showSearch
+                optionFilterProp="label"
+                mode="multiple"
+                allowClear
+                maxTagCount="responsive"
+                maxTagPlaceholder={(omitted) => (
+                  <Tooltip title={omitted.map((o) => String(o.label)).join(', ')}>
+                    <span>+{omitted.length} ...</span>
+                  </Tooltip>
+                )}
+                style={{ width: '100%' }}
+                placeholder={t('category.allocate.placeholder.categoryType')}
+                value={searchCategoryTypes}
+                onChange={setSearchCategoryTypes}
+                options={categoryTypeOptions}
+              />
+            </Form.Item>
+          </Col>
+        </Row>
+        <Row gutter={16} align="bottom">
+          <Col span={8}>
+            <Form.Item label={t('category.allocate.ingestStatus')}>
+              <Select
+                showSearch
+                optionFilterProp="label"
+                mode="multiple"
+                allowClear
+                maxTagCount="responsive"
+                maxTagPlaceholder={(omitted) => (
+                  <Tooltip title={omitted.map((o) => String(o.label)).join(', ')}>
+                    <span>+{omitted.length} ...</span>
+                  </Tooltip>
+                )}
+                style={{ width: '100%' }}
+                placeholder={t('category.allocate.placeholder.ingestStatus')}
+                value={searchIngestStatuses}
+                onChange={setSearchIngestStatuses}
+                options={ingestStatusOptions}
+              />
+            </Form.Item>
+          </Col>
+          <Col span={16} style={{ textAlign: 'right' }}>
+            <Form.Item label=" ">
+              <Space>
+                <Button onClick={handleReset}>{t('category.allocate.reset')}</Button>
+                <Button type="primary" onClick={handleFilter}>
+                  {t('category.allocate.filter')}
+                </Button>
+              </Space>
+            </Form.Item>
+          </Col>
+        </Row>
+      </Form>
 
       {loading ? (
         <div
@@ -494,6 +560,7 @@ export default function CategoryLinkModal({
             onExpand: (expanded, record) => {
               setExpandedKeys((prev) => expanded ? [...prev, record.key] : prev.filter((k) => k !== record.key))
             },
+            expandRowByClick: false,
             indentSize: 20,
             expandIcon: ({ expanded, onExpand, record }) => {
               const hasChildren = 'children' in record && Array.isArray(record.children) && (record.children as CategoryRow[]).length > 0

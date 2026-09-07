@@ -59,7 +59,14 @@ const PublishedStats: React.FC<PublishedStatsProps> = ({ data }) => {
           title: false,
           position: 'right' as const,
           rowPadding: 5,
+          maxCols: 1,
+          width: 140,           // 固定宽度（像素）
         },
+      },
+      tooltip: {
+        title: (d: { name: string }) => d.name,
+        // 挂载到 body，避免被左侧菜单栏遮挡及容器 overflow 裁剪
+        mount: 'body',
       },
       interaction: {
         elementSelect: {

@@ -74,7 +74,7 @@ export default function ScheduleCreateModal({
     try {
       const users = await getAuthUsers()
       const options = users.map((u: UserSimpleItem) => ({
-        label: u.display_name ? `${u.display_name}（${u.username}）` : u.username,
+        label: u.display_name ? `${u.display_name}(${u.username})` : u.username,
         value: u.id,
       }))
       setUserOptions(options)
@@ -171,7 +171,19 @@ export default function ScheduleCreateModal({
             <Form.Item
               name="end_time"
               label={t('common.col.endTime')}
-              rules={[{ required: true, message: t('live.schedule.form.endTimeRequired') }]}
+              dependencies={['begin_time']}
+              rules={[
+                { required: true, message: t('live.schedule.form.endTimeRequired') },
+                ({ getFieldValue }) => ({
+                  validator(_, value) {
+                    const beginTime = getFieldValue('begin_time')
+                    if (value != null && beginTime != null && value.isBefore(beginTime)) {
+                      return Promise.reject(new Error(t('content.metadata.sectionsInfo.endMustGreaterStart')))
+                    }
+                    return Promise.resolve()
+                  },
+                }),
+              ]}
             >
               <DatePicker showTime style={{ width: '100%' }} />
             </Form.Item>

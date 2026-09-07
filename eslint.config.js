@@ -4,6 +4,7 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
+import i18nPlugin from './scripts/no-hardcoded-prompt.js'
 
 export default defineConfig([
   globalIgnores(['dist']),
@@ -15,6 +16,12 @@ export default defineConfig([
       reactHooks.configs.flat.recommended,
       reactRefresh.configs.vite,
     ],
+    plugins: {
+      'i18n-prompt': i18nPlugin,
+    },
+    rules: {
+      'i18n-prompt/no-hardcoded-prompt': 'error',
+    },
     languageOptions: {
       ecmaVersion: 2020,
       globals: globals.browser,

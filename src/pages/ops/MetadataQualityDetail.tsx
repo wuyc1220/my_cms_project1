@@ -256,6 +256,7 @@ export default function MetadataQualityDetail() {
               defaultPageSize: PAGINATION_CONFIG.defaultPageSize,
               pageSizeOptions: PAGINATION_CONFIG.pageSizeOptions.map(String),
               showSizeChanger: true,
+              showQuickJumper: true,
               showTotal: (total) => t('common.totalItems', { n: total }),
               position: ['bottomCenter'],
               onChange: (page, pageSize) => {

@@ -233,7 +233,7 @@ export default function RoleManagement() {
     roleForm.setFieldsValue({
       code: record.code,
       name: record.name,
-      description: record.description || undefined,
+      description: record.description ?? undefined,
       status: record.status === 'active',
     })
     setModalOpen(true)
@@ -246,16 +246,16 @@ export default function RoleManagement() {
       if (editingRecord) {
         const payload: RoleUpdatePayload = {
           name: values.name,
-          description: values.description || null,
+          description: values.description ?? null,
           status: values.status ? 'active' : 'inactive',
         }
         await updateRole(editingRecord.id, payload)
         message.success(t('system.role.msgUpdated'))
       } else {
         const payload: RoleCreatePayload = {
-          code: values.code || null,
+          code: values.code ?? null,
           name: values.name,
-          description: values.description || null,
+          description: values.description ?? null,
           status: values.status ? 'active' : 'inactive',
         }
         await createRole(payload)
@@ -428,11 +428,11 @@ export default function RoleManagement() {
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16, gap: 8 }}>
-        {canOperate && <Button onClick={() => void handleBatchStatus('active')}>{t('system.role.btnBatchEnable')}</Button>}
-        {canOperate && <Button onClick={() => void handleBatchStatus('inactive')}>{t('system.role.btnBatchDisable')}</Button>}
+        {canOperate && <Button disabled={!selectedRowKeys.length} onClick={() => void handleBatchStatus('active')}>{t('system.role.btnBatchEnable')}</Button>}
+        {canOperate && <Button disabled={!selectedRowKeys.length} onClick={() => void handleBatchStatus('inactive')}>{t('system.role.btnBatchDisable')}</Button>}
         {canOperate && (
-          <Popconfirm title={t('system.role.confirmBatchDelete')} onConfirm={() => void handleBatchDelete()} okText={t('common.confirm')} cancelText={t('common.cancel')}>
-            <Button danger>{t('system.role.btnBatchDelete')}</Button>
+          <Popconfirm title={t('system.role.confirmBatchDelete')} onConfirm={() => void handleBatchDelete()} disabled={!selectedRowKeys.length} okText={t('common.confirm')} cancelText={t('common.cancel')}>
+            <Button danger disabled={!selectedRowKeys.length}>{t('system.role.btnBatchDelete')}</Button>
           </Popconfirm>
         )}
         {canOperate && (
@@ -490,7 +490,7 @@ export default function RoleManagement() {
         okText={t('common.confirm')}
         cancelText={t('common.cancel')}
         width={520}
-        destroyOnClose
+        destroyOnHidden
       >
         {permLoading ? (
           <div style={{ textAlign: 'center', padding: 24 }}>{t('common.loading')}</div>

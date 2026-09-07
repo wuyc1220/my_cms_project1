@@ -81,3 +81,22 @@ export const removeCategoryContent = async (categoryId: number, contentId: numbe
   await request.delete(`/categories/${categoryId}/contents/${contentId}`)
 }
 
+// ── Category 同步给业务系统 ─────────────────────────────────────
+
+export interface CategorySyncPayload {
+  category_ids: number[]
+}
+
+export interface CategorySyncResponse {
+  success: boolean
+  file_path: string
+  stats: Record<string, number>
+  synced_ids: number[]
+  message: string
+}
+
+export const syncCategories = async (payload: CategorySyncPayload): Promise<CategorySyncResponse> => {
+  const response = await request.post<CategorySyncResponse>('/categories/sync', payload)
+  return response.data
+}
+

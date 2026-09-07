@@ -55,7 +55,6 @@ export interface CustomTagQueryParams {
   page?: number
   page_size?: number
   name?: string
-  languages?: string[]
   sort_by?: string
   sort_order?: 'asc' | 'desc'
 }
@@ -323,7 +322,7 @@ export interface CastUpdatePayload {
 export interface CastQueryParams {
   page?: number
   page_size?: number
-  cast_id?: number | null
+  cast_id?: string
   name?: string
   description?: string
   ingest_statuses?: string[]
@@ -436,4 +435,5 @@ export interface AttachmentUploadResult {
   file_name: string
   file_size: number
   file_url: string
+  storage_url: string
 }

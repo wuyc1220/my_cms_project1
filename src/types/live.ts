@@ -1,13 +1,15 @@
 // 直播管理（Live）域类型定义
 
+import type { EntityFieldValueItem } from './basic'
+
 // ─── 频道管理 ──────────────────────────────────────────────────────────
 
 export interface ChannelListItem {
   id: number
   title: string
   status: string
-  genre_id?: number
   genre_name?: string
+  genre_ids?: number[]
   channel_number?: number | null
   language?: string[]
   category_names: string[]
@@ -17,6 +19,7 @@ export interface ChannelListItem {
   license_start?: string
   license_end?: string
   created_at?: string
+  is_discarded?: boolean
 }
 
 export interface ChannelDetailItem {
@@ -24,10 +27,11 @@ export interface ChannelDetailItem {
   title: string
   content_type: string
   status: string
-  genre_id?: number
   genre_name?: string
+  genre_ids?: number[]
   package_names: string[]
   category_names?: string[]
+  custom_tag_names?: string[]
   provider_names: string[]
   license_start?: string
   license_end?: string
@@ -40,7 +44,7 @@ export interface ChannelDetailItem {
 
 export interface ChannelUpdatePayload {
   title?: string
-  genre_id?: number
+  genre_ids?: number[]
 }
 
 export interface ChannelQueryParams {
@@ -48,7 +52,6 @@ export interface ChannelQueryParams {
   page_size?: number
   title?: string
   statuses?: string[]
-  genre_id?: number
   genre_ids?: number[]
   provider_id?: number
   provider_ids?: number[]
@@ -64,6 +67,11 @@ export interface ChannelQueryParams {
   license_start_to?: string
   license_end_from?: string
   license_end_to?: string
+  publish_date_from?: string
+  publish_date_to?: string
+  unpublish_date_from?: string
+  unpublish_date_to?: string
+  is_discarded?: boolean
   sort_by?: string
   sort_order?: 'asc' | 'desc'
 }
@@ -77,8 +85,11 @@ export interface PhysicalChannelListItem {
   channel_number?: number
   status: boolean
   mediaservice?: string
+  mediaservice_name?: string
   definition?: string
+  definition_name?: string
   videoencode?: string
+  videoencode_name?: string
   bitrate?: string
   deeplink_ch_url?: string
   shifttime?: number
@@ -107,6 +118,7 @@ export interface PhysicalChannelCreatePayload {
   tstv_enable?: boolean
   cutv_enable?: boolean
   encryption?: boolean
+  custom_fields?: EntityFieldValueItem[]
 }
 
 // ─── 物理频道历史记录 ────────────────────────────────────────────────────
@@ -125,6 +137,8 @@ export interface PhysicalChannelHistoryItem {
 export interface PhysicalChannelHistoryQueryParams {
   processed_type?: string
   processed_by?: string
+  processed_at_from?: string
+  processed_at_to?: string
   page?: number
   page_size?: number
 }
@@ -157,6 +171,7 @@ export interface ProcessListItem {
   start_dt?: string
   end_dt?: string
   assigned?: string
+  assigned_display_name?: string
   processed_before?: boolean
   info?: string
 }
@@ -165,6 +180,7 @@ export interface StatusLogListItem {
   id: number
   processed_at?: string
   processed_by?: string
+  processed_by_display_name?: string
   before_status?: string
   after_status?: string
 }
@@ -173,6 +189,7 @@ export interface ActivityLogListItem {
   id: number
   processed_at?: string
   processed_by?: string
+  processed_by_display_name?: string
   processed_type?: string
   details?: string
   previous_value?: string
@@ -188,16 +205,20 @@ export interface ScheduleListItem {
   title: string
   status: string
   content_type?: string
+  parent_id?: number
   channel_id?: number
   channel_name?: string
+  genre_name?: string
   begin_time?: string
   end_time?: string
   cutv_enable?: boolean
   is_archived?: boolean
+  is_discarded?: boolean
   archive_content_id?: number | null
   archive_content_type?: string | null
   archive_published?: boolean
   archive_scheduled_time?: string | null
+  is_published?: boolean
   review_status?: string
   created_at?: string
 }
@@ -219,6 +240,8 @@ export interface ScheduleQueryParams {
   cutv_enable?: boolean
   cutv_enables?: string[]
   is_archived?: boolean
+  is_discarded?: boolean
+  statuses?: string[]
   begin_from?: string
   begin_to?: string
   end_from?: string
@@ -234,8 +257,8 @@ export interface ArchiveListItem {
   content_type: string
   title: string
   status: string
-  genre_id?: number
   genre_name?: string
+  genre_ids?: number[]
   type_name?: string
   channel_name?: string
   begin_time?: string
@@ -249,6 +272,7 @@ export interface ArchiveListItem {
   sequence?: number
   series_ordinal?: number
   created_at?: string
+  is_discarded?: boolean
 }
 
 export interface ArchiveQueryParams {
@@ -257,11 +281,13 @@ export interface ArchiveQueryParams {
   title?: string
   content_types?: string[]
   statuses?: string[]
-  genre_id?: number
-  provider_id?: number
-  package_id?: number
+  genre_ids?: number[]
+  provider_ids?: number[]
+  package_ids?: number[]
   category_id?: number
   custom_tag_ids?: number[]
+  deleted?: string
+  type_ids?: number[]
   channel_name?: string
   program_name?: string
   begin_time_from?: string
@@ -273,6 +299,10 @@ export interface ArchiveQueryParams {
   license_end_from?: string
   license_end_to?: string
   source_schedule_id?: number
+  publish_date_from?: string
+  publish_date_to?: string
+  unpublish_date_from?: string
+  unpublish_date_to?: string
   sort_by?: string
   sort_order?: 'asc' | 'desc'
 }
@@ -283,6 +313,16 @@ export interface ArchiveRequestPayload {
   schedule_id: number
   mode?: string
   scheduled_time?: string
+  // 归档弹窗随传的元数据字段：与归档同事务落库，归档失败时整体回滚
+  series_type?: number
+  series_name?: string
+  series_id?: string
+  sequence?: number
+  series_ordinal?: number
+  show_name?: string
+  show_id?: string
+  program_id?: string
+  cutv_enable?: boolean
 }
 
 export interface ArchiveResponse {

@@ -19,22 +19,9 @@ export const uploadAttachment = (file: File, category?: string): Promise<Attachm
 }
 
 /**
- * 通用附件下载（通过 query 参数传递路径，避免特殊字符编码问题）
- * @param filePath upload 接口返回的 file_path
- */
-export const downloadAttachment = (filePath: string): Promise<Blob> => {
-  return api
-    .get('/attachments/download', {
-      params: { path: filePath },
-      responseType: 'blob',
-    })
-    .then((r) => r.data as Blob)
-}
-
-/**
  * 获取附件可直接访问的 URL
  * @param filePath upload 接口返回的 file_path
  */
 export const getAttachmentUrl = (filePath: string): string => {
-  return `/api/v1/attachments/download?path=${encodeURIComponent(filePath)}&inline=1`
+  return `/attachments/download?path=${encodeURIComponent(filePath)}&inline=1`
 }

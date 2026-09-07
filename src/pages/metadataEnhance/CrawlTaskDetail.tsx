@@ -1,6 +1,7 @@
 /**
  * 爬取任务详情页面
  */
+import dayjs from 'dayjs'
 import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import {
@@ -30,13 +31,13 @@ export default function CrawlTaskDetail() {
     if (!id) return
     const taskId = parseInt(id, 10)
     if (isNaN(taskId)) {
-      message.error('Invalid task ID')
+      message.error(t('crawlTask.detail.msgInvalidId'))
       return
     }
     setLoading(true)
     getCrawlTaskDetail(taskId)
       .then(setDetail)
-      .catch(() => message.error('Failed to load task detail'))
+      .catch(() => message.error(t('crawlTask.detail.msgLoadFailed')))
       .finally(() => setLoading(false))
   }, [id])
 
@@ -45,7 +46,7 @@ export default function CrawlTaskDetail() {
   }
 
   if (!detail) {
-    return <div style={{ padding: 24 }}>Task not found</div>
+    return <div style={{ padding: 24 }}>{t('crawlTask.detail.msgNotFound')}</div>
   }
 
   const detailColumns = [
@@ -66,7 +67,7 @@ export default function CrawlTaskDetail() {
       key: 'is_used',
       width: 100,
       render: (v: string) => (
-        <Tag color={v === 'YES' ? 'success' : 'default'}>{v}</Tag>
+        <Tag color={v === 'YES' ? 'success' : 'default'}>{t(v === 'YES' ? 'common.yes' : 'common.no')}</Tag>
       ),
     },
   ]
@@ -103,7 +104,7 @@ export default function CrawlTaskDetail() {
               </Col>
               <Col span={8}>
                 <Form.Item label={t('crawlTask.detail.crawlStatus')}>
-                  <TrimInput value={detail.crawl_status} disabled style={{ background: '#f5f5f5' }} />
+                  <TrimInput value={t(`crawlTask.status.${detail.crawl_status}` as any)} disabled style={{ background: '#f5f5f5' }} />
                 </Form.Item>
               </Col>
               <Col span={8}>
@@ -114,7 +115,7 @@ export default function CrawlTaskDetail() {
               <Col span={8}>
                 <Form.Item label={t('crawlTask.detail.createdAt')}>
                   <TrimInput
-                    value={detail.created_at ? new Date(detail.created_at).toLocaleString() : '—'}
+                    value={detail.created_at ? dayjs(detail.created_at).format('YYYY-MM-DD HH:mm:ss') : '—'}
                     disabled
                     style={{ background: '#f5f5f5' }}
                   />
@@ -123,7 +124,7 @@ export default function CrawlTaskDetail() {
               <Col span={8}>
                 <Form.Item label={t('crawlTask.detail.completedAt')}>
                   <TrimInput
-                    value={detail.completed_at ? new Date(detail.completed_at).toLocaleString() : '—'}
+                    value={detail.completed_at ? dayjs(detail.completed_at).format('YYYY-MM-DD HH:mm:ss') : '—'}
                     disabled
                     style={{ background: '#f5f5f5' }}
                   />
@@ -146,6 +147,7 @@ export default function CrawlTaskDetail() {
               defaultPageSize: PAGINATION_CONFIG.defaultPageSize,
               pageSizeOptions: PAGINATION_CONFIG.pageSizeOptions.map(String),
               showSizeChanger: true,
+              showQuickJumper: true,
               showTotal: (total) => t('common.totalItems', { n: total }),
               position: ['bottomCenter'],
             }}

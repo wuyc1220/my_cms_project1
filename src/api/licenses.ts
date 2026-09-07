@@ -61,7 +61,7 @@ export const getAvailableContentsForLicense = (
     title?: string
     content_types?: string[]
     ingest_statuses?: string[]
-    genres?: string[]
+    genre_ids?: number[]
     without_license?: boolean
   }
 ) =>

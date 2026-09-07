@@ -19,7 +19,21 @@ export const useFormRules = () => {
     })
   }, [t])
 
+  const numberRangeRule = useMemo(() => {
+    return (min: number, max: number): Rule => ({
+      validator: (_, value) => {
+        if (value === null || value === undefined || value === '') return Promise.resolve()
+        if (typeof value !== 'number' || Number.isNaN(value)) return Promise.resolve()
+        if (value < min || value > max) {
+          return Promise.reject(new Error(t('common.validation.numberRange', { min, max })))
+        }
+        return Promise.resolve()
+      },
+    })
+  }, [t])
+
   return {
     maxLength: maxLengthRule,
+    numberRange: numberRangeRule,
   }
 }

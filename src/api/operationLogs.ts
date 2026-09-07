@@ -5,6 +5,7 @@ export interface OperationLogItem {
   id: number
   user_id: number | null
   user_name: string | null
+  user_display_name: string | null
   operation_type: string | null
   operation_object: string | null
   operation_content: string | null
@@ -57,7 +58,9 @@ export const getOperationLog = async (id: number): Promise<OperationLogItem> => 
   return response.data
 }
 
-export const exportOperationLogs = async (params: Omit<OperationLogQueryParams, 'page' | 'page_size'>): Promise<void> => {
+export const exportOperationLogs = async (
+  params: Omit<OperationLogQueryParams, 'page' | 'page_size'> & { ids?: string },
+): Promise<void> => {
   const response = await request.get('/operation-logs/export', {
     params,
     responseType: 'blob',

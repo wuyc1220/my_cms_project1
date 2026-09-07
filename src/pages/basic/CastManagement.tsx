@@ -32,7 +32,7 @@ const getIngestTagColor = (val: string) => {
 }
 
 interface SearchValues {
-  cast_id?: number | null
+  cast_id?: string
   name?: string
   description?: string
   ingest_statuses?: string[]
@@ -96,9 +96,8 @@ export default function CastManagement() {
     {
       name: 'cast_id',
       labelKey: 'cast.search.castId',
-      type: 'number',
+      type: 'input',
       placeholderKey: 'cast.search.castId',
-      min: 1,
     },
     {
       name: 'name',
@@ -118,10 +117,10 @@ export default function CastManagement() {
       type: 'multiSelect',
       placeholderKey: 'common.placeholder.select',
       options: [
-        { label: 'none', value: 'none' },
-        { label: 'processing', value: 'processing' },
-        { label: 'success', value: 'success' },
-        { label: 'failure', value: 'failure' },
+        { label: t('common.ingestStatus.none'), value: 'none' },
+        { label: t('common.ingestStatus.processing'), value: 'processing' },
+        { label: t('common.ingestStatus.success'), value: 'success' },
+        { label: t('common.ingestStatus.failure'), value: 'failure' },
       ],
     },
   ], [t])
@@ -195,7 +194,7 @@ export default function CastManagement() {
 
   const handleDelete = async (record: CastListItem) => {
     await deleteCast(record.id)
-    void message.success(t('cast.msg.deleted'), 3)
+    message.success(t('common.msg.deleted'))
     setSelectedIds(prev => prev.filter(id => id !== record.id))
     void loadList(pagination.current, pagination.pageSize, filters, sortField, sortOrder)
   }
@@ -203,7 +202,7 @@ export default function CastManagement() {
   const handleBatchDelete = async () => {
     if (selectedIds.length === 0) return
     await batchDeleteCasts({ ids: selectedIds })
-    void message.success(t('common.recordsCount', { count: selectedIds.length }), 3)
+    message.success(t('common.msg.deleted'))
     setSelectedIds([])
     void loadList(1, pagination.pageSize, filters, sortField, sortOrder)
   }
@@ -252,7 +251,7 @@ export default function CastManagement() {
       sorter: true,
       sortOrder: sortField === 'ingest_status' ? sortOrder : null,
       render: (val: string | null, record: CastListItem) => {
-        const displayVal = val ?? 'None'
+        const displayVal = val ?? 'none'
         const tagColor = getIngestTagColor(displayVal)
         return (
           <Button
@@ -261,7 +260,7 @@ export default function CastManagement() {
             style={{ padding: 0, height: 'auto' }}
             onClick={() => setHistoryModal({ open: true, record })}
           >
-            <Tag color={tagColor} style={{ cursor: 'pointer', margin: 0 }}>{displayVal}</Tag>
+            <Tag color={tagColor} style={{ cursor: 'pointer', margin: 0 }}>{t(`common.ingestStatus.${displayVal}` as any)}</Tag>
           </Button>
         )
       },

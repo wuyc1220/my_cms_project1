@@ -65,6 +65,7 @@ const CONTENT_TYPE_OPTIONS = [
   { label: 'MOVIE', value: 'MOVIE' },
   { label: 'EPISODE', value: 'EPISODE' },
   { label: 'SEASON', value: 'SEASON' },
+  { label: 'SEASON_SERIES', value: 'SEASON_SERIES' },
   { label: 'SERIES', value: 'SERIES' },
   { label: 'CHANNEL', value: 'CHANNEL' },
   { label: 'SCHEDULE', value: 'SCHEDULE' },
@@ -92,7 +93,7 @@ export default function TaskManagement() {
   const [list, setList] = useState<TaskListItem[]>([])
   const [loading, setLoading] = useState(false)
   const [selectedIds, setSelectedIds] = useState<number[]>([])
-  const { pagination, updatePagination, resetSort, tablePaginationProps, handleTableChange } = useTablePagination({
+  const { pagination, updatePagination, sortField, sortOrder, resetSort, tablePaginationProps, handleTableChange } = useTablePagination({
     onChange: ({ page, pageSize, sortField, sortOrder }) => {
       // eslint-disable-next-line react-hooks/immutability
       void loadList(page, pageSize, filters, sortField, sortOrder)
@@ -196,7 +197,7 @@ export default function TaskManagement() {
         const users = await getAuthUsers()
         setUserOptions(
           users.map((u: UserSimpleItem) => ({
-            label: u.display_name ? `${u.display_name}（${u.username}）` : u.username,
+            label: u.display_name ? `${u.display_name}(${u.username})` : u.username,
             value: u.id,
           }))
         )
@@ -246,8 +247,8 @@ export default function TaskManagement() {
         content_types: nextFilters.content_types as string[] | undefined,
         time_start: dateRange?.[0]?.startOf('day').toISOString(),
         time_end: dateRange?.[1]?.endOf('day').toISOString(),
-        end_time_start: endDateRange?.[0]?.toISOString(),
-        end_time_end: endDateRange?.[1]?.toISOString(),
+        end_time_start: endDateRange?.[0]?.startOf('day').toISOString(),
+        end_time_end: endDateRange?.[1]?.endOf('day').toISOString(),
         sort_by: nextSortField ?? undefined,
         sort_order: nextSortOrder === 'ascend' ? 'asc' : nextSortOrder === 'descend' ? 'desc' : undefined,
       }
@@ -263,6 +264,14 @@ export default function TaskManagement() {
 
   const openAssignModal = (record: TaskListItem) => {
     setAssignModal({ open: true, taskIds: [record.id], singleTask: record })
+    if (record.assignee_id && !userOptions.some((o) => o.value === record.assignee_id)) {
+      const aid = record.assignee_id
+      const aname = record.assignee_name
+      setUserOptions((prev) => [
+        ...prev,
+        { label: aname ?? String(aid), value: aid },
+      ])
+    }
     assignForm.setFieldsValue({ assignee_id: record.assignee_id ?? undefined, update_childs: false })
   }
 
@@ -318,8 +327,9 @@ export default function TaskManagement() {
       dataIndex: 'content_name',
       key: 'content_name',
       ellipsis: { showTitle: false },
+      sorter: true,
+      sortOrder: sortField === 'content_name' ? sortOrder : null,
       render: (val: string, record: TaskListItem) => {
-        // 根据内容类型跳转到不同的详情页
         const getDetailPath = () => {
           if (record.content_type === 'CHANNEL') {
             return `/live/channels/${record.content_id}?mode=edit`
@@ -327,27 +337,35 @@ export default function TaskManagement() {
           if (record.content_type === 'SCHEDULE') {
             return `/live/schedules/${record.content_id}?mode=edit`
           }
-          // MOVIE/EPISODE/SERIES/SEASON 使用通用详情页
-          // 归档和VOD都通过 /contents/:id 访问，详情页内部会根据 is_archived 区分
           return `/contents/${record.content_id}?mode=edit`
         }
-        return <a onClick={() => navigate(getDetailPath())}>{val}</a>
+        return (
+          <Tooltip autoAdjustOverflow={false} placement="topLeft" title={val}>
+            <a onClick={() => navigate(getDetailPath())}>{val}</a>
+          </Tooltip>
+        )
       },
     },
     {
-      title: t('common.col.type'),
+      title: t('task.col.contentType'),
       dataIndex: 'content_type',
       key: 'content_type',
+      sorter: true,
+      sortOrder: sortField === 'content_type' ? sortOrder : null,
     },
     {
       title: t('task.col.taskType'),
       dataIndex: 'task_type',
       key: 'task_type',
+      sorter: true,
+      sortOrder: sortField === 'task_type' ? sortOrder : null,
     },
     {
       title: t('task.col.assignee'),
       dataIndex: 'assignee_name',
       key: 'assignee_name',
+      sorter: true,
+      sortOrder: sortField === 'assignee_name' ? sortOrder : null,
       render: (val: string | null) => val || '—',
     },
     {
@@ -355,6 +373,8 @@ export default function TaskManagement() {
       dataIndex: 'task_status',
       key: 'task_status',
       width: 160,
+      sorter: true,
+      sortOrder: sortField === 'task_status' ? sortOrder : null,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       render: (val: string) => getStatusTag(val, (k) => t(k as any)),
     },
@@ -363,6 +383,8 @@ export default function TaskManagement() {
       dataIndex: 'start_time',
       key: 'start_time',
       width: 160,
+      sorter: true,
+      sortOrder: sortField === 'start_time' ? sortOrder : null,
       render: (val: string | null) => val ? dayjs(val).format('YYYY-MM-DD HH:mm') : '—',
     },
     {
@@ -370,6 +392,8 @@ export default function TaskManagement() {
       dataIndex: 'end_time',
       key: 'end_time',
       width: 160,
+      sorter: true,
+      sortOrder: sortField === 'end_time' ? sortOrder : null,
       render: (val: string | null) => val ? dayjs(val).format('YYYY-MM-DD HH:mm') : '—',
     },
     {
@@ -456,7 +480,7 @@ export default function TaskManagement() {
         okText={t('common.confirm')}
         cancelText={t('common.cancel')}
         confirmLoading={assignLoading}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={assignForm} layout="vertical">
           <Form.Item

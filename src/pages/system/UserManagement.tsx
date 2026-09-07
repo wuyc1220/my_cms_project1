@@ -29,7 +29,7 @@ import {
   updateUser,
 } from '../../api/users'
 import { getAllRoles } from '../../api/roles'
-import { getPasswordMinLength } from '../../api/configs'
+import { getPasswordPatternMinLen } from '../../api/configs'
 import type { RoleListItem, UserCreatePayload, UserListItem, UserUpdatePayload } from '../../types/user'
 import { useI18n } from '../../i18n/useI18n'
 import { useTablePagination } from '../../hooks/useTablePagination'
@@ -41,6 +41,7 @@ import { usePermission } from '../../hooks/usePermission'
 import { useFormRules } from '../../hooks/useFormRules'
 import { isHandledError } from '../../api'
 import { FORM_MAX_LENGTH } from '../../constants/form'
+import { validatePassword, PASSWORD_ERROR_I18N_KEYS } from '../../utils/passwordValidation'
 
 interface SearchValues {
   username?: string
@@ -68,6 +69,7 @@ export default function UserManagement() {
   const [list, setList] = useState<UserListItem[]>([])
   const [roles, setRoles] = useState<RoleListItem[]>([])
   const [loading, setLoading] = useState(false)
+  const [patternMinLen, setPatternMinLen] = useState(6)
   const [submitting, setSubmitting] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editingRecord, setEditingRecord] = useState<UserListItem | null>(null)
@@ -76,7 +78,6 @@ export default function UserManagement() {
   const [resetPwdRecord, setResetPwdRecord] = useState<UserListItem | null>(null)
   const [resetPwdSubmitting, setResetPwdSubmitting] = useState(false)
   const [resetPwdForm] = Form.useForm()
-  const [passwordMinLength, setPasswordMinLength] = useState(8)
   const { hasPermission } = usePermission()
   const canOperate = hasPermission('menu.system.users.operate')
   const formRules = useFormRules()
@@ -143,7 +144,7 @@ export default function UserManagement() {
       options: roleOptions,
       placeholderKey: 'system.user.placeholderRole',
     },
-  ], [statusOptions, roleOptions, t])
+  ], [statusOptions, roleOptions])
 
   // 使用 useSearchForm Hook
   const {
@@ -197,9 +198,29 @@ export default function UserManagement() {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadRoles()
     void loadUsers(1, pagination.pageSize, {}, null, null)
+    getPasswordPatternMinLen()
+      .then((v) => {
+        setPatternMinLen(v)
+      })
+      .catch(() => {
+        // 获取配置失败时保持默认值 6
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 密码强度校验（与后端 password_validator 规则一致）
+  const passwordStrengthValidator =
+    (getUsername: () => string | undefined) => (_: unknown, value: string) => {
+      if (!value) return Promise.resolve()
+      const errorCode = validatePassword(value, { username: getUsername(), patternMinLen })
+      if (errorCode) {
+        return Promise.reject(new Error(t(PASSWORD_ERROR_I18N_KEYS[errorCode])))
+      }
+      return Promise.resolve()
+    }
 
   const openCreateModal = () => {
     setEditingRecord(null)
@@ -211,7 +232,6 @@ export default function UserManagement() {
   const openResetPwdModal = (record: UserListItem) => {
     setResetPwdRecord(record)
     resetPwdForm.resetFields()
-    void getPasswordMinLength().then(setPasswordMinLength)
     setResetPwdModalOpen(true)
   }
 
@@ -231,18 +251,17 @@ export default function UserManagement() {
       setResetPwdModalOpen(false)
     } catch (err: unknown) {
       if (isHandledError(err)) return
-      const error = err as { response?: { data?: { detail?: string } } }
+      const error = err as { response?: { data?: { error_code?: string; detail?: string } } }
+      const errorCode = error.response?.data?.error_code
       const detail = error.response?.data?.detail
-      if (detail) {
-        if (detail.includes('两次输入')) {
-          resetPwdForm.setFields([
-            { name: 'repeat_password', errors: [t('system.user.rulePasswordMismatch')] },
-          ])
-        } else {
-          resetPwdForm.setFields([
-            { name: 'new_password', errors: [detail] },
-          ])
-        }
+      if (errorCode === 'PASSWORDS_DO_NOT_MATCH') {
+        resetPwdForm.setFields([
+          { name: 'repeat_password', errors: [t('system.user.rulePasswordMismatch')] },
+        ])
+      } else if (detail) {
+        resetPwdForm.setFields([
+          { name: 'new_password', errors: [detail] },
+        ])
       } else {
         void message.error(t('common.msg.updateFailed'))
       }
@@ -276,11 +295,11 @@ export default function UserManagement() {
     try {
       if (editingRecord) {
         const payload: UserUpdatePayload = {
-          display_name: values.display_name || null,
-          email: values.email || null,
-          phone_number: values.phone_number || null,
+          display_name: values.display_name ?? null,
+          email: values.email ?? null,
+          phone_number: values.phone_number ?? null,
           status: values.status ? 'active' : 'inactive',
-          role_ids: values.role_ids || [],
+          role_ids: values.role_ids ?? [],
         }
         await updateUser(editingRecord.id, payload)
         message.success(t('system.user.msgUpdated'))
@@ -288,11 +307,11 @@ export default function UserManagement() {
         const payload: UserCreatePayload = {
           username: values.username,
           password: values.password || '',
-          display_name: values.display_name || null,
-          email: values.email || null,
-          phone_number: values.phone_number || null,
+          display_name: values.display_name ?? null,
+          email: values.email ?? null,
+          phone_number: values.phone_number ?? null,
           status: values.status ? 'active' : 'inactive',
-          role_ids: values.role_ids || [],
+          role_ids: values.role_ids ?? [],
         }
         await createUser(payload)
         message.success(t('system.user.msgCreated'))
@@ -317,7 +336,15 @@ export default function UserManagement() {
       message.warning(t('system.user.msgSelectFirst'))
       return
     }
-    await batchUpdateUserStatus({ ids: selectedRowKeys as number[], status })
+    // 跳过已处于目标状态的用户（批量启用跳过已启用、批量禁用跳过已禁用）
+    const targetIds = list
+      .filter((u) => selectedRowKeys.includes(u.id) && u.status !== status)
+      .map((u) => u.id)
+    if (!targetIds.length) {
+      message.info(t('system.user.msgBatchNoChange'))
+      return
+    }
+    await batchUpdateUserStatus({ ids: targetIds, status })
     message.success(t('system.user.msgBatchSuccess'))
     setSelectedRowKeys([])
     await loadUsers(pagination.current, pagination.pageSize, filters, sortField, sortOrder)
@@ -374,8 +401,24 @@ export default function UserManagement() {
       title: t('system.user.colRole'),
       dataIndex: 'roles',
       key: 'roles',
+      width: 300,
       render: (value: RoleListItem[]) =>
-        value?.length ? value.map((role) => <Tag key={role.id}>{role.name}</Tag>) : '-',
+        value?.length ? (
+          <Tooltip
+            title={
+              <Space size={[4, 4]} wrap>
+                {value.map((role) => (
+                  <Tag key={role.id}>{role.name}</Tag>
+                ))}
+              </Space>
+            }
+            overlayStyle={{ maxWidth: 480 }}
+          >
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
+              {value.map((role) => role.name).join('、')}
+            </span>
+          </Tooltip>
+        ) : '-',
     },
     {
       title: t('common.status'),
@@ -467,10 +510,10 @@ export default function UserManagement() {
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16, gap: 8 }}>
-          {canOperate && <Button onClick={() => void handleBatchStatus('active')}>{t('system.user.btnBatchEnable')}</Button>}
-          {canOperate && <Button onClick={() => void handleBatchStatus('inactive')}>{t('system.user.btnBatchDisable')}</Button>}
+          {canOperate && <Button disabled={!selectedRowKeys.length} onClick={() => void handleBatchStatus('active')}>{t('system.user.btnBatchEnable')}</Button>}
+          {canOperate && <Button disabled={!selectedRowKeys.length} onClick={() => void handleBatchStatus('inactive')}>{t('system.user.btnBatchDisable')}</Button>}
           {canOperate && (
-            <Button danger onClick={handleBatchDelete}>
+            <Button danger disabled={!selectedRowKeys.length} onClick={handleBatchDelete}>
               {t('system.user.btnBatchDelete')}
             </Button>
           )}
@@ -502,7 +545,7 @@ export default function UserManagement() {
         okText={t('common.confirm')}
         cancelText={t('common.cancel')}
         width={700}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={userForm} layout="vertical">
           <Row gutter={16}>
@@ -513,7 +556,15 @@ export default function UserManagement() {
             </Col>
             {!editingRecord && (
               <Col span={12}>
-                <Form.Item name="password" label={t('system.user.labelPassword')} rules={[{ required: true, message: t('system.user.rulePassword') }]}>
+                <Form.Item
+                  name="password"
+                  label={t('system.user.labelPassword')}
+                  dependencies={['username']}
+                  rules={[
+                    { required: true, message: t('system.user.rulePassword') },
+                    { validator: passwordStrengthValidator(() => userForm.getFieldValue('username')) },
+                  ]}
+                >
                   <TrimInput.Password placeholder={t('system.user.placeholderPassword')} autoComplete="new-password" />
                 </Form.Item>
               </Col>
@@ -524,7 +575,7 @@ export default function UserManagement() {
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="email" label={t('system.user.labelEmail')} rules={[{ type: 'email', message: t('system.user.ruleEmail') }, formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
+              <Form.Item name="email" label={t('system.user.labelEmail')}  rules={[{ type: 'email', message: t('system.user.ruleEmail') }, formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}>
                 <TrimInput placeholder={t('system.user.placeholderEmail')} />
               </Form.Item>
             </Col>
@@ -571,7 +622,7 @@ export default function UserManagement() {
         confirmLoading={resetPwdSubmitting}
         okText={t('common.confirm')}
         cancelText={t('common.cancel')}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={resetPwdForm} layout="vertical">
           <Form.Item
@@ -579,7 +630,7 @@ export default function UserManagement() {
             label={t('system.user.labelNewPassword')}
             rules={[
               { required: true, message: t('system.user.ruleNewPassword') },
-              { min: passwordMinLength, message: t('system.user.rulePasswordMinLength', { min: passwordMinLength }) },
+              { validator: passwordStrengthValidator(() => resetPwdRecord?.username) },
             ]}
           >
             <TrimInput.Password placeholder={t('system.user.placeholderNewPassword')} />

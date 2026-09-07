@@ -27,9 +27,11 @@ export const getContent = (id: number) =>
 export const createContent = (data: ContentCreatePayload) =>
   api.post<ContentListItem>('/contents/', data).then((r) => r.data)
 
-/** 编辑内容基本信息 */
-export const updateContent = (id: number, data: ContentUpdatePayload) =>
-  api.put<ContentListItem>(`/contents/${id}`, data).then((r) => r.data)
+/** 编辑内容基本信息（skipMetadataProcess: 元数据弹窗链路传 true，跳过补写 Metadata 流程记录，避免 Pending 中间条） */
+export const updateContent = (id: number, data: ContentUpdatePayload, skipMetadataProcess = false) =>
+  api.put<ContentListItem>(`/contents/${id}`, data, {
+    params: skipMetadataProcess ? { skip_metadata_process: true } : undefined,
+  }).then((r) => r.data)
 
 /** 软删除内容（级联删除子节点）*/
 export const deleteContent = (id: number) =>
@@ -47,6 +49,10 @@ export const getWithoutLicenseContentCount = () =>
 export const getSeriesSimple = () =>
   api.get<ContentSimpleItem[]>('/contents/series-simple').then((r) => r.data)
 
+/** 获取 SEASON 简要列表（SEASON_SERIES 父级下拉）*/
+export const getSeasonsSimple = () =>
+  api.get<ContentSimpleItem[]>('/contents/seasons-simple').then((r) => r.data)
+
 /** 获取 CHANNEL 简要列表（SCHEDULE 频道下拉）*/
 export const getChannelsSimple = () =>
   api.get<ContentSimpleItem[]>('/contents/channels-simple').then((r) => r.data)
@@ -55,9 +61,21 @@ export const getChannelsSimple = () =>
 export const getContentLicenses = (contentId: number) =>
   api.get<ContentLicenseRef[]>(`/contents/${contentId}/licenses`).then((r) => r.data)
 
-/** 查询相邻内容 ID（上一条/下一条） */
-export const getAdjacentContent = (contentId: number) =>
-  api.get<AdjacentContentResponse>(`/contents/${contentId}/adjacent`).then((r) => r.data)
+/** 查询相邻内容 ID（上一条/下一条）
+ * @param contentId 当前内容ID
+ * @param contentTypes 内容类型数组（可选，如果传入则只返回指定类型的相邻内容）
+ * @param isArchived 是否只查询归档内容（可选，Archive Management 使用）
+ */
+export const getAdjacentContent = (contentId: number, contentTypes?: string[], isArchived?: boolean) => {
+  const params: Record<string, any> = {}
+  if (contentTypes && contentTypes.length > 0) {
+    params.content_types = contentTypes.join(',')
+  }
+  if (isArchived !== undefined) {
+    params.is_archived = isArchived
+  }
+  return api.get<AdjacentContentResponse>(`/contents/${contentId}/adjacent`, { params }).then((r) => r.data)
+}
 
 /** 查询内容的自定义字段值 */
 export const getContentFieldValues = (contentId: number) =>
@@ -86,3 +104,49 @@ export const getContentChildren = (parentId: number, contentType: string) =>
 /** 批量导入子内容（EPISODE/SERIES），单个事务 */
 export const batchImportContents = (data: BatchImportRequest) =>
   api.post<BatchImportResponse>('/contents/batch', data).then((r) => r.data)
+
+/** 下载导入模板（EPISODE/SERIES） */
+export const downloadImportTemplate = async (contentType: 'EPISODE' | 'SERIES', filename: string) => {
+  const response = await api.get(`/contents/template/${contentType}`, {
+    responseType: 'blob',
+  })
+  const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  window.URL.revokeObjectURL(url)
+}
+
+/** 解析 Excel 导入文件（EPISODE/SERIES/SEASON_SERIES） */
+export interface ParseExcelItem {
+  row: number
+  title: string
+  sequence?: number
+  series_ordinal?: number
+  assignee?: string
+}
+
+export interface ParseExcelResponse {
+  items: ParseExcelItem[]
+}
+
+export const parseExcelFile = (contentType: 'EPISODE' | 'SERIES' | 'SEASON_SERIES', file: File) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  return api.post<ParseExcelResponse>(`/contents/parse-excel?content_type=${contentType}`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then((r) => r.data)
+}
+
+export interface NodeStatus {
+  completed: boolean
+  warning: boolean
+  detail: string
+}
+
+export const getNodeStatus = (contentId: number) =>
+  api.get<Record<string, NodeStatus>>(`/contents/${contentId}/node-status`).then((r) => r.data)

@@ -3,23 +3,27 @@ import { useNavigate } from 'react-router-dom'
 import {
   Button,
   Divider,
+  Input,
   Modal,
+  Pagination,
   Popconfirm,
   Select,
   Space,
   Table,
-  Tabs,
   Tag,
   Tooltip,
   message,
 } from 'antd'
 import {
   CheckCircleOutlined,
+  CloudUploadOutlined,
   DeleteOutlined,
+  DownloadOutlined,
   EditOutlined,
   ExclamationCircleOutlined,
   InfoCircleOutlined,
   PlusOutlined,
+  UploadOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import {
@@ -30,13 +34,18 @@ import {
   getPackageContents,
   getPackages,
   removeContentFromPackage,
+  exportPackagesExcel,
+  syncPackages,
 } from '../../api/packages'
+import type { PackageSyncResponse } from '../../api/packages'
+import { isHandledError } from '../../api'
 import { getDictTree } from '../../api/dicts'
 import { getGenres } from '../../api/genres'
 import { getCustomTags } from '../../api/customTags'
 import { getMultiLanguageOptions } from '../../api/i18n'
 import { useI18n } from '../../i18n/useI18n'
 import PackageCreateModal from '../../components/PackageCreateModal'
+import PackageImportModal from '../../components/PackageImportModal'
 import ObjectIngestHistoryModal from '../../components/ObjectIngestHistoryModal'
 import SearchForm from '../../components/SearchForm'
 import TrimInput from '../../components/TrimInput'
@@ -59,13 +68,6 @@ const getIngestTagColor = (val: string) => {
   if (val === 'failure') return 'error'
   if (val === 'processing') return 'processing'
   return 'default'
-}
-
-// Tab key → content_type 值映射
-const TAB_CONTENT_TYPES: Record<string, string[]> = {
-  program: ['MOVIE'],
-  series: ['SERIES', 'SEASON'],
-  channel: ['CHANNEL'],
 }
 
 // ─── 主组件 ────────────────────────────────────────────────────────────
@@ -111,7 +113,6 @@ export default function PackageManagement() {
     open: false,
     record: null,
   })
-  const [addContentTab, setAddContentTab] = useState('program')
   const [availableContents, setAvailableContents] = useState<PaginatedResponse<ContentSimpleItem>>({
     total: 0,
     page: 1,
@@ -127,7 +128,10 @@ export default function PackageManagement() {
   const [customTagOptions, setCustomTagOptions] = useState<{ label: string; value: number }[]>([])
   const [packageContents, setPackageContents] = useState<ContentSimpleItem[]>([])
   const [pendingAdd, setPendingAdd] = useState<ContentSimpleItem[]>([]) // 待保存的新增项
+  const [pendingRemoveIds, setPendingRemoveIds] = useState<number[]>([]) // 待保存的移除项（仅 ID，提交时才调用后端）
   const [savingContents, setSavingContents] = useState(false)
+  const [importModalOpen, setImportModalOpen] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const { hasPermission } = usePermission()
   const canView = hasPermission('menu.business.packages.view') || hasPermission('menu.business.packages.operate')
   const canOperate = hasPermission('menu.business.packages.operate')
@@ -208,10 +212,10 @@ export default function PackageManagement() {
       setPlatformOptions(platformChildren.map((c: DictNodeListItem) => ({ label: c.name, value: c.code })))
       setPlatformMap(Object.fromEntries(platformChildren.map((c: DictNodeListItem) => [c.code, c.name])))
       setIngestStatusOptions([
-        { label: 'none', value: 'none' },
-        { label: 'processing', value: 'processing' },
-        { label: 'success', value: 'success' },
-        { label: 'failure', value: 'failure' },
+        { label: t('common.ingestStatus.none'), value: 'none' },
+        { label: t('common.ingestStatus.processing'), value: 'processing' },
+        { label: t('common.ingestStatus.success'), value: 'success' },
+        { label: t('common.ingestStatus.failure'), value: 'failure' },
       ])
       await loadList(1, 10, {})
     })()
@@ -242,6 +246,30 @@ export default function PackageManagement() {
   }
 
 
+  // ─── 批量发布 ─────────────────────────────────────────────────────────
+
+  const handleSync = async () => {
+    if (selectedIds.length === 0) {
+      void message.info(t('package.msg.noSelection'), 3)
+      return
+    }
+    setSyncing(true)
+    try {
+      const result: PackageSyncResponse = await syncPackages({ package_ids: selectedIds })
+      if (result.success) {
+        void message.success(result.message || t('package.msg.syncSuccess'), 3)
+      } else {
+        void message.error(result.message, 5)
+      }
+      void loadList(pagination.current, pagination.pageSize, filters, sortField, sortOrder)
+    } catch (err) {
+      if (isHandledError(err)) return
+      void message.error(t('package.msg.syncFailed'), 5)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   // ─── 新增/编辑 ────────────────────────────────────────────────────────
 
   const openCreate = () => {
@@ -270,8 +298,17 @@ export default function PackageManagement() {
 
   const handleBatchDelete = async () => {
     if (selectedIds.length === 0) return
-    await batchDeletePackages({ ids: selectedIds })
-    void message.success(t('common.recordsCount', { count: selectedIds.length }), 3)
+    const total = selectedIds.length
+    // 后端会跳过存在关联内容的服务包，返回实际删除数，提示需与实际结果一致
+    const { deleted } = await batchDeletePackages({ ids: selectedIds })
+    const skipped = total - deleted
+    if (deleted === 0) {
+      void message.warning(t('package.msg.batchDeleteNone'), 5)
+    } else if (skipped > 0) {
+      void message.warning(t('package.msg.batchDeletePartial', { deleted, skipped }), 5)
+    } else {
+      void message.success(t('package.msg.batchDeleted', { count: deleted }), 3)
+    }
     setSelectedIds([])
     void loadList(1, pagination.pageSize, filters, sortField, sortOrder)
   }
@@ -280,16 +317,13 @@ export default function PackageManagement() {
 
   const openAddContent = async (record: PackageListItem) => {
     setAddContentModal({ open: true, record })
-    setAddContentTab('program')
     setAddContentSearch('')
-    // 默认选中 Program Tab 对应的内容类型
-    const defaultContentTypes = TAB_CONTENT_TYPES['program']
-    setSelectedContentTypes(defaultContentTypes)
+    setSelectedContentTypes([])
     setSelectedGenreIds([])
     setSelectedCustomTagIds([])
     setPendingAdd([])
     void loadPackageContents(record.id)
-    void loadAvailableContents(record.id, 1, 'program', '', defaultContentTypes, [], [])
+    void loadAvailableContents(record.id, 1, '', [], [], [])
     // 加载题材和自定义标签选项
     void loadGenreOptions()
     void loadCustomTagOptions()
@@ -301,7 +335,15 @@ export default function PackageManagement() {
       const langOptions = await getMultiLanguageOptions()
       const defaultLang = langOptions.length > 0 ? langOptions[0].code : undefined
       const langFilter = defaultLang ? [defaultLang] : undefined
-      const res = await getGenres({ page: 1, page_size: 1000, languages: langFilter })
+
+      // 先尝试带语言过滤查询
+      let res = await getGenres({ page: 1, page_size: 1000, languages: langFilter })
+
+      // 如果带语言过滤没有数据，尝试不带语言过滤再查询
+      if (res.items.length === 0 && langFilter) {
+        res = await getGenres({ page: 1, page_size: 1000 })
+      }
+
       setGenreOptions(res.items.map((g: GenreListItem) => ({ label: g.name, value: g.id })))
     } catch {
       setGenreOptions([])
@@ -310,11 +352,7 @@ export default function PackageManagement() {
 
   const loadCustomTagOptions = async () => {
     try {
-      // 获取数据字典 Multi_Languages 第一语言进行过滤
-      const langOptions = await getMultiLanguageOptions()
-      const defaultLang = langOptions.length > 0 ? langOptions[0].code : undefined
-      const langFilter = defaultLang ? [defaultLang] : undefined
-      const res = await getCustomTags({ page: 1, page_size: 1000, languages: langFilter })
+      const res = await getCustomTags({ page: 1, page_size: 1000 })
       setCustomTagOptions(res.items.map((t: CustomTagListItem) => ({ label: t.name, value: t.id })))
     } catch {
       setCustomTagOptions([])
@@ -322,28 +360,26 @@ export default function PackageManagement() {
   }
 
   const loadPackageContents = async (packageId: number) => {
-    const res = await getPackageContents(packageId)
+    const res = await getPackageContents(packageId, { page: 1, page_size: 1000 })
     setPackageContents(res.items)
   }
 
   const loadAvailableContents = async (
     packageId: number,
     page: number,
-    tab: string,
     search: string,
     contentTypes: string[] = [],
     genreIds: number[] = [],
     customTagIds: number[] = [],
+    pageSize = 10,
   ) => {
     setAvailableLoading(true)
     try {
-      // 如果用户手动选择了内容类型，使用用户选择的；否则使用 Tab 默认的
-      const finalContentTypes = contentTypes.length > 0 ? contentTypes : TAB_CONTENT_TYPES[tab]
       const data = await getAvailableContents(packageId, {
         page,
-        page_size: 10,
+        page_size: pageSize,
         title: search || undefined,
-        content_types: finalContentTypes,
+        content_types: contentTypes.length > 0 ? contentTypes : undefined,
         genre_ids: genreIds.length > 0 ? genreIds : undefined,
         custom_tag_ids: customTagIds.length > 0 ? customTagIds : undefined,
       })
@@ -353,30 +389,26 @@ export default function PackageManagement() {
     }
   }
 
-  const handleAddContentTabChange = (tab: string) => {
-    setAddContentTab(tab)
-    setAddContentSearch('')
-    // 点击Tab自动设置内容类型查询条件
-    const tabContentTypes = TAB_CONTENT_TYPES[tab] || []
-    setSelectedContentTypes(tabContentTypes)
-    setSelectedGenreIds([])
-    setSelectedCustomTagIds([])
-    if (addContentModal.record) {
-      void loadAvailableContents(addContentModal.record.id, 1, tab, '', tabContentTypes, [], [])
-    }
-  }
-
   const handleAddContentSearch = () => {
     if (addContentModal.record) {
       void loadAvailableContents(
         addContentModal.record.id,
         1,
-        addContentTab,
         addContentSearch,
         selectedContentTypes,
         selectedGenreIds,
         selectedCustomTagIds,
       )
+    }
+  }
+
+  const handleResetAddContentFilters = () => {
+    setAddContentSearch('')
+    setSelectedContentTypes([])
+    setSelectedGenreIds([])
+    setSelectedCustomTagIds([])
+    if (addContentModal.record) {
+      void loadAvailableContents(addContentModal.record.id, 1, '', [], [], [])
     }
   }
 
@@ -396,26 +428,42 @@ export default function PackageManagement() {
     setPendingAdd((prev) => prev.filter((c) => c.id !== contentId))
   }
 
-  // 从已关联列表移除（已保存的）
-  const handleRemoveLinked = async (contentId: number) => {
-    if (!addContentModal.record) return
-    await removeContentFromPackage(addContentModal.record.id, contentId)
-    void message.success(t('common.msg.removed'), 3)
+  // 从已关联列表移除（临时，不调用后端，提交时才生效）
+  const handleRemoveLinked = (contentId: number) => {
+    setPendingRemoveIds((prev) => (prev.includes(contentId) ? prev : [...prev, contentId]))
     setPackageContents((prev) => prev.filter((c) => c.id !== contentId))
   }
 
   const handleSaveContents = async () => {
-    if (!addContentModal.record || pendingAdd.length === 0) return
+    if (!addContentModal.record) return
+    if (pendingAdd.length === 0 && pendingRemoveIds.length === 0) return
     setSavingContents(true)
     try {
-      const updated = await addContentsToPackage(addContentModal.record.id, {
-        content_ids: pendingAdd.map((c) => c.id),
-      })
+      // 先处理移除（逐个调用后端）
+      for (const cid of pendingRemoveIds) {
+        await removeContentFromPackage(addContentModal.record.id, cid)
+      }
+      // 再处理新增（批量调用后端，返回最新关联列表）
+      let updated: ContentSimpleItem[] = packageContents
+      if (pendingAdd.length > 0) {
+        updated = await addContentsToPackage(addContentModal.record.id, {
+          content_ids: pendingAdd.map((c) => c.id),
+        })
+      }
       setPackageContents(updated)
       setPendingAdd([])
+      setPendingRemoveIds([])
       void message.success(t('common.msg.saveSuccess'), 3)
+      closeAddContent()
       // 刷新左侧可选列表（排除已关联）
-      void loadAvailableContents(addContentModal.record.id, availableContents.page, addContentTab, addContentSearch)
+      void loadAvailableContents(
+        addContentModal.record.id,
+        availableContents.page,
+        addContentSearch,
+        selectedContentTypes,
+        selectedGenreIds,
+        selectedCustomTagIds,
+      )
     } finally {
       setSavingContents(false)
     }
@@ -425,6 +473,7 @@ export default function PackageManagement() {
     setAddContentModal({ open: false, record: null })
     setPackageContents([])
     setPendingAdd([])
+    setPendingRemoveIds([])
     setAddContentSearch('')
     setSelectedContentTypes([])
     setSelectedGenreIds([])
@@ -501,7 +550,7 @@ export default function PackageManagement() {
             style={{ padding: 0, height: 'auto' }}
             onClick={() => setHistoryModal({ open: true, record })}
           >
-            <Tag color={getIngestTagColor(displayVal)} style={{ cursor: 'pointer', margin: 0 }}>{displayVal}</Tag>
+            <Tag color={getIngestTagColor(displayVal)} style={{ cursor: 'pointer', margin: 0 }}>{t(`common.ingestStatus.${displayVal}` as any)}</Tag>
           </Button>
         )
       },
@@ -560,6 +609,13 @@ export default function PackageManagement() {
     },
   ]
 
+  const getContentDetailPath = (row: ContentSimpleItem) => {
+    const ct = row.content_type
+    if (ct === 'CHANNEL') return `/live/channels/${row.id}`
+    if (ct === 'SCHEDULE') return `/live/schedules/${row.id}`
+    return `/contents/${row.id}`
+  }
+
   const availableColumns: ColumnsType<ContentSimpleItem> = [
     {
       title: t('package.addContent.contentName'),
@@ -572,7 +628,7 @@ export default function PackageManagement() {
             type="link"
             size="small"
             style={{ padding: 0, textAlign: 'left' }}
-            onClick={() => navigate(`/contents/${row.id}`)}
+            onClick={() => navigate(getContentDetailPath(row))}
           >
             {val}
           </Button>
@@ -631,13 +687,15 @@ export default function PackageManagement() {
         const isPending = pendingAdd.some((c) => c.id === row.id)
         const isDisabled = isInPackage || isPending
         return (
-          <Button
-            type="link"
-            size="small"
-            icon={<PlusOutlined />}
-            disabled={isDisabled}
-            onClick={() => handleQueueContent(row)}
-          />
+          <Tooltip title={t('common.add')}>
+            <Button
+              type="link"
+              size="small"
+              icon={<PlusOutlined />}
+              disabled={isDisabled}
+              onClick={() => handleQueueContent(row)}
+            />
+          </Tooltip>
         )
       },
     },
@@ -674,9 +732,47 @@ export default function PackageManagement() {
               </Button>
             </Popconfirm>
           )}
-          <Button onClick={() => void message.info(t('vod.msg.exportSoon'), 3)}>{t('common.btn.excelExport')}</Button>
           {canOperate && (
-            <Button onClick={() => void message.info(t('vod.msg.importSoon'), 3)}>{t('common.btn.excelImport')}</Button>
+            <Button
+              type="primary"
+              icon={<CloudUploadOutlined />}
+              loading={syncing}
+              disabled={selectedIds.length === 0}
+              onClick={() => void handleSync()}
+            >
+              {t('package.toolbar.syncBtn')}{selectedIds.length > 0 ? ` (${selectedIds.length})` : ''}
+            </Button>
+          )}
+          <Button
+            icon={<DownloadOutlined />}
+            disabled={selectedIds.length === 0}
+            onClick={async () => {
+              try {
+                const blob = await exportPackagesExcel(selectedIds)
+                const url = window.URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `packages_${Date.now()}.xlsx`
+                document.body.appendChild(a)
+                a.click()
+                document.body.removeChild(a)
+                window.URL.revokeObjectURL(url)
+                void message.success(t('package.msg.exportSuccess'))
+              } catch (err) {
+                if (isHandledError(err)) return
+                void message.error(t('package.msg.exportFailed'))
+              }
+            }}
+          >
+            {t('common.btn.excelExport')}
+          </Button>
+          {canOperate && (
+            <Button
+              icon={<UploadOutlined />}
+              onClick={() => setImportModalOpen(true)}
+            >
+              {t('common.btn.excelImport')}
+            </Button>
           )}
           {canOperate && (
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
@@ -726,7 +822,7 @@ export default function PackageManagement() {
             <Button
               type="primary"
               loading={savingContents}
-              disabled={pendingAdd.length === 0}
+              disabled={pendingAdd.length === 0 && pendingRemoveIds.length === 0}
               onClick={() => void handleSaveContents()}
             >
               {t('common.confirm')}
@@ -739,15 +835,6 @@ export default function PackageManagement() {
         <div style={{ display: 'flex', gap: 16, height: 500 }}>
           {/* 左侧：可选内容 */}
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-            <Tabs
-              activeKey={addContentTab}
-              onChange={handleAddContentTabChange}
-              items={[
-                { key: 'program', label: t('publish.contentType.MOVIE') },
-                { key: 'series', label: t('publish.contentType.SERIES') },
-                { key: 'channel', label: t('publish.contentType.CHANNEL') },
-              ]}
-            />
             <Space style={{ marginBottom: 12 }} wrap>
               <TrimInput
                 placeholder={t('license.addContent.contentName')}
@@ -758,6 +845,7 @@ export default function PackageManagement() {
               />
               <Select
                 mode="multiple"
+                maxTagCount="responsive"
                 placeholder={t('package.addContent.contentType')}
                 value={selectedContentTypes}
                 onChange={(value) => {
@@ -768,37 +856,44 @@ export default function PackageManagement() {
                   { label: t('publish.contentType.EPISODE'), value: 'EPISODE' },
                   { label: t('publish.contentType.SERIES'), value: 'SERIES' },
                   { label: t('publish.contentType.SEASON'), value: 'SEASON' },
+                  { label: t('publish.contentType.SEASON_SERIES'), value: 'SEASON_SERIES' },
                   { label: t('publish.contentType.CHANNEL'), value: 'CHANNEL' },
                   { label: t('publish.contentType.SCHEDULE'), value: 'SCHEDULE' },
                 ]}
                 style={{ width: 220 }}
-                maxTagCount={1}
               />
               <Select
                 mode="multiple"
+                showSearch
+                optionFilterProp="label"
+                allowClear
+                maxTagCount="responsive"
                 placeholder={t('package.addContent.genre')}
                 value={selectedGenreIds}
-                onChange={(value) => {
-                  setSelectedGenreIds(value as number[])
+                onChange={(values) => {
+                  setSelectedGenreIds(values as number[])
                 }}
                 options={genreOptions}
                 style={{ width: 220 }}
-                maxTagCount={1}
               />
               <Select
                 mode="multiple"
+                showSearch
+                optionFilterProp="label"
+                allowClear
+                maxTagCount="responsive"
                 placeholder={t('package.addContent.customTags')}
                 value={selectedCustomTagIds}
-                onChange={(value) => {
-                  setSelectedCustomTagIds(value as number[])
+                onChange={(values) => {
+                  setSelectedCustomTagIds(values as number[])
                 }}
                 options={customTagOptions}
                 style={{ width: 220 }}
-                maxTagCount={1}
               />
+              <Button onClick={handleResetAddContentFilters}>{t('common.reset')}</Button>
               <Button onClick={handleAddContentSearch}>{t('common.search')}</Button>
             </Space>
-            <div style={{ flex: 1, overflow: 'auto' }}>
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
               <Table<ContentSimpleItem>
                 rowKey="id"
                 size="small"
@@ -806,25 +901,29 @@ export default function PackageManagement() {
                 columns={availableColumns}
                 dataSource={availableContents.items}
                 scroll={{ x: 440 }}
-                pagination={{
-                  current: availableContents.page,
-                  pageSize: availableContents.page_size,
-                  total: availableContents.total,
-                  size: 'small',
-                  position: ['bottomCenter'],
-                  onChange: (page) => {
-                    if (addContentModal.record) {
-                      void loadAvailableContents(
-                        addContentModal.record.id,
-                        page,
-                        addContentTab,
-                        addContentSearch,
-                        selectedContentTypes,
-                        selectedGenreIds,
-                        selectedCustomTagIds,
-                      )
-                    }
-                  },
+                pagination={false}
+              />
+            </div>
+            <div style={{ paddingTop: 12, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
+              <Pagination
+                current={availableContents.page}
+                pageSize={availableContents.page_size}
+                total={availableContents.total}
+                size="small"
+                showSizeChanger
+                showTotal={(n) => t('pagination.total', { n })}
+                onChange={(page, pageSize) => {
+                  if (addContentModal.record) {
+                    void loadAvailableContents(
+                      addContentModal.record.id,
+                      page,
+                      addContentSearch,
+                      selectedContentTypes,
+                      selectedGenreIds,
+                      selectedCustomTagIds,
+                      pageSize,
+                    )
+                  }
                 }}
               />
             </div>
@@ -835,28 +934,32 @@ export default function PackageManagement() {
           {/* 右侧：当前服务包信息 + 已关联内容 */}
           <div style={{ width: 320, display: 'flex', flexDirection: 'column' }}>
             {addContentModal.record && (
-              <div style={{ marginBottom: 12, background: '#fafafa', padding: 12, borderRadius: 6 }}>
-                <div style={{ marginBottom: 4 }}>
-                  <strong>{t('package.detail.packageName')}：</strong>{addContentModal.record.name}
-                </div>
-                <div style={{ marginBottom: 4 }}>
-                  <strong>{t('package.detail.platform')}：</strong>
-                  {(addContentModal.record.platforms ?? []).length === 0
-                    ? '—'
-                    : (addContentModal.record.platforms ?? []).map((p) => <Tag key={p} style={{ marginRight: 4 }}>{platformMap[p] ?? p}</Tag>)}
+              <div style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div>
+                  <div style={{ marginBottom: 2, fontSize: 12, color: '#666' }}>{t('package.detail.packageName')}</div>
+                  <Input value={addContentModal.record.name} disabled style={{ background: '#f5f5f5' }} />
                 </div>
                 <div>
-                  <strong>{t('package.detail.packageType')}：</strong>
-                  {addContentModal.record.package_type
-                    ? (packageTypeMap[addContentModal.record.package_type] ?? addContentModal.record.package_type)
-                    : '—'}
+                  <div style={{ marginBottom: 2, fontSize: 12, color: '#666' }}>{t('package.detail.platform')}</div>
+                  <Input
+                    value={(addContentModal.record.platforms ?? []).map((p) => platformMap[p] ?? p).join(', ')}
+                    disabled
+                    style={{ background: '#f5f5f5' }}
+                  />
+                </div>
+                <div>
+                  <div style={{ marginBottom: 2, fontSize: 12, color: '#666' }}>{t('package.detail.packageType')}</div>
+                  <Input
+                    value={addContentModal.record.package_type ? (packageTypeMap[addContentModal.record.package_type] ?? addContentModal.record.package_type) : '—'}
+                    disabled
+                    style={{ background: '#f5f5f5' }}
+                  />
                 </div>
               </div>
             )}
 
-            <div style={{ marginBottom: 8, fontWeight: 500 }}>{t('package.addContent.contentsOfPackage')}</div>
             <div style={{ flex: 1, overflow: 'auto' }}>
-              {/* 已保存的关联内容 */}
+              {/* 已关联内容（删除时直接从列表移除，点击确认才调用后端） */}
               {packageContents.map((c) => (
                 <div
                   key={`linked-${c.id}`}
@@ -873,19 +976,13 @@ export default function PackageManagement() {
                       {c.title}
                     </span>
                   </Tooltip>
-                  <Popconfirm
-                    title={t('package.addContent.confirmRemove', { name: c.title })}
-                    okText={t('common.confirm')}
-                    cancelText={t('common.cancel')}
-                    onConfirm={() => void handleRemoveLinked(c.id)}
-                  >
-                    <Button
-                      type="link"
-                      size="small"
-                      danger
-                      icon={<DeleteOutlined />}
-                    />
-                  </Popconfirm>
+                  <Button
+                    type="link"
+                    size="small"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={() => handleRemoveLinked(c.id)}
+                  />
                 </div>
               ))}
               {/* 待保存的新增内容 */}
@@ -930,6 +1027,15 @@ export default function PackageManagement() {
         entityId={historyModal.record?.id ?? 0}
         entityName={historyModal.record?.name ?? ''}
         onClose={() => setHistoryModal({ open: false, record: null })}
+      />
+
+      {/* 导入弹框 */}
+      <PackageImportModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onSuccess={() => {
+          void loadList(pagination.current, pagination.pageSize, filters, sortField, sortOrder)
+        }}
       />
     </div>
   )

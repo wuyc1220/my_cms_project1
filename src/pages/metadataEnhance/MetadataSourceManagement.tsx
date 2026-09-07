@@ -37,10 +37,9 @@ import type { SearchFieldConfig } from '../../types/searchForm'
 
 const CONTENT_TYPES = ['Movie', 'Series', 'Cast']
 const AUTH_TYPES = ['API_Key', 'OAuth2.0', 'None']
-const COLLECT_TYPES = ['API', '网页爬取']
 const RENDER_TYPES = ['StaticHTML', 'HeadlessBrowser']
 
-const COLLECT_TYPE_TAGS: Record<string, string> = {
+const COLLECT_TYPE_TAG_COLORS: Record<string, string> = {
   API: 'blue',
   '网页爬取': 'green',
 }
@@ -65,6 +64,11 @@ export default function MetadataSourceManagement() {
   const [form] = Form.useForm()
   const collectType = Form.useWatch('collect_type', form)
 
+  const collectTypeOptions = useMemo(() => [
+    { label: t('metadataSource.collectType.api'), value: 'API' },
+    { label: t('metadataSource.collectType.webCrawl'), value: '网页爬取' },
+  ], [t])
+
   const { pagination, updatePagination, sortField, sortOrder, resetSort, tablePaginationProps, handleTableChange } = useTablePagination({
     onChange: ({ page, pageSize, sortField, sortOrder }) => {
       void loadList(page, pageSize, filters, sortField, sortOrder)
@@ -81,13 +85,13 @@ export default function MetadataSourceManagement() {
       name: 'content_types',
       labelKey: 'metadataSource.search.contentTypePlaceholder',
       type: 'multiSelect',
-      options: CONTENT_TYPES.map((item) => ({ label: item, value: item })),
+      options: CONTENT_TYPES.map((item) => ({ label: t(`metadataSource.contentType.${item}` as any), value: item })),
     },
     {
       name: 'collect_types',
       labelKey: 'metadataSource.search.collectTypePlaceholder',
       type: 'multiSelect',
-      options: COLLECT_TYPES.map((item) => ({ label: item, value: item })),
+      options: collectTypeOptions,
     },
     {
       name: 'statuses',
@@ -98,7 +102,7 @@ export default function MetadataSourceManagement() {
         { label: 'NO', value: 'NO' },
       ],
     },
-  ], [])
+  ], [collectTypeOptions])
 
   const {
     form: searchForm,
@@ -306,7 +310,7 @@ export default function MetadataSourceManagement() {
       key: 'collect_type',
       sorter: true,
       sortOrder: sortField === 'collect_type' ? sortOrder : null,
-      render: (v: string) => <Tag color={COLLECT_TYPE_TAGS[v] || 'default'}>{v}</Tag>,
+      render: (v: string) => <Tag color={COLLECT_TYPE_TAG_COLORS[v] || 'default'}>{v}</Tag>,
     },
     {
       title: t('metadataSource.col.url'),
@@ -327,8 +331,8 @@ export default function MetadataSourceManagement() {
         <Switch
           checked={status === 'YES'}
           onChange={(checked) => handleStatusChange(record.id, checked)}
-          checkedChildren="YES"
-          unCheckedChildren="NO"
+          checkedChildren={t('common.yes')}
+          unCheckedChildren={t('common.no')}
         />
       ),
     },
@@ -337,7 +341,7 @@ export default function MetadataSourceManagement() {
       key: 'action',
       width: 140,
       render: (_: unknown, record: MetadataSourceListItem) => (
-        <Space>
+        <Space size={0}>
           <Tooltip title={t('metadataSource.action.edit')}>
             <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEditModal(record)} />
           </Tooltip>
@@ -348,7 +352,7 @@ export default function MetadataSourceManagement() {
             onConfirm={() => handleDelete(record.id)}
           >
             <Tooltip title={t('metadataSource.action.delete')}>
-              <Button type="link" size="small" danger><DeleteOutlined /></Button>
+              <Button type="link" size="small" danger icon={<DeleteOutlined />} />
             </Tooltip>
           </Popconfirm>
         </Space>
@@ -416,7 +420,7 @@ export default function MetadataSourceManagement() {
         okText={t('common.confirm')}
         cancelText={t('common.cancel')}
         width={680}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical">
           <Row gutter={16}>
@@ -427,14 +431,14 @@ export default function MetadataSourceManagement() {
             </Col>
             <Col span={12}>
               <Form.Item name="content_type" label={t('metadataSource.form.contentTypeLabel')} rules={[{ required: true, message: t('metadataSource.form.contentTypeRequired') }]}>
-                <Select showSearch optionFilterProp="label" options={CONTENT_TYPES.map((t) => ({ label: t, value: t }))} />
+                <Select showSearch optionFilterProp="label" options={CONTENT_TYPES.map((item) => ({ label: t(`metadataSource.contentType.${item}` as any), value: item }))} />
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item name="collect_type" label={t('metadataSource.form.collectTypeLabel')} rules={[{ required: true }]}>
-                <Select showSearch optionFilterProp="label" options={COLLECT_TYPES.map((t) => ({ label: t, value: t }))} />
+                <Select showSearch optionFilterProp="label" options={collectTypeOptions} />
               </Form.Item>
             </Col>
             <Col span={12}>
@@ -467,7 +471,7 @@ export default function MetadataSourceManagement() {
                 </Col>
                 <Col span={12}>
                   <Form.Item name="auth_type" label={t('metadataSource.form.authTypeLabel')}>
-                    <Select showSearch optionFilterProp="label" options={AUTH_TYPES.map((t) => ({ label: t, value: t }))} allowClear />
+                    <Select showSearch optionFilterProp="label" options={AUTH_TYPES.map((item) => ({ label: t(`metadataSource.type.authType.${item.replace('.', '_')}` as any), value: item }))} allowClear />
                   </Form.Item>
                 </Col>
               </Row>
@@ -512,7 +516,7 @@ export default function MetadataSourceManagement() {
                     label={t('metadataSource.form.renderTypeLabel')}
                     rules={[{ required: true, message: t('metadataSource.form.renderTypeRequired') }]}
                   >
-                    <Select showSearch optionFilterProp="label" options={RENDER_TYPES.map((t) => ({ label: t, value: t }))} />
+                    <Select showSearch optionFilterProp="label" options={RENDER_TYPES.map((item) => ({ label: t(`metadataSource.type.renderType.${item}` as any), value: item }))} />
                   </Form.Item>
                 </Col>
               </Row>

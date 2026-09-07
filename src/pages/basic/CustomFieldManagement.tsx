@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Button,
   Col,
@@ -16,6 +16,7 @@ import {
 } from 'antd'
 import { DeleteOutlined, EditOutlined, InfoCircleOutlined, PlusOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
+import type { FormListFieldData } from 'antd/es/form/FormList'
 import {
   batchDeleteCustomFields,
   createCustomField,
@@ -69,6 +70,7 @@ interface FormValues {
   mandatory: boolean
   multi_language: boolean
   tip?: string
+  options?: (CustomFieldOptionItem & { key?: number })[]
 }
 
 export default function CustomFieldManagement() {
@@ -92,10 +94,8 @@ export default function CustomFieldManagement() {
     },
   })
   const [languageOptions, setLanguageOptions] = useState<LanguageOption[]>([])
-  const [options, setOptions] = useState<CustomFieldOptionItem[]>([])
   const [fieldType, setFieldType] = useState<string>('')
   const [multiLanguage, setMultiLanguage] = useState(false)
-  const nextKey = useRef(0)
 
   // ─── 搜索字段配置 ───────────────────────────────────────────────────────────
 
@@ -183,11 +183,10 @@ export default function CustomFieldManagement() {
 
   const openCreate = () => {
     setEditingRecord(null)
-    setOptions([])
     setFieldType('')
     setMultiLanguage(false)
     itemForm.resetFields()
-    itemForm.setFieldsValue({ mandatory: true, multi_language: false })
+    itemForm.setFieldsValue({ mandatory: true, multi_language: false, options: [] })
     setModalOpen(true)
   }
 
@@ -195,8 +194,6 @@ export default function CustomFieldManagement() {
     setEditingRecord(record)
     setFieldType(record.field_type)
     setMultiLanguage(record.multi_language)
-    setOptions(record.options.map((o, i) => ({ ...o, _key: i })))
-    nextKey.current = record.options.length
     itemForm.setFieldsValue({
       field_name: record.field_name,
       field_type: record.field_type,
@@ -204,6 +201,7 @@ export default function CustomFieldManagement() {
       mandatory: record.mandatory,
       multi_language: record.multi_language,
       tip: record.tip ?? undefined,
+      options: record.options.map(o => ({ ...o })),
     })
     setModalOpen(true)
   }
@@ -217,59 +215,29 @@ export default function CustomFieldManagement() {
     itemForm.resetFields()
     setModalOpen(false)
     setEditingRecord(null)
-    setOptions([])
     setFieldType('')
     setMultiLanguage(false)
   }
 
   const isDropList = (ft: string) => ft === 'DropList' || ft === 'DropList_multiple'
 
+  const getOptionTableWidth = () => {
+    const noWidth = 40
+    const codeWidth = 260
+    const deleteWidth = 60
+    if (multiLanguage && languageOptions.length > 0) {
+      return noWidth + codeWidth + languageOptions.length * 260 + deleteWidth
+    }
+    return noWidth + codeWidth + 260 + deleteWidth
+  }
+
   const handleSubmit = async () => {
     const values = await itemForm.validateFields()
     const current = editingRecord
 
-    if (isDropList(values.field_type)) {
-      if (options.length === 0) {
-        message.error(t('customField.msg.optionsRequired'))
-        return
-      }
-      const codeSet = new Set<string>()
-      for (let i = 0; i < options.length; i++) {
-        const o = options[i]
-        if (!o.code?.trim()) {
-          message.error(t('customField.msg.codeRequired', { index: i + 1 }))
-          return
-        }
-        const trimmedCode = o.code.trim()
-        if (codeSet.has(trimmedCode)) {
-          message.error(t('customField.msg.codeDuplicate', { index: i + 1, code: trimmedCode }))
-          return
-        }
-        codeSet.add(trimmedCode)
-      }
-      if (values.multi_language && languageOptions.length > 0) {
-        const firstLang = languageOptions[0]
-        for (let i = 0; i < options.length; i++) {
-          const o = options[i]
-          if (!o.names?.[firstLang.code]?.trim()) {
-            message.error(t('customField.msg.firstLangRequired', { index: i + 1, lang: firstLang.name }))
-            return
-          }
-        }
-      } else {
-        for (let i = 0; i < options.length; i++) {
-          const o = options[i]
-          if (!o.names?.['default']?.trim()) {
-            message.error(t('customField.msg.nameRequired', { index: i + 1 }))
-            return
-          }
-        }
-      }
-    }
-
     setSubmitting(true)
     try {
-      const optionPayload = isDropList(values.field_type) ? options.map((o, i) => ({
+      const optionPayload = isDropList(values.field_type) ? (values.options || []).map((o, i) => ({
         id: o.id,
         code: o.code,
         names: o.names,
@@ -323,67 +291,92 @@ export default function CustomFieldManagement() {
     void loadList(1, pagination.pageSize, filters, sortField, sortOrder)
   }
 
-  const addOptionRow = () => {
-    setOptions(prev => [...prev, { code: '', names: {}, sort_order: prev.length, _key: nextKey.current++ } as CustomFieldOptionItem & { _key: number }])
-  }
-
-  const removeOptionRow = (idx: number) => {
-    setOptions(prev => prev.filter((_, i) => i !== idx))
-  }
-
-  const updateOptionField = (idx: number, field: string, value: string) => {
-    setOptions(prev => prev.map((o, i) => {
-      if (i !== idx) return o
-      if (field === 'code') return { ...o, code: value }
-      return { ...o, names: { ...o.names, [field]: value } }
-    }))
-  }
-
-  const optionColumns = (): ColumnsType<CustomFieldOptionItem & { _key?: number }> => {
-    const cols: ColumnsType<CustomFieldOptionItem & { _key?: number }> = [
+  const optionColumns = (
+    fields: FormListFieldData[],
+    _add: (defaultValue?: CustomFieldOptionItem) => void,
+    remove: (index: number | number[]) => void,
+  ): ColumnsType<FormListFieldData> => {
+    const firstLang = languageOptions[0]
+    const cols: ColumnsType<FormListFieldData> = [
       {
-        title: 'NO.',
-        width: 60,
+        title: t('customField.option.colNo' as any),
+        width: 40,
+        className: 'option-no-cell',
         render: (_, __, idx) => idx + 1,
       },
       {
-        title: t('customField.form.code'),
-        dataIndex: 'code',
-        render: (val: string, _, idx) => (
-          <TrimInput
-            size="small"
-            value={val}
-            placeholder={t('customField.option.codePlaceholder')}
-            onChange={e => updateOptionField(idx, 'code', e.target.value)}
-          />
+        title: <span><span style={{ color: '#ff4d4f' }}>*</span> {t('customField.form.code')}</span>,
+        width: 260,
+        render: (_, __, idx) => (
+          <div className="option-form-item-wrapper">
+            <Form.Item
+              name={[fields[idx].name, 'code']}
+              rules={[
+                { required: true, message: t('customField.msg.codeRequired', { index: idx + 1 }) },
+                formRules.maxLength(FORM_MAX_LENGTH.INPUT),
+                ({ getFieldValue }) => ({
+                  validator(_, value) {
+                    const options = getFieldValue('options') || []
+                    const trimmedValue = value?.trim()
+                    if (trimmedValue) {
+                      const duplicate = options.some((o: CustomFieldOptionItem, i: number) => i !== idx && o?.code?.trim() === trimmedValue)
+                      if (duplicate) {
+                        return Promise.reject(new Error(t('customField.msg.codeDuplicate', { index: idx + 1, code: trimmedValue })))
+                      }
+                    }
+                    return Promise.resolve()
+                  },
+                }),
+              ]}
+            >
+              <TrimInput
+                size="small"
+                placeholder={t('customField.option.codePlaceholder')}
+              />
+            </Form.Item>
+          </div>
         ),
       },
     ]
 
     if (multiLanguage && languageOptions.length > 0) {
-      languageOptions.forEach(lang => {
+      languageOptions.forEach((lang, langIdx) => {
         cols.push({
-          title: `${t('customField.form.name')}_${lang.name}`,
-          render: (_, record, idx) => (
-            <TrimInput
-              size="small"
-              value={record.names?.[lang.code] ?? ''}
-              placeholder={lang.name}
-              onChange={e => updateOptionField(idx, lang.code, e.target.value)}
-            />
+          title: langIdx === 0 
+            ? <span><span style={{ color: '#ff4d4f' }}>*</span> {`${t('customField.form.name')}_${lang.name}`}</span>
+            : `${t('customField.form.name')}_${lang.name}`,
+          width: 260,
+          render: (_, __, idx) => (
+            <div className="option-form-item-wrapper">
+              <Form.Item
+                name={[fields[idx].name, 'names', lang.code]}
+                rules={lang.code === firstLang?.code ? [{ required: true, message: t('customField.msg.firstLangRequired', { index: idx + 1, lang: lang.name }) }] : []}
+              >
+                <TrimInput
+                  size="small"
+                  placeholder={lang.name}
+                />
+              </Form.Item>
+            </div>
           ),
         })
       })
     } else {
       cols.push({
-        title: t('customField.form.name'),
-        render: (_, record, idx) => (
-          <TrimInput
-            size="small"
-            value={record.names?.['default'] ?? ''}
-            placeholder={t('customField.option.namePlaceholder')}
-            onChange={e => updateOptionField(idx, 'default', e.target.value)}
-          />
+        title: <span><span style={{ color: '#ff4d4f' }}>*</span> {t('customField.form.name')}</span>,
+        width: 260,
+        render: (_, __, idx) => (
+          <div className="option-form-item-wrapper">
+            <Form.Item
+              name={[fields[idx].name, 'names', 'default']}
+              rules={[{ required: true, message: t('customField.msg.nameRequired', { index: idx + 1 }) }, formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}
+            >
+              <TrimInput
+                size="small"
+                placeholder={t('customField.option.namePlaceholder')}
+              />
+            </Form.Item>
+          </div>
         ),
       })
     }
@@ -391,13 +384,14 @@ export default function CustomFieldManagement() {
     cols.push({
       title: t('common.delete'),
       width: 60,
+      className: 'option-delete-cell',
       render: (_, __, idx) => (
         <Button
           type="link"
           danger
           size="small"
           icon={<DeleteOutlined />}
-          onClick={() => removeOptionRow(idx)}
+          onClick={() => remove(fields[idx].name)}
         />
       ),
     })
@@ -515,7 +509,7 @@ export default function CustomFieldManagement() {
         confirmLoading={submitting}
         okText={t('common.confirm')}
         cancelText={t('common.cancel')}
-        width={800}
+        width={'60%'}
         destroyOnHidden
       >
         <Form form={itemForm} layout="vertical">
@@ -532,7 +526,7 @@ export default function CustomFieldManagement() {
                   placeholder={t('customField.placeholder.fieldType')}
                   style={{ width: '100%' }}
                   options={FIELD_TYPES.map(ft => ({ label: t(fieldTypeI18nKey(ft)), value: ft }))}
-                  onChange={v => { setFieldType(v); if (!isDropList(v)) setOptions([]) }}
+                  onChange={v => { setFieldType(v); if (!isDropList(v)) itemForm.setFieldValue('options', []) }}
                 />
               </Form.Item>
             </Col>
@@ -569,20 +563,38 @@ export default function CustomFieldManagement() {
           </Row>
 
           {isDropList(fieldType) && (
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <span style={{ fontWeight: 500 }}>{t('customField.form.options')}</span>
-                <Button type="primary" ghost size="small" icon={<PlusOutlined />} onClick={addOptionRow}>{t('customField.form.addRow')}</Button>
-              </div>
-              <Table<CustomFieldOptionItem & { _key?: number }>
-                rowKey={r => String((r as CustomFieldOptionItem & { _key?: number })._key ?? r.code)}
-                size="small"
-                pagination={false}
-                dataSource={options as (CustomFieldOptionItem & { _key?: number })[]}
-                columns={optionColumns()}
-                scroll={{ x: 500 }}
-              />
-            </div>
+            <Form.Item
+              name="options"
+              rules={[
+                {
+                  validator: (_, value) => {
+                    if (!value || value.length === 0) {
+                      return Promise.reject(new Error(t('customField.msg.optionsRequired')))
+                    }
+                    return Promise.resolve()
+                  },
+                },
+              ]}
+            >
+              <Form.List name="options">
+                {(fields, { add, remove }) => (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <span style={{ fontWeight: 500 }}>{t('customField.form.options')}</span>
+                      <Button type="primary" ghost size="small" icon={<PlusOutlined />} onClick={() => add({ code: '', names: {} })}>{t('customField.form.addRow')}</Button>
+                    </div>
+                    <Table<FormListFieldData>
+                      rowKey="key"
+                      size="small"
+                      pagination={false}
+                      dataSource={fields}
+                      columns={optionColumns(fields, add, remove)}
+                      scroll={{ x: getOptionTableWidth() }}
+                    />
+                  </>
+                )}
+              </Form.List>
+            </Form.Item>
           )}
         </Form>
       </Modal>

@@ -107,7 +107,7 @@ export default function ContractManagement() {
           placeholder={t('contract.placeholder.provider')}
           optionFilterProp="label"
           options={[
-            { value: '', label: '全部' },
+            { value: '', label: t('common.placeholder.all') },
             ...providerOptions.map((opt) => ({ value: opt.value, label: opt.label })),
           ]}
           style={{ width: '100%' }}
@@ -166,14 +166,12 @@ export default function ContractManagement() {
     onSearch: (values) => {
       setFilters(values)
       setWithoutLicenseActive(false)
-      setSelectedIds([])
       resetSort()
       void loadList(1, pagination.pageSize, values, false, null, null)
     },
     onReset: () => {
       setFilters({})
       setWithoutLicenseActive(false)
-      setSelectedIds([])
       resetSort()
       void loadList(1, pagination.pageSize, {}, false, null, null)
     },
@@ -226,6 +224,8 @@ export default function ContractManagement() {
     sortBy?: string | null,
     sortOrd?: 'ascend' | 'descend' | null,
   ) => {
+    // 数据集刷新后旧勾选失效，统一在此重置（覆盖新增/编辑/删除/搜索/翻页等全部刷新路径）
+    setSelectedIds([])
     setLoading(true)
     try {
       const startRange = nextFilters.start_date_range
@@ -236,10 +236,10 @@ export default function ContractManagement() {
         name: nextFilters.name,
         provider_id: nextFilters.provider_id,
         platforms: nextFilters.platforms,
-        start_date_from: startRange ? startRange[0].format('YYYY-MM-DD') : undefined,
-        start_date_to: startRange ? startRange[1].format('YYYY-MM-DD') : undefined,
-        end_date_from: endRange ? endRange[0].format('YYYY-MM-DD') : undefined,
-        end_date_to: endRange ? endRange[1].format('YYYY-MM-DD') : undefined,
+        start_date_from: startRange ? startRange[0].startOf('day').format('YYYY-MM-DD') : undefined,
+        start_date_to: startRange ? startRange[1].endOf('day').format('YYYY-MM-DD') : undefined,
+        end_date_from: endRange ? endRange[0].startOf('day').format('YYYY-MM-DD') : undefined,
+        end_date_to: endRange ? endRange[1].endOf('day').format('YYYY-MM-DD') : undefined,
         without_license: withoutLicense || undefined,
         sort_by: sortBy ?? undefined,
         sort_order: sortOrd ? (sortOrd === 'ascend' ? 'asc' : 'desc') : undefined,
@@ -284,7 +284,6 @@ export default function ContractManagement() {
     try {
       await batchDeleteContracts({ ids: selectedIds })
       void message.success(t('common.msg.deleteSuccess'), 3)
-      setSelectedIds([])
       void loadList(1, pagination.pageSize, filters)
     } catch (err) {
       // 错误已由拦截器处理
@@ -360,6 +359,8 @@ export default function ContractManagement() {
           onChange: (keys) => setSelectedIds(keys as number[]),
         }}
         onTableChange={handleTableChange}
+        sortField={sortField}
+        sortOrder={sortOrder}
       />
 
       {/* 新增合同弹框 */}

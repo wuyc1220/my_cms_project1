@@ -22,14 +22,19 @@ import {
   Switch,
   Table,
   Tabs,
+  Tooltip,
   Upload,
   message,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import type { UploadFile } from 'antd/es/upload'
 import TrimInput from './TrimInput'
+import CustomFieldControl from './CustomFieldControl'
+import { formatApiValue, getCustomFieldRules, getCustomFieldPlaceholder, getOptionLabel } from '../utils/customField'
 import { DeleteOutlined, UploadOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
+import { FORM_MAX_LENGTH } from '../constants/form'
+import { useFormRules } from '../hooks/useFormRules'
 
 import { uploadAttachment } from '../api/attachments'
 import { createMovie, deleteMovie, getMoviesByContentId, getMovieHistoryByContentId, saveMovieI18n, saveMovieFieldValues } from '../api/movies'
@@ -37,6 +42,7 @@ import { getMultiLanguageOptions } from '../api/i18n'
 import { getDictChildren } from '../api/dicts'
 import { getPublicConfig } from '../api/configs'
 import { getCustomFields } from '../api/customFields'
+import { useSensitiveCheck } from '../hooks/useSensitiveCheck'
 import { useI18n } from '../i18n/useI18n'
 import type { MovieItem, MovieHistoryItem } from '../types/metadata'
 import type { LanguageOption } from '../types/i18n'
@@ -67,6 +73,8 @@ export default function MaterialsModal({
   disableMovieType = false,
 }: MaterialsModalProps) {
   const { t } = useI18n()
+  const { checkSensitive } = useSensitiveCheck()
+  const formRules = useFormRules()
   const [form] = Form.useForm()
   const [activeTab, setActiveTab] = useState('add')
 
@@ -92,6 +100,7 @@ export default function MaterialsModal({
 
   const watchType = Form.useWatch('movie_type', form)
   const isTrailer = (watchType ?? fixedType) === 2
+  const isSubtitle = (watchType ?? fixedType) === 3
 
   // ── 加载数据 ──────────────────────────────────────────────
 
@@ -99,27 +108,29 @@ export default function MaterialsModal({
     setMoviesLoading(true)
     try {
       const resp = await getMoviesByContentId(contentId)
-      setMovies(resp.items)
+      // 固定材料类型时 Material Files 仅展示对应 type 的文件，按类型分开展示
+      setMovies(fixedType !== undefined ? resp.items.filter((m) => Number(m.movie_type) === fixedType) : resp.items)
     } catch (err) {
       if (isHandledError(err)) return
       void message.error(t('content.materials.loadError'), 5)
     } finally {
       setMoviesLoading(false)
     }
-  }, [contentId, t])
+  }, [contentId, fixedType, t])
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true)
     try {
       const resp = await getMovieHistoryByContentId(contentId)
-      setHistories(resp.items)
+      // 与 Material Files 保持一致：固定类型时历史也只展示对应 type 的记录
+      setHistories(fixedType !== undefined ? resp.items.filter((h) => Number(h.movie_type) === fixedType) : resp.items)
     } catch (err) {
       if (isHandledError(err)) return
       void message.error(t('content.materials.loadError'), 5)
     } finally {
       setHistoryLoading(false)
     }
-  }, [contentId, t])
+  }, [contentId, fixedType, t])
 
   useEffect(() => {
     if (!open) return
@@ -157,7 +168,7 @@ export default function MaterialsModal({
           getDictChildren('Definition'),
           getDictChildren('AudioType'),
           getDictChildren('ScreenFormat'),
-          getDictChildren('mediaservice'),
+          getDictChildren('Mediaservice'),
         ])
         setLanguageOptions(langs)
         setCustomFields(fields.items)
@@ -173,12 +184,12 @@ export default function MaterialsModal({
 
       try {
         const hint = await getPublicConfig('MOVIE_DEEPLINK_HINT')
-        setDeeplinkHint(hint ?? 'Please enter deeplink URL')
+        setDeeplinkHint(hint ?? t('content.materials.deeplinkHint'))
       } catch (e) {
-        setDeeplinkHint('Please enter deeplink URL')
+        setDeeplinkHint(t('content.materials.deeplinkHint'))
       }
     })()
-  }, [open])
+  }, [open, t])
 
   // ── 提交表单（Ant Design onFinish 模式，values 已通过表单校验） ──
 
@@ -192,16 +203,16 @@ export default function MaterialsModal({
     }
 
     // 文件非表单字段，单独校验
-    if (!publishFlag && fileSource === 'local' && uploadFileList.length === 0) {
-      void message.error('Please select a file', 5)
+    if (publishFlag && fileSource === 'local' && uploadFileList.length === 0) {
+      void message.error(t('content.materials.pleaseSelectFile'), 5)
       return
     }
 
     // 获取文件对象（兼容不同版本的 Ant Design）
     const uploadFile = uploadFileList[0]
     const file = (uploadFile?.originFileObj || uploadFile) as File | undefined
-    if (!publishFlag && fileSource === 'local' && !file) {
-      void message.error('Please select a file', 5)
+    if (publishFlag && fileSource === 'local' && !file) {
+      void message.error(t('content.materials.pleaseSelectFile'), 5)
       return
     }
 
@@ -211,10 +222,13 @@ export default function MaterialsModal({
       let filePath: string
       let fileSize: number
 
-      if (!publishFlag && fileSource === 'local') {
+      let relativePath: string | undefined
+
+      if (publishFlag && fileSource === 'local') {
         const uploadResult = await uploadAttachment(file!, 'materials')
         fileName = uploadResult.file_name
-        filePath = uploadResult.file_path
+        filePath = uploadResult.storage_url
+        relativePath = uploadResult.file_path
         fileSize = uploadResult.file_size
       } else {
         filePath = (values.file_path as string) ?? '/uploads/materials'
@@ -225,19 +239,43 @@ export default function MaterialsModal({
       const payload: Omit<MovieItem, 'id' | 'content_id' | 'created_at'> = {
         file_name: fileName,
         file_path: filePath,
+        relative_path: relativePath,
         file_size: String(fileSize),
         movie_type: String(values.movie_type as number),
         sequence: (values.sequence as number) ?? null,
         audio_type: (values.audio_type as string) ?? null,
         screen_format: (values.screen_format as string) ?? null,
         closed_captioning: (values.closed_captioning as boolean) ?? true,
-        duration: String((values.duration as number) ?? 0),
-        definition: (values.definition as string) ?? 'SD',
+        // 字幕类型未填写时保持为空（后端存 NULL）；其他类型由必填校验保证有值
+        duration: values.duration != null ? String(values.duration) : null,
+        definition: (values.definition as string) ?? null,
         mediaservice: (values.mediaservice as string) ?? null,
         encryption: (values.encryption as boolean) ?? true,
-        publish_flag: (values.publish_flag as boolean) ?? true,
+        // Trailer 固定 publish_flag=true，其他类型使用表单值
+        publish_flag: isTrailer ? true : (values.publish_flag as boolean) ?? true,
         deeplink: (values.deeplink as string) ?? null,
       }
+
+      // 敏感词预校验：提交前先检查所有文本字段（含 Trailer 多语言名称、自定义字段）
+      const checkData: Record<string, unknown> = { ...payload }
+      if (isTrailer && languageOptions.length > 0) {
+        const i18nNames: Record<string, string> = {}
+        languageOptions.forEach((lang) => {
+          const nameValue = values[`name_${lang.code}`] as string | undefined
+          if (nameValue) i18nNames[lang.code] = nameValue
+        })
+        if (Object.keys(i18nNames).length > 0) checkData.i18n_names = i18nNames
+      }
+      if (customFields.length > 0) {
+        const cfValues: Record<string, string> = {}
+        customFields.forEach((cf) => {
+          const v = formatApiValue(cf.field_type, values[`cf_${cf.id}`])
+          if (v !== '') cfValues[String(cf.id)] = v
+        })
+        if (Object.keys(cfValues).length > 0) checkData.custom_fields = cfValues
+      }
+      const ok = await checkSensitive(checkData)
+      if (!ok) return
 
       const newMovie = await createMovie(contentId, payload)
 
@@ -260,7 +298,7 @@ export default function MaterialsModal({
         const fieldValues = customFields
           .map((cf) => ({
             custom_field_id: cf.id,
-            value: String(values[`cf_${cf.id}`] ?? ''),
+            value: formatApiValue(cf.field_type, values[`cf_${cf.id}`]),
           }))
           .filter((fv) => fv.value !== '')
         if (fieldValues.length > 0) {
@@ -280,7 +318,7 @@ export default function MaterialsModal({
       if (isHandledError(e)) return
       // eslint-disable-next-line no-console
       console.error('[MaterialsModal] submit error:', e)
-      void message.error('Failed to add material', 5)
+      void message.error(t('content.materials.addFailed'), 5)
     } finally {
       setSubmitting(false)
     }
@@ -296,7 +334,7 @@ export default function MaterialsModal({
       await loadMovies()
     } catch (err) {
       if (isHandledError(err)) return
-      void message.error('Failed to delete material', 5)
+      void message.error(t('content.materials.deleteFailed'), 5)
     }
   }
 
@@ -332,6 +370,7 @@ export default function MaterialsModal({
       dataIndex: 'file_name',
       key: 'file_name',
       ellipsis: true,
+      render: (v: string) => v?.split('/').pop() ?? v,
     },
     {
       title: t('content.col.type'),
@@ -339,6 +378,7 @@ export default function MaterialsModal({
       key: 'movie_type',
       width: 110,
       render: (v: number) => getMovieTypeLabel(v),
+      ellipsis: true,
     },
     {
       title: t('content.materials.col.fileSize'),
@@ -353,6 +393,7 @@ export default function MaterialsModal({
       key: 'audio_type',
       width: 110,
       render: (v?: string) => (v ? getDictName(dictOptions.AudioType ?? [], v) : '—'),
+      ellipsis: true,
     },
     {
       title: t('content.col.screenFormat'),
@@ -360,6 +401,7 @@ export default function MaterialsModal({
       key: 'screen_format',
       width: 120,
       render: (v?: string) => (v ? getDictName(dictOptions.ScreenFormat ?? [], v) : '—'),
+      ellipsis: true,
     },
     {
       title: t('content.col.closedCaptioning'),
@@ -367,6 +409,7 @@ export default function MaterialsModal({
       key: 'closed_captioning',
       width: 130,
       render: (v: boolean) => <Switch checked={v} disabled size="small" />,
+      ellipsis: true,
     },
     {
       title: t('content.col.duration'),
@@ -379,7 +422,8 @@ export default function MaterialsModal({
       dataIndex: 'definition',
       key: 'definition',
       width: 100,
-      render: (v: string) => getDefinitionLabel(v),
+      render: (v?: string) => (v ? getDefinitionLabel(v) : '—'),
+      ellipsis: true,
     },
     {
       title: t('content.col.encryption'),
@@ -387,6 +431,7 @@ export default function MaterialsModal({
       key: 'encryption',
       width: 100,
       render: (v: boolean) => <Switch checked={v} disabled size="small" />,
+      ellipsis: true,
     },
     {
       title: t('content.col.publishFlag'),
@@ -394,6 +439,7 @@ export default function MaterialsModal({
       key: 'publish_flag',
       width: 110,
       render: (v: boolean) => <Switch checked={v} disabled size="small" />,
+      ellipsis: true,
     },
     {
       title: t('content.col.deeplink'),
@@ -408,19 +454,24 @@ export default function MaterialsModal({
       fixed: 'right' as const,
       width: 80,
       render: (_: unknown, record: MovieItem) => {
-        if (readOnly) {
-          return <Button type="link" size="small" icon={<DeleteOutlined />} disabled />
-        }
-        return (
-          <Popconfirm
-            title={t('content.materials.confirmDelete')}
-            onConfirm={() => void handleDelete(record.id)}
-            okText={t('common.confirm')}
-            cancelText={t('common.cancel')}
-          >
-            <Button type="link" danger size="small" icon={<DeleteOutlined />} />
-          </Popconfirm>
-        )
+        return readOnly
+          ? (
+            <Tooltip title={t('common.delete')}>
+              <Button type="link" size="small" icon={<DeleteOutlined />} disabled />
+            </Tooltip>
+          )
+          : (
+            <Popconfirm
+              title={t('content.materials.confirmDelete')}
+              onConfirm={() => void handleDelete(record.id)}
+              okText={t('common.confirm')}
+              cancelText={t('common.cancel')}
+            >
+              <Tooltip title={t('common.delete')}>
+                <Button type="link" danger size="small" icon={<DeleteOutlined />} />
+              </Tooltip>
+            </Popconfirm>
+          )
       },
     },
   ]
@@ -433,6 +484,7 @@ export default function MaterialsModal({
       dataIndex: 'file_name',
       key: 'file_name',
       ellipsis: true,
+      render: (v: string) => v?.split('/').pop() ?? v,
     },
     {
       title: t('content.col.type'),
@@ -494,9 +546,9 @@ export default function MaterialsModal({
               <Form.Item
                 name="movie_type"
                 label={t('content.materials.type')}
-                rules={[{ required: true, message: 'Required' }]}
+                rules={[{ required: true, message: t('common.required') }]}
               >
-                <Select showSearch disabled={fixedType !== undefined} placeholder="Please select" filterOption={(input, option) => String(option?.label ?? option?.children ?? '').toLowerCase().includes(input.toLowerCase())}>
+                <Select showSearch disabled={fixedType !== undefined} placeholder={t('common.placeholder.select')} filterOption={(input, option) => String(option?.label ?? option?.children ?? '').toLowerCase().includes(input.toLowerCase())}>
                   <Select.Option value={1} disabled={disableMovieType}>
                     {t('content.materials.typeMovie')}
                   </Select.Option>
@@ -507,7 +559,7 @@ export default function MaterialsModal({
             </Col>
             <Col span={8}>
               <Form.Item name="audio_type" label={t('content.materials.audioType')}>
-                <Select showSearch optionFilterProp="label" allowClear placeholder="Please select">
+                <Select showSearch optionFilterProp="children" allowClear placeholder={t('common.placeholder.select')}>
                   {(dictOptions.AudioType ?? []).map((opt) => (
                     <Select.Option key={opt.code} value={opt.code}>
                       {opt.name}
@@ -518,7 +570,7 @@ export default function MaterialsModal({
             </Col>
             <Col span={8}>
               <Form.Item name="screen_format" label={t('content.materials.screenFormat')}>
-                <Select showSearch optionFilterProp="label" allowClear placeholder="Please select">
+                <Select showSearch optionFilterProp="children" allowClear placeholder={t('common.placeholder.select')}>
                   {(dictOptions.ScreenFormat ?? []).map((opt) => (
                     <Select.Option key={opt.code} value={opt.code}>
                       {opt.name}
@@ -536,25 +588,25 @@ export default function MaterialsModal({
                 label={t('content.materials.closedCaptioning')}
                 valuePropName="checked"
               >
-                <Switch checkedChildren="Yes" unCheckedChildren="No" />
+                <Switch checkedChildren={t('common.yes')} unCheckedChildren={t('common.no')} />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item
                 name="duration"
                 label={t('content.materials.duration')}
-                rules={[{ required: true, message: 'Required' }]}
+                rules={isSubtitle ? [] : [{ required: true, message: t('common.required') }]}
               >
-                <InputNumber style={{ width: '100%' }} min={0} max={5999} placeholder="Please enter" />
+                <InputNumber style={{ width: '100%' }} min={0} max={5999} placeholder={t('common.placeholder.enter')} />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item
                 name="definition"
                 label={t('content.materials.definition')}
-                rules={[{ required: true, message: 'Required' }]}
+                rules={isSubtitle ? [] : [{ required: true, message: t('common.required') }]}
               >
-                <Select showSearch optionFilterProp="label" placeholder="Please select">
+                <Select showSearch placeholder={t('common.placeholder.select')} filterOption={(input, option) => String(option?.label ?? option?.children ?? '').toLowerCase().includes(input.toLowerCase())}>
                   {(dictOptions.Definition ?? []).map((opt) => (
                     <Select.Option key={opt.code} value={opt.code}>
                       {opt.name}
@@ -572,7 +624,7 @@ export default function MaterialsModal({
                 label={t('content.materials.encryption')}
                 valuePropName="checked"
               >
-                <Switch checkedChildren="Yes" unCheckedChildren="No" />
+                <Switch checkedChildren={t('common.yes')} unCheckedChildren={t('common.no')} />
               </Form.Item>
             </Col>
             <Col span={8}>
@@ -582,28 +634,29 @@ export default function MaterialsModal({
                 valuePropName="checked"
               >
                 <Switch
-                  checkedChildren="Yes"
-                  unCheckedChildren="No"
+                  checkedChildren={t('common.yes')}
+                  unCheckedChildren={t('common.no')}
+                  disabled={isTrailer}
                   onChange={(checked: boolean) => {
                     setPublishFlag(checked)
                     if (checked) {
+                      // YES → 上传文件模式，清除 deeplink
+                      form.setFieldsValue({ deeplink: undefined })
+                    } else {
+                      // NO → Deeplink 模式，清除文件相关字段
                       setFileSource('local')
                       setUploadFileList([])
                       form.setFieldsValue({
                         file_path: undefined,
-                        ftp_account: undefined,
-                        ftp_password: undefined,
                       })
-                    } else {
-                      form.setFieldsValue({ deeplink: undefined })
                     }
                   }}
                 />
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="mediaservice" label="Mediaservice" rules={[{ required: true, message: 'Required' }]}>
-                <Select showSearch optionFilterProp="label" allowClear placeholder="Please select">
+              <Form.Item name="mediaservice" label={t('content.materials.mediaservice')} rules={[{ required: true, message: t('common.required') }]}>
+                <Select showSearch allowClear placeholder={t('common.placeholder.select')} filterOption={(input, option) => String(option?.label ?? option?.children ?? '').toLowerCase().includes(input.toLowerCase())}>
                   {(dictOptions.mediaservice ?? []).map((opt) => (
                     <Select.Option key={opt.code} value={opt.code}>
                       {opt.name}
@@ -619,7 +672,7 @@ export default function MaterialsModal({
             <>
               <Row gutter={16}>
                 <Col span={8}>
-                  <Form.Item name="sequence" label="Sequence">
+                  <Form.Item name="sequence" label={t('content.materials.sequence')}>
                     <InputNumber style={{ width: '100%' }} min={1} max={9999} placeholder="1-9999" />
                   </Form.Item>
                 </Col>
@@ -627,10 +680,10 @@ export default function MaterialsModal({
                   <Col key={lang.code} span={8}>
                     <Form.Item
                       name={`name_${lang.code}`}
-                      label={`Name (${lang.code})`}
-                      rules={[{ required: true, message: 'Required' }]}
+                      label={t('content.materials.nameLabel', { lang: lang.code })}
+                      rules={[{ required: true, message: t('common.required') }, formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}
                     >
-                      <TrimInput placeholder={`Name_${lang.code}`} />
+                      <TrimInput placeholder={t('content.materials.namePlaceholder', { lang: lang.code })} />
                     </Form.Item>
                   </Col>
                 ))}
@@ -641,10 +694,10 @@ export default function MaterialsModal({
                     <Col key={lang.code} span={8}>
                       <Form.Item
                         name={`name_${lang.code}`}
-                        label={`Name (${lang.code})`}
-                        rules={[{ required: true, message: 'Required' }]}
+                        label={t('content.materials.nameLabel', { lang: lang.code })}
+                        rules={[{ required: true, message: t('common.required') }, formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}
                       >
-                        <TrimInput placeholder={`Name_${lang.code}`} />
+                        <TrimInput placeholder={t('content.materials.namePlaceholder', { lang: lang.code })} />
                       </Form.Item>
                     </Col>
                   ))}
@@ -653,27 +706,20 @@ export default function MaterialsModal({
             </>
           )}
 
-          {/* Custom Fields */}
           {customFields.length > 0 && (
             <Row gutter={16}>
               {customFields.map((cf) => {
                 const fieldName = `cf_${cf.id}`
-                const fieldLabel = cf.field_name
-                const rules = cf.mandatory ? [{ required: true, message: 'Required' }] : undefined
                 return (
                   <Col span={8} key={cf.id}>
-                    <Form.Item name={fieldName} label={fieldLabel} rules={rules}>
-                      {cf.field_type === 'DropList' && cf.options.length > 0 ? (
-                        <Select showSearch optionFilterProp="label" allowClear placeholder="Please select">
-                          {cf.options.map((opt) => (
-                            <Select.Option key={opt.code} value={opt.code}>
-                              {opt.names?.en ?? opt.code}
-                            </Select.Option>
-                          ))}
-                        </Select>
-                      ) : (
-                        <TrimInput placeholder={`Enter ${cf.field_name}`} />
-                      )}
+                    <Form.Item name={fieldName} label={cf.field_name}
+                      rules={getCustomFieldRules(cf, t('customField.validation.integerOnly'), t)}
+                    >
+                      <CustomFieldControl
+                        fieldType={cf.field_type}
+                        options={cf.options.map((o) => ({ value: o.code, label: getOptionLabel(o.names, languageOptions[0]?.code ?? '', languageOptions.map((l) => l.code)) || o.code }))}
+                        placeholder={getCustomFieldPlaceholder(cf, t)}
+                      />
                     </Form.Item>
                   </Col>
                 )
@@ -681,12 +727,12 @@ export default function MaterialsModal({
             </Row>
           )}
 
-          {/* 发布标识开启时显示必填 Deeplink */}
-          {publishFlag && (
+          {/* PublishFlag=0(NO)时显示 Deeplink */}
+          {!publishFlag && (
             <Form.Item
               name="deeplink"
               label={t('content.materials.deeplink')}
-              rules={[{ required: true, message: 'Required' }]}
+              rules={[{ required: true, message: t('common.required') }, formRules.maxLength(FORM_MAX_LENGTH.DEEPLINK)]}
             >
               <TrimInput.TextArea
                 rows={4}
@@ -695,8 +741,8 @@ export default function MaterialsModal({
             </Form.Item>
           )}
 
-          {/* 发布标识关闭时显示文件来源 */}
-          {!publishFlag && (
+          {/* PublishFlag=1(YES)时显示文件上传 */}
+          {publishFlag && (
             <>
               <Form.Item label={t('content.materials.fileSource')} required>
                 <Radio.Group
@@ -727,40 +773,20 @@ export default function MaterialsModal({
                   <Form.Item
                     name="file_path"
                     label={t('content.materials.downloadLink')}
-                    rules={[{ required: true, message: 'Required' }]}
+                    rules={[{ required: true, message: t('common.required') }]}
                   >
-                    <TrimInput placeholder="Please enter download link" />
+                    <TrimInput placeholder="sftp://user:password@host:port/path/to/file" />
                   </Form.Item>
-                  <Row gutter={16}>
-                    <Col span={12}>
-                      <Form.Item
-                        name="ftp_account"
-                        label={t('content.materials.ftpAccount')}
-                        rules={[{ required: true, message: 'Required' }]}
-                      >
-                        <TrimInput placeholder="Please enter" />
-                      </Form.Item>
-                    </Col>
-                    <Col span={12}>
-                      <Form.Item
-                        name="ftp_password"
-                        label={t('content.materials.ftpPassword')}
-                        rules={[{ required: true, message: 'Required' }]}
-                      >
-                        <TrimInput.Password placeholder="Please enter" />
-                      </Form.Item>
-                    </Col>
-                  </Row>
                 </>
               )}
 
               {fileSource === 'temp' && (
                 <Form.Item
                   name="file_path"
-                  label={t('content.materials.selectFile')}
-                  rules={[{ required: true, message: 'Required' }]}
+                  label={t('content.materials.downloadLink')}
+                  rules={[{ required: true, message: t('common.required') }, formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}
                 >
-                  <TrimInput placeholder="Please enter temporary file path" />
+                  <TrimInput placeholder={t('content.materials.tempFilePathPlaceholder')} />
                 </Form.Item>
               )}
 
@@ -776,7 +802,7 @@ export default function MaterialsModal({
             </Button>
           </div>
         </Form>
-      ),
+      )
     },
     {
       key: 'files',
@@ -789,7 +815,7 @@ export default function MaterialsModal({
           dataSource={movies}
           size="small"
           scroll={{ x: 1300 }}
-          pagination={{ pageSize: 10, position: ['bottomCenter'] }}
+          pagination={{ pageSize: 10, placement: ['bottomCenter'] }}
           locale={{ emptyText: t('content.materials.noFiles') }}
         />
       ),
@@ -805,12 +831,12 @@ export default function MaterialsModal({
           dataSource={histories}
           size="small"
           scroll={{ x: 1000 }}
-          pagination={{ pageSize: 10, position: ['bottomCenter'] }}
+          pagination={{ pageSize: 10, placement: ['bottomCenter'] }}
           locale={{ emptyText: t('content.materials.noHistory') }}
         />
       ),
     },
-  ]
+  ].filter((item) => !readOnly || item.key !== 'add')
 
   return (
     <Modal
@@ -819,7 +845,7 @@ export default function MaterialsModal({
       onCancel={onClose}
       footer={null}
       width={960}
-      destroyOnClose
+      destroyOnHidden
     >
       <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
     </Modal>

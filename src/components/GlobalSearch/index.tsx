@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import TrimInput from '../TrimInput'
 import { getContents } from '../../api/contents'
 import { useI18n } from '../../i18n/useI18n'
+import { useContentAuthPermission } from '../../hooks/useContentAuthPermission'
 import type { ContentListItem } from '../../types/content'
 import type { MenuProps } from 'antd'
 
@@ -18,6 +19,7 @@ export default function GlobalSearch({ style }: GlobalSearchProps) {
   const [dropdownVisible, setDropdownVisible] = useState(false)
   const navigate = useNavigate()
   const { t } = useI18n()
+  const { checkPermission } = useContentAuthPermission()
 
   const handleSearch = useCallback(async (value: string) => {
     const trimmedValue = value.trim()
@@ -30,7 +32,7 @@ export default function GlobalSearch({ style }: GlobalSearchProps) {
     try {
       const isIdSearch = /^\d+$/.test(trimmedValue)
       const params = isIdSearch
-        ? { content_id: Number(trimmedValue), title: trimmedValue, page_size: 10 }
+        ? { content_id: Number(trimmedValue), page_size: 10 }
         : { title: trimmedValue, page_size: 10 }
 
       const response = await getContents(params)
@@ -39,7 +41,12 @@ export default function GlobalSearch({ style }: GlobalSearchProps) {
       setResults(items)
 
       if (items.length === 1) {
-        navigate(`/contents/${items[0].id}`)
+        const hasPermission = await checkPermission(items[0].id)
+        if (hasPermission) {
+          navigate(`/contents/${items[0].id}?mode=edit`)
+        } else {
+          message.warning(t('content.msg.noDataPermission'))
+        }
         setKeyword('')
       } else if (items.length === 0) {
         message.info(t('header.search.noResult'))
@@ -51,14 +58,19 @@ export default function GlobalSearch({ style }: GlobalSearchProps) {
     } finally {
       setLoading(false)
     }
-  }, [navigate, t])
+  }, [navigate, t, checkPermission])
 
-  const handleSelect = useCallback((contentId: number) => {
-    navigate(`/contents/${contentId}`)
+  const handleSelect = useCallback(async (contentId: number) => {
     setKeyword('')
     setDropdownVisible(false)
     setResults([])
-  }, [navigate])
+    const hasPermission = await checkPermission(contentId)
+    if (hasPermission) {
+      navigate(`/contents/${contentId}?mode=edit`)
+    } else {
+      message.warning(t('content.msg.noDataPermission'))
+    }
+  }, [navigate, checkPermission])
 
   const dropdownItems: MenuProps['items'] = results.map((item) => ({
     key: item.id,
@@ -92,7 +104,7 @@ export default function GlobalSearch({ style }: GlobalSearchProps) {
       menu={{ items: dropdownItems }}
       open={dropdownVisible && results.length > 1}
       trigger={['click']}
-      destroyPopupOnHide
+      destroyOnHidden
       onOpenChange={(open) => {
         if (!open) {
           setDropdownVisible(false)

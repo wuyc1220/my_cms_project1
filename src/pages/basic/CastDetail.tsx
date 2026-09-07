@@ -20,18 +20,15 @@ import PostersModal from '../../components/PostersModal'
 import type { CastListItem, CustomFieldListItem, EntityFieldValueItem, EntityI18nItem } from '../../types/basic'
 import type { LanguageOption } from '../../types/i18n'
 import { useI18n } from '../../i18n/useI18n'
+import { getFieldOptionLabel } from '../../utils/customField'
 
-function resolveFieldDisplayValue(field: CustomFieldListItem, rawValue: string, preferredLanguage?: string): string {
+function resolveFieldDisplayValue(field: CustomFieldListItem, rawValue: string, preferredLanguage?: string, languageOrder?: string[]): string {
   if (!rawValue) return ''
   const isSelect = field.field_type === 'DropList' || field.field_type === 'DropList_multiple'
   if (!isSelect) return rawValue
   const codes = rawValue.split(',').filter(Boolean)
   return codes
-    .map((code) => {
-      const opt = field.options.find((o) => o.code === code)
-      if (!opt) return code
-      return opt.names[preferredLanguage ?? ''] ?? opt.names.default ?? Object.values(opt.names)[0] ?? code
-    })
+    .map((code) => getFieldOptionLabel(field, code, preferredLanguage, languageOrder))
     .join(', ')
 }
 
@@ -95,6 +92,7 @@ export default function CastDetail() {
 
   // 获取第一个语言（defaultLang）的 code
   const defaultLangCode = useMemo(() => languageOptions[0]?.code ?? '', [languageOptions])
+  const languageOrder = useMemo(() => languageOptions.map((l) => l.code), [languageOptions])
 
   const langCodeToName = useMemo(() => {
     const map: Record<string, string> = {}
@@ -133,7 +131,7 @@ export default function CastDetail() {
       return {
         key: field.id,
         field_name: field.field_name,
-        value: resolveFieldDisplayValue(field, rawValue),
+        value: resolveFieldDisplayValue(field, rawValue, defaultLangCode, languageOrder),
       }
     })
   }, [customFields, fieldValues, i18nValueMap, defaultLangCode])
@@ -183,16 +181,7 @@ export default function CastDetail() {
                   <TrimInput
                     disabled
                     style={{ background: '#f5f5f5' }}
-                    value={cast.ingest_status && cast.ingest_status !== 'None' ? cast.ingest_status : '—'}
-                  />
-                </Form.Item>
-              </Col>
-              <Col span={6}>
-                <Form.Item label={t('cast.detail.status')}>
-                  <TrimInput
-                    disabled
-                    style={{ background: '#f5f5f5' }}
-                    value={cast.status === 1 ? 'Active' : 'Inactive'}
+                    value={cast.ingest_status ? t(`common.ingestStatus.${cast.ingest_status}` as any) : '—'}
                   />
                 </Form.Item>
               </Col>
@@ -207,12 +196,10 @@ export default function CastDetail() {
       </div>
 
       {/* 自定义字段 */}
-      <div style={{ marginBottom: 32 }}>
-        <SectionTitle title={t('cast.detail.customFields')} />
-        <div style={{ paddingLeft: 20 }}>
-          {customFieldRows.length === 0 ? (
-            <Empty description={t('cast.detail.noCustomFields')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
-          ) : (
+      {customFieldRows.length > 0 && (
+        <div style={{ marginBottom: 32 }}>
+          <SectionTitle title={t('cast.detail.customFields')} />
+          <div style={{ paddingLeft: 20 }}>
             <Form layout="vertical">
               <Row gutter={24}>
                 {customFieldRows.map((row) => (
@@ -224,17 +211,15 @@ export default function CastDetail() {
                 ))}
               </Row>
             </Form>
-          )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 多语言 */}
-      <div>
-        <SectionTitle title={t('cast.detail.multiLanguages')} />
-        <div style={{ paddingLeft: 20 }}>
-          {multiLanguageFields.length === 0 ? (
-            <Empty description={t('cast.detail.noMultiLanguages')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
-          ) : (
+      {filteredLanguageOptions.length > 0 && (
+        <div>
+          <SectionTitle title={t('cast.detail.multiLanguages')} />
+          <div style={{ paddingLeft: 20 }}>
             <Tabs
               items={filteredLanguageOptions.map((lang) => ({
                 key: lang.code,
@@ -263,7 +248,7 @@ export default function CastDetail() {
                       {multiLanguageFields.map((field) => {
                         const rawValue = i18nValueMap[lang.code]?.[field.field_code] ?? ''
                         const displayValue = rawValue
-                          ? resolveFieldDisplayValue(field, rawValue, lang.code)
+                          ? resolveFieldDisplayValue(field, rawValue, lang.code, languageOrder)
                           : '—'
                         return (
                           <Col span={6} key={field.field_code}>
@@ -278,9 +263,9 @@ export default function CastDetail() {
                 ),
               }))}
             />
-          )}
+          </div>
         </div>
-      </div>
+      )}
 
       <PostersModal
         open={postersOpen}

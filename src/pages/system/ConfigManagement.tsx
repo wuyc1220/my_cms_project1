@@ -1,3 +1,4 @@
+import dayjs from 'dayjs'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Button,
@@ -262,8 +263,8 @@ export default function ConfigManagement() {
       title: t('common.notes'),
       dataIndex: 'description',
       key: 'description',
-      ellipsis: true, // 配合宽度使用
-      width: 300,
+      ellipsis: { showTitle: false },
+      width: 330,
       sorter: true,
       sortOrder: sortField === 'description' ? sortOrder : null,
       render: (value: string | null) =>
@@ -308,21 +309,21 @@ export default function ConfigManagement() {
             </Tooltip>
           )}
           {canOperate && (
-            <Tooltip title={record.is_system ? t('system.config.tooltipBuiltin') : t('common.delete')}>
-              <Popconfirm
-                title={t('system.config.confirmDelete')}
-                onConfirm={async () => {
-                  await deleteConfig(record.id)
-                  message.success(t('system.config.msgDeleted'))
-                  await loadConfigs(pagination.current, pagination.pageSize, filters, sortField, sortOrder)
-                }}
-                disabled={record.is_system}
-                okText={t('common.confirm')}
-                cancelText={t('common.cancel')}
-              >
+            <Popconfirm
+              title={t('system.config.confirmDelete')}
+              onConfirm={async () => {
+                await deleteConfig(record.id)
+                message.success(t('system.config.msgDeleted'))
+                await loadConfigs(pagination.current, pagination.pageSize, filters, sortField, sortOrder)
+              }}
+              disabled={record.is_system}
+              okText={t('common.confirm')}
+              cancelText={t('common.cancel')}
+            >
+              <Tooltip title={record.is_system ? t('system.config.tooltipBuiltin') : t('common.delete')}>
                 <Button type="link" size="small" icon={<DeleteOutlined />} danger disabled={record.is_system} />
-              </Popconfirm>
-            </Tooltip>
+              </Tooltip>
+            </Popconfirm>
           )}
         </Space>
       ),
@@ -415,7 +416,7 @@ export default function ConfigManagement() {
               {drawerRecord.is_system ? <Tag color="orange">{t('common.yes')}</Tag> : <Tag>{t('common.no')}</Tag>}
             </Descriptions.Item>
             <Descriptions.Item label={t('system.config.labelCreatedAt')}>
-              {drawerRecord.created_at ? new Date(drawerRecord.created_at).toLocaleString() : '—'}
+              {drawerRecord.created_at ? dayjs(drawerRecord.created_at).format('YYYY-MM-DD HH:mm:ss') : '—'}
             </Descriptions.Item>
           </Descriptions>
         )}

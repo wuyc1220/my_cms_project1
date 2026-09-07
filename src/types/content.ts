@@ -15,6 +15,7 @@ export interface ContentLicenseRef {
   provider_id: number
   provider_name: string
   service_type: string
+  service_type_name?: string
   start_date?: string
   end_date?: string
   platforms?: LicensePlatformItem[]
@@ -32,10 +33,12 @@ export interface ContentListItem {
   content_type: string
   title: string
   status: string
+  external_id?: string
   parent_id?: number
   parent_title?: string
   genre_id?: number
   genre_name?: string
+  genre_ids?: number[]
   custom_tag_ids?: number[]
   custom_tag_names?: string[]
   sequence?: number
@@ -50,6 +53,11 @@ export interface ContentListItem {
   is_archived?: boolean
   source_schedule_id?: number
   is_discarded?: boolean
+  cutv_enable?: boolean
+  assignee_name?: string
+  /** 内容编排任务（arrangement）的开始/结束时间（子内容列表 Start/End Date Time 列） */
+  task_start_time?: string
+  task_end_time?: string
 }
 
 /** SEASON 明细行（创建 SEASON 时的动态表格）*/
@@ -62,13 +70,13 @@ export interface SeasonDetailRow {
 export interface ContentCreatePayload {
   title: string
   content_type: string
-  genre_id?: number
+  genre_ids?: number[]
   custom_tag_ids?: number[]
   // EPISODE
-  parent_id?: number   // 父 SERIES（EPISODE）/ 父 SEASON（SERIES）/ 父 CHANNEL（SCHEDULE）
+  parent_id?: number   // 父 SERIES（EPISODE）/ 父 SEASON（SEASON_SERIES）/ 父 CHANNEL（SCHEDULE）
   sequence?: number
-  // SERIES
-  series_type?: number  // 1=普通，2=单季，3=总季
+  // SERIES / SEASON_SERIES
+  series_type?: number  // 1=SERIES，2=SEASON_SERIES，3=SEASON
   volumn_count?: number
   series_ordinal?: number
   // SEASON
@@ -83,7 +91,7 @@ export interface ContentCreatePayload {
 /** 批量导入条目 */
 export interface BatchImportItem {
   title: string
-  content_type: 'SERIES' | 'EPISODE'
+  content_type: 'SERIES' | 'SEASON_SERIES' | 'EPISODE'
   series_ordinal?: number | null
   sequence?: number | null
   series_type?: number
@@ -114,7 +122,7 @@ export interface BatchImportResponse {
 /** 编辑内容请求体 */
 export interface ContentUpdatePayload {
   title?: string
-  genre_id?: number
+  genre_ids?: number[]
   custom_tag_ids?: number[]
   parent_id?: number
   sequence?: number
@@ -139,9 +147,11 @@ export interface VodContentListItem {
   status: string
   genre_id?: number
   genre_name?: string
+  genre_ids?: number[]
   type_name?: string
   category_name?: string
-  takedown_date?: string
+  custom_tag_names?: string[]
+  unpublish_date?: string
   publish_date?: string
   poster_url?: string
   package_names: string[]
@@ -149,6 +159,7 @@ export interface VodContentListItem {
   license_start?: string
   license_end?: string
   created_at?: string
+  is_discarded?: boolean
 }
 
 /** VOD 内容查询参数 */
@@ -158,13 +169,21 @@ export interface VodContentQueryParams {
   title?: string
   content_types?: string[]
   statuses?: string[]
-  genre_id?: number
-  provider_id?: number
-  package_name?: string
+  genre_ids?: number[]
+  custom_tag_ids?: number[]
+  deleted?: string
+  type_ids?: number[]
+  category_name?: string
+  package_ids?: number[]
+  provider_ids?: number[]
   license_start_from?: string
   license_start_to?: string
   license_end_from?: string
   license_end_to?: string
+  unpublish_from?: string
+  unpublish_to?: string
+  publish_from?: string
+  publish_to?: string
   sort_by?: string
   sort_order?: 'asc' | 'desc'
 }
@@ -174,6 +193,7 @@ export interface ContentQueryParams {
   page?: number
   page_size?: number
   content_id?: number
+  external_id?: string
   title?: string
   content_types?: string[]
   statuses?: string[]

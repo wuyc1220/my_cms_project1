@@ -41,6 +41,8 @@ export interface PublishPlanCreate {
   task_type: 'publish' | 'unpublish'
   execution_mode: 'now' | 'plan'
   scheduled_time?: string
+  /** 级联发布时忽略子内容状态（发布管理入口传 true；内容详情入口默认 false） */
+  cascade_ignore_status?: boolean
 }
 
 // 发布计划更新
@@ -60,6 +62,8 @@ export interface PublishPlanResponse {
   scheduled_time?: string
   status: string
   publish_status: string
+  publish_time?: string
+  unpublish_time?: string
   created_at: string
 }
 
@@ -70,6 +74,17 @@ export interface BatchPublishRequest {
   task_type: 'publish' | 'unpublish'
   execution_mode: 'now' | 'plan'
   scheduled_time?: string
+  /** 级联发布时忽略子内容状态（发布管理入口传 true；内容详情入口默认 false） */
+  cascade_ignore_status?: boolean
+}
+
+// 批量发布单条结果
+export interface BatchPublishResultItem {
+  entity_id: number
+  entity_name?: string
+  success: boolean
+  message?: string
+  data?: PublishPlanResponse
 }
 
 // 注入历史项
@@ -97,4 +112,11 @@ export interface IngestHistoryQueryParams {
   entity_id?: number
   action?: string
   status?: string
+}
+
+// 归档产物发布状态预检查响应（节目单发布前预检）
+export interface ArchivePublishCheckResponse {
+  can_publish: boolean
+  archive_content_id?: number | null
+  message?: string | null
 }
