@@ -13,7 +13,6 @@ import {
   Row,
   Select,
   Space,
-  Table,
   Tooltip,
   message,
 } from 'antd'
@@ -35,6 +34,7 @@ import { getDictTree } from '../../api/dicts'
 import { getUsers } from '../../api/users'
 import { getConfigs } from '../../api/configs'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import TrimInput from '../../components/TrimInput'
 import { CreateContractModal } from '../../components/ContractModals'
 import type { SearchFieldConfig } from '../../types/searchForm'
@@ -370,7 +370,7 @@ export default function ProviderManagement() {
       title: t('provider.col.code'),
       dataIndex: 'provider_code',
       key: 'provider_code',
-      width: 220,
+      width: 200,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'provider_code' ? sortOrder : null,
@@ -380,6 +380,7 @@ export default function ProviderManagement() {
       title: t('provider.col.name'),
       dataIndex: 'name',
       key: 'name',
+      width: 320,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'name' ? sortOrder : null,
@@ -389,7 +390,7 @@ export default function ProviderManagement() {
       title: t('provider.col.country'),
       dataIndex: 'country',
       key: 'country',
-      width: 220,
+      width: 200,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'country' ? sortOrder : null,
@@ -401,6 +402,7 @@ export default function ProviderManagement() {
       title: t('provider.col.notes'),
       dataIndex: 'notes',
       key: 'notes',
+      width: 240,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'notes' ? sortOrder : null,
@@ -495,13 +497,13 @@ export default function ProviderManagement() {
           )}
         </div>
 
-        <Table<ProviderListItem>
+        <ResizableTable<ProviderListItem>
           rowKey="id"
           size="small"
           loading={loading}
           columns={columns}
           dataSource={providers}
-          scroll={{ x: 700 }}
+          scroll={{ x: 1060 }}
           onChange={handleTableChange}
           rowSelection={{
             selectedRowKeys,

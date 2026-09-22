@@ -17,12 +17,12 @@ import {
   Select,
   Space,
   Spin,
-  Table,
   Tag,
   Tooltip,
   message,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
+import ResizableTable from './ResizableTable'
 import { getDictTree } from '../api/dicts'
 import { getPackages } from '../api/packages'
 import { getContentPackages, linkContentPackages, unlinkContentPackage } from '../api/live'
@@ -93,12 +93,12 @@ export default function PackageLinkModal({
   const [packageTypeMap, setPackageTypeMap] = useState<Record<string, string>>({})
   const ingestStatusOptions = useMemo(
     () => [
-      { label: 'none', value: 'none' },
-      { label: 'processing', value: 'processing' },
-      { label: 'success', value: 'success' },
-      { label: 'failure', value: 'failure' },
+      { label: t('common.ingestStatus.none'), value: 'none' },
+      { label: t('common.ingestStatus.processing'), value: 'processing' },
+      { label: t('common.ingestStatus.success'), value: 'success' },
+      { label: t('common.ingestStatus.failure'), value: 'failure' },
     ],
-    []
+    [t]
   )
 
   // 加载字典选项
@@ -263,6 +263,7 @@ export default function PackageLinkModal({
         title: t('package.col.name'),
         dataIndex: 'name',
         key: 'name',
+        width: 200,
         ellipsis: { showTitle: false },
         render: (val: string) => (
           <Tooltip title={val}>
@@ -294,6 +295,7 @@ export default function PackageLinkModal({
         title: t('package.col.description'),
         dataIndex: 'description',
         key: 'description',
+        width: 200,
         ellipsis: { showTitle: false },
         render: (val: string | null) => (
           <Tooltip title={val ?? ''}>
@@ -306,7 +308,15 @@ export default function PackageLinkModal({
         dataIndex: 'ingest_status',
         key: 'ingest_status',
         width: 140,
-        render: (val: string) => <Tag color={getIngestTagColor(val)}>{val}</Tag>,
+        render: (val: string) => {
+          const statusKey = !val || val === 'None' ? 'none' : val
+          const label =
+            statusKey === 'success' ? t('common.ingestStatus.success')
+              : statusKey === 'failure' ? t('common.ingestStatus.failure')
+                : statusKey === 'processing' ? t('common.ingestStatus.processing')
+                  : t('common.ingestStatus.none')
+          return <Tag color={getIngestTagColor(statusKey)}>{label}</Tag>
+        },
       },
     ],
     [t, packageTypeMap, platformOptions],
@@ -439,12 +449,12 @@ export default function PackageLinkModal({
       </div>
 
       {/* 表格 */}
-      <Table<PackageListItem>
+      <ResizableTable<PackageListItem>
         rowKey="id"
         loading={loading}
         columns={columns}
         dataSource={list}
-        scroll={{ x: 800 }}
+        scroll={{ x: 880 }}
         size="small"
         rowSelection={readOnly ? {
           selectedRowKeys: selectedIds,

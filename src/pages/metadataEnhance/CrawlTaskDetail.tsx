@@ -5,7 +5,6 @@ import dayjs from 'dayjs'
 import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import {
-  Table,
   Tag,
   Spin,
   Form,
@@ -14,6 +13,7 @@ import {
   Tooltip,
   message,
 } from 'antd'
+import ResizableTable from '../../components/ResizableTable'
 import { useI18n } from '../../i18n/useI18n'
 import { getCrawlTaskDetail } from '../../api/crawlTasks'
 import TrimInput from '../../components/TrimInput'
@@ -54,18 +54,20 @@ export default function CrawlTaskDetail() {
       title: t('crawlTask.detail.fieldName'),
       dataIndex: 'field_name',
       key: 'field_name',
+      width: 320,
     },
     {
       title: t('crawlTask.detail.crawlData'),
       dataIndex: 'crawl_data',
       key: 'crawl_data',
+      width: 680,
       ellipsis: true,
     },
     {
       title: t('crawlTask.detail.isUsed'),
       dataIndex: 'is_used',
       key: 'is_used',
-      width: 100,
+      width: 160,
       render: (v: string) => (
         <Tag color={v === 'YES' ? 'success' : 'default'}>{t(v === 'YES' ? 'common.yes' : 'common.no')}</Tag>
       ),
@@ -139,10 +141,11 @@ export default function CrawlTaskDetail() {
       <div>
         <SectionTitle title={t('crawlTask.detail.executionLog')} />
         <div style={{ paddingLeft: 20 }}>
-          <Table
+          <ResizableTable
             rowKey="id"
             columns={detailColumns}
             dataSource={detail.details}
+            scroll={{ x: 500 }}
             pagination={{
               defaultPageSize: PAGINATION_CONFIG.defaultPageSize,
               pageSizeOptions: PAGINATION_CONFIG.pageSizeOptions.map(String),

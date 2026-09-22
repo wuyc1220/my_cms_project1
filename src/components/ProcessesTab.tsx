@@ -12,9 +12,10 @@
 
 import { useEffect, useState } from 'react'
 import { CheckCircleFilled, CloseCircleFilled } from '@ant-design/icons'
-import { message, Table, Tooltip } from 'antd'
+import { message, Tooltip } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
+import ResizableTable from './ResizableTable'
 import { getProcesses } from '../api/live'
 import { isHandledError } from '../api'
 import { useI18n } from '../i18n/useI18n'
@@ -73,6 +74,7 @@ export default function ProcessesTab({ contentId, refreshVersion }: ProcessesTab
       title: t('content.col.processName'),
       dataIndex: 'name',
       key: 'name',
+      width: 320,
       ellipsis: { showTitle: false },
       render: (v: string) => <Tooltip title={v}><span>{v}</span></Tooltip>,
     },
@@ -99,14 +101,14 @@ export default function ProcessesTab({ contentId, refreshVersion }: ProcessesTab
       title: t('content.col.status'),
       dataIndex: 'status',
       key: 'status',
-      width: 200,
+      width: 220,
       render: (v?: string) => v ?? '—',
     },
     {
       title: t('content.col.processedBy'),
       dataIndex: 'assigned',
       key: 'processed_by',
-      width: 220,
+      width: 380,
       render: (_: unknown, record: ProcessListItem) => {
         const display = record.assigned_display_name
         const username = record.assigned
@@ -117,13 +119,13 @@ export default function ProcessesTab({ contentId, refreshVersion }: ProcessesTab
   ]
 
   return (
-    <Table<ProcessListItem>
+    <ResizableTable<ProcessListItem>
       rowKey="id"
       size="small"
       loading={loading}
       columns={columns}
       dataSource={data}
-      scroll={{ x: 700 }}
+      scroll={{ x: 980 }}
       pagination={getClientPaginationProps((n) => t('pagination.total', { n }))}
       locale={{ emptyText: t('content.process.noData') }}
     />

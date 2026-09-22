@@ -12,8 +12,9 @@
 
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { message, Table, Tag, Tooltip } from 'antd'
+import { message, Tag, Tooltip } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
+import ResizableTable from './ResizableTable'
 import { getContentLicenses } from '../api/contents'
 import { isHandledError } from '../api'
 import { useI18n } from '../i18n/useI18n'
@@ -52,7 +53,7 @@ export default function LicenseTab({ contentId, refreshVersion }: LicenseTabProp
       title: t('content.col.providerName'),
       dataIndex: 'provider_name',
       key: 'provider_name',
-      width: 160,
+      width: 320,
       ellipsis: { showTitle: false },
       render: (v: string, record) => (
         <Tooltip title={v}>
@@ -69,7 +70,7 @@ export default function LicenseTab({ contentId, refreshVersion }: LicenseTabProp
       title: t('content.col.contractName'),
       dataIndex: 'contract_name',
       key: 'contract_name',
-      width: 160,
+      width: 320,
       ellipsis: { showTitle: false },
       render: (v: string, record) => (
         <Tooltip title={v}>
@@ -86,7 +87,7 @@ export default function LicenseTab({ contentId, refreshVersion }: LicenseTabProp
       title: t('content.col.licenseName'),
       dataIndex: 'name',
       key: 'name',
-      width: 160,
+      width: 320,
       ellipsis: { showTitle: false },
       render: (v: string, record) => (
         <Tooltip title={v}>
@@ -103,33 +104,33 @@ export default function LicenseTab({ contentId, refreshVersion }: LicenseTabProp
       title: t('content.col.serviceType'),
       dataIndex: 'service_type',
       key: 'service_type',
-      width: 120,
+      width: 180,
       render: (v: string, record) => <Tag>{record.service_type_name || v}</Tag>,
     },
     {
       title: t('content.col.startDate'),
       dataIndex: 'start_date',
       key: 'start_date',
-      width: 110,
+      width: 160,
       render: (v?: string) => v ?? '—',
     },
     {
       title: t('content.col.endDate'),
       dataIndex: 'end_date',
       key: 'end_date',
-      width: 110,
+      width: 160,
       render: (v?: string) => v ?? '—',
     },
   ]
 
   return (
-    <Table<ContentLicenseRef>
+    <ResizableTable<ContentLicenseRef>
       rowKey="id"
       size="small"
       loading={loading}
       columns={columns}
       dataSource={data}
-      scroll={{ x: 800 }}
+      scroll={{ x: 820 }}
       pagination={getClientPaginationProps((n) => t('pagination.total', { n }))}
       locale={{ emptyText: t('trade.content.detail.emptyLicenses') }}
     />

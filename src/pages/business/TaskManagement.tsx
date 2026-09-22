@@ -7,7 +7,6 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Tag,
   Tooltip,
   message,
@@ -22,6 +21,7 @@ import {
 } from '../../api/tasks'
 import { getAuthUsers } from '../../api/dataAuth'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import { useI18n } from '../../i18n/useI18n'
 import { useTablePagination } from '../../hooks/useTablePagination'
 import { useSearchForm } from '../../hooks/useSearchForm'
@@ -326,6 +326,7 @@ export default function TaskManagement() {
       title: t('task.col.contentName'),
       dataIndex: 'content_name',
       key: 'content_name',
+      width: 280,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'content_name' ? sortOrder : null,
@@ -350,6 +351,7 @@ export default function TaskManagement() {
       title: t('task.col.contentType'),
       dataIndex: 'content_type',
       key: 'content_type',
+      width: 200,
       sorter: true,
       sortOrder: sortField === 'content_type' ? sortOrder : null,
     },
@@ -357,6 +359,7 @@ export default function TaskManagement() {
       title: t('task.col.taskType'),
       dataIndex: 'task_type',
       key: 'task_type',
+      width: 160,
       sorter: true,
       sortOrder: sortField === 'task_type' ? sortOrder : null,
     },
@@ -364,6 +367,7 @@ export default function TaskManagement() {
       title: t('task.col.assignee'),
       dataIndex: 'assignee_name',
       key: 'assignee_name',
+      width: 200,
       sorter: true,
       sortOrder: sortField === 'assignee_name' ? sortOrder : null,
       render: (val: string | null) => val || '—',
@@ -459,12 +463,12 @@ export default function TaskManagement() {
           )}
         </div>
 
-        <Table<TaskListItem>
+        <ResizableTable<TaskListItem>
           rowKey="id"
           loading={loading}
           columns={columns}
           dataSource={list}
-          scroll={{ x: 900 }}
+          scroll={{ x: 1210 }}
           onChange={handleTableChange}
           rowSelection={{ selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys as number[]) }}
           pagination={tablePaginationProps}

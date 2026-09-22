@@ -603,11 +603,6 @@ export default function MetadataModal({
         values.update_childs_main = updateChildsMain
         values.update_childs_custom_fields = updateChildsCustomFields
         values.update_childs_i18n = updateChildsI18n
-        console.log('[MetadataModal] updateChilds controls:', {
-          main: updateChildsMain,
-          customFields: updateChildsCustomFields,
-          i18n: updateChildsI18n,
-        })
       }
 
       // 清理 keywords 字段，过滤掉 null 值
@@ -756,12 +751,9 @@ export default function MetadataModal({
             await createProgramMetadata(contentId, createData as ContentMetadataCreate)
             break
           case 'series':
-            // 先创建元数据
+            // createData 已带 update_childs_* 开关（见上方 values 附加逻辑），
+            // 后端创建时直接触发子级同步，无需再调 update（避免写两条父级流程记录）
             await createSeriesMetadata(contentId, createData as SeriesMetadataCreate)
-            // 如果开启了 Update Childs，立即触发更新以同步到子级
-            if (updateChildsMain || updateChildsCustomFields || updateChildsI18n) {
-              await updateSeriesMetadata(contentId, metadataValues as SeriesMetadataUpdate)
-            }
             break
           case 'channel':
             await createChannelMetadata(contentId, createData as ChannelMetadataCreate)

@@ -4,6 +4,8 @@ export const FORM_MAX_LENGTH = {
   DEEPLINK: 500,
   // 物理频道 DeeplinkChURL：后端 schema max_length=200，前后端保持一致
   DEEPLINK_CH_URL: 200,
+  // 外部下载链接（SFTP/FTP/HTTP URL）通常较长
+  DOWNLOAD_LINK: 500,
 } as const
 
 // PostgreSQL Integer（4 字节有符号）最大值，用于数值字段范围校验，防止超出数据库列范围

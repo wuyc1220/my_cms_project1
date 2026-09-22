@@ -26,7 +26,6 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Tag,
   TimePicker,
   Tooltip,
@@ -52,6 +51,7 @@ import {
 import { getContractsSimple } from '../../api/contracts'
 import { getDictTree } from '../../api/dicts'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import TrimInput from '../../components/TrimInput'
 import type { SearchFieldConfig } from '../../types/searchForm'
 import type {
@@ -497,7 +497,7 @@ export default function LicenseManagement() {
       dataIndex: 'name',
       key: 'name',
       fixed: 'left',
-      width: 200,
+      width: 240,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'name' ? sortOrder : null,
@@ -517,7 +517,7 @@ export default function LicenseManagement() {
       title: t('content.col.startDate'),
       dataIndex: 'start_date',
       key: 'start_date',
-      width: 130,
+      width: 160,
       sorter: true,
       sortOrder: sortField === 'start_date' ? sortOrder : null,
       render: (v: string | undefined) => v ?? '—',
@@ -526,7 +526,7 @@ export default function LicenseManagement() {
       title: t('content.col.endDate'),
       dataIndex: 'end_date',
       key: 'end_date',
-      width: 130,
+      width: 160,
       sorter: true,
       sortOrder: sortField === 'end_date' ? sortOrder : null,
       render: (v: string | undefined) => v ?? '—',
@@ -547,7 +547,7 @@ export default function LicenseManagement() {
     {
       title: t('provider.detail.platform'),
       key: 'platform',
-      width: 360,
+      width: 320,
       render: (_, row) => (
         <Space size={4} wrap>
           {row.platforms.map((p) => {
@@ -659,13 +659,13 @@ export default function LicenseManagement() {
         </div>
 
         {/* 列表表格 */}
-        <Table<LicenseListItem>
+        <ResizableTable<LicenseListItem>
           rowKey="id"
           size="small"
           loading={loading}
           columns={columns}
           dataSource={licenses}
-          scroll={{ x: 1000 }}
+          scroll={{ x: 1460 }}
           rowSelection={{
             selectedRowKeys,
             onChange: (keys) => setSelectedRowKeys(keys as number[]),

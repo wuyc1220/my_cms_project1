@@ -1,4 +1,5 @@
-import { Card, Table, Tooltip } from 'antd'
+import { Card, Tooltip } from 'antd'
+import ResizableTable from '../../../components/ResizableTable'
 import type { TablePaginationConfig } from 'antd/es/table'
 import { useState, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -206,7 +207,7 @@ const TaskAssignedMatrix: React.FC<TaskAssignedMatrixProps> = ({ data }) => {
 
   return (
     <Card title={t('dashboard.taskAssignedTable')} bordered={false}>
-      <Table
+      <ResizableTable
         columns={columns}
         dataSource={matrixData}
         rowKey="user_name"

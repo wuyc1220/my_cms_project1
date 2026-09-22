@@ -36,7 +36,7 @@ export interface PublishInfo {
   publish_status?: string
   publish_time?: string
   unpublish_time?: string
-  task_type?: string
+  task_type?: 'publish' | 'unpublish'
   execution_mode?: string
   scheduled_time?: string
 }
@@ -130,6 +130,12 @@ export default function PublishPlanModal({
   const handleSubmit = useCallback(async () => {
     try {
       const values = await form.validateFields()
+
+      // 发布模式下若已存在下架计划，禁止提交（避免发布与下架计划冲突）
+      if (mode === 'publish' && publishInfo?.task_type === 'unpublish') {
+        void message.warning(t('content.publishPlan.hasUnpublishPlan'), 5)
+        return
+      }
 
       let scheduledTime: string | undefined = undefined
       if (isPlan && values.plan_date && values.plan_time) {

@@ -8,7 +8,6 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Tag,
   Tooltip,
   Upload,
@@ -39,6 +38,7 @@ import type {
 } from '../../types/basic'
 import { useI18n } from '../../i18n/useI18n'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import TrimInput from '../../components/TrimInput'
 import type { SearchFieldConfig } from '../../types/searchForm'
 import { useSearchForm } from '../../hooks/useSearchForm'
@@ -349,6 +349,7 @@ export default function SensitiveWordManagement() {
       title: t('sensitiveWord.col.keyword'),
       dataIndex: 'keyword',
       key: 'keyword',
+      width: 420,
       sorter: true,
       sortOrder: sortField === 'keyword' ? sortOrder : null,
     },
@@ -356,6 +357,7 @@ export default function SensitiveWordManagement() {
       title: t('sensitiveWord.col.type'),
       dataIndex: 'type_code',
       key: 'type_code',
+      width: 320,
       render: (value: string) => {
         const label = typeOptions.find((o) => o.value === value)?.label ?? value
         return <Tag color="blue">{label}</Tag>
@@ -365,7 +367,7 @@ export default function SensitiveWordManagement() {
       title: t('sensitiveWord.col.status'),
       dataIndex: 'status',
       key: 'status',
-      width: 160,
+      width: 180,
       render: (value: string, record) => (
         <Switch
           checked={value === 'active'}
@@ -380,7 +382,7 @@ export default function SensitiveWordManagement() {
       title: t('sensitiveWord.col.createdAt'),
       dataIndex: 'created_at',
       key: 'created_at',
-      width: 180,
+      width: 200,
       sorter: true,
       sortOrder: sortField === 'created_at' ? sortOrder : null,
       render: (value: string) => (value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '-'),
@@ -471,12 +473,12 @@ export default function SensitiveWordManagement() {
           )}
         </div>
 
-        <Table<SensitiveWordListItem>
+        <ResizableTable<SensitiveWordListItem>
           rowKey="id"
           loading={loading}
           columns={columns}
           dataSource={list}
-          scroll={{ x: 800 }}
+          scroll={{ x: 860 }}
           onChange={handleTableChange}
           rowSelection={{
             selectedRowKeys: selectedIds,

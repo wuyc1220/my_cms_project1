@@ -10,12 +10,12 @@ import {
   Pagination,
   Popconfirm,
   Space,
-  Table,
   Tooltip,
   message,
 } from 'antd'
-import { DeleteOutlined, MinusCircleOutlined, PlusOutlined } from '@ant-design/icons'
+import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
+import ResizableTable from '../ResizableTable'
 import { getContractLicenses } from '../../api/contracts'
 import { getLicenseContents, addContentsToLicense, removeContentFromLicense, getAvailableContentsForLicense, getUnlicensedContents, deleteLicense } from '../../api/licenses'
 import { getDictTree } from '../../api/dicts'
@@ -251,6 +251,7 @@ export default function AddContentModal({
       title: t('content.col.contentName'),
       dataIndex: 'title',
       key: 'title',
+      width: 200,
       ellipsis: { showTitle: true },
     },
     {
@@ -433,13 +434,13 @@ export default function AddContentModal({
             )}
           </div>
           <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-            <Table<ContentForTradeItem>
+            <ResizableTable<ContentForTradeItem>
               rowKey="id"
               size="small"
               loading={availableLoading}
               columns={availableColumns}
               dataSource={availableContents.items}
-              scroll={{ y: 360 }}
+              scroll={{ x: 560, y: 360 }}
               rootClassName="compact-table"
               pagination={false}
             />
@@ -451,7 +452,6 @@ export default function AddContentModal({
               total={availableContents.total}
               size="small"
               showSizeChanger
-              showQuickJumper
               pageSizeOptions={PAGINATION_CONFIG.pageSizeOptions.map(String)}
               showTotal={(n) => t('pagination.total', { n })}
               onChange={(p, ps) =>
@@ -494,12 +494,15 @@ export default function AddContentModal({
             )}
           </div>
           <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-            <Table<LicenseSimpleItem>
+            <ResizableTable<LicenseSimpleItem>
               rowKey="id"
               size="small"
               columns={licenseColumns}
-              dataSource={contractLicenses}
-              scroll={{ y: 360 }}
+              dataSource={contractLicenses.slice(
+                (licensePagination.current - 1) * licensePagination.pageSize,
+                licensePagination.current * licensePagination.pageSize
+              )}
+              scroll={{ x: 510, y: 360 }}
               rootClassName="compact-table"
               rowClassName={(row) =>
                 selectedLicense?.id === row.id ? 'ant-table-row-selected' : ''
@@ -515,7 +518,6 @@ export default function AddContentModal({
               total={contractLicenses.length}
               size="small"
               showSizeChanger
-              showQuickJumper
               pageSizeOptions={PAGINATION_CONFIG.pageSizeOptions.map(String)}
               showTotal={(n) => t('pagination.total', { n })}
               onChange={(page, pageSize) => setLicensePagination({ current: page, pageSize })}
@@ -632,7 +634,7 @@ export default function AddContentModal({
                   type="link"
                   size="small"
                   danger
-                  icon={<MinusCircleOutlined />}
+                  icon={<DeleteOutlined />}
                   onClick={() => void handleRemoveLinkedContent(c.id)}
                 />
               </div>

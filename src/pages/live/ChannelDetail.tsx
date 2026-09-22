@@ -27,7 +27,6 @@ import {
   Row,
   Space,
   Spin,
-  Table,
   Tabs,
   Tag,
   Tooltip,
@@ -60,6 +59,7 @@ import { useTaskAssigneePermission } from '../../hooks/useTaskAssigneePermission
 import { useNodeEditPermission } from '../../hooks/useNodeEditPermission'
 import { useAuthStore } from '../../stores/authStore'
 import ProcessesTab from '../../components/ProcessesTab'
+import ResizableTable from '../../components/ResizableTable'
 import LicenseTab from '../../components/LicenseTab'
 import StatusLogsTab from '../../components/StatusLogsTab'
 import ProcessedHistoryTab from '../../components/ProcessedHistoryTab'
@@ -713,7 +713,7 @@ export default function ChannelDetail() {
                 publish_status: plan.publish_status,
                 publish_time: plan.publish_time,
                 unpublish_time: plan.unpublish_time,
-                task_type: plan.task_type,
+                task_type: plan.task_type as 'publish' | 'unpublish',
                 execution_mode: plan.execution_mode,
                 scheduled_time: plan.scheduled_time,
               })
@@ -780,7 +780,6 @@ export default function ChannelDetail() {
         <ChannelScheduleTab
           channelId={channelId}
           channelName={channel?.title ?? ''}
-          mode={mode}
         />
       ),
     },
@@ -1146,11 +1145,12 @@ export default function ChannelDetail() {
           </div>
         }
       >
-        <Table
+        <ResizableTable
           rowKey="id"
           dataSource={ingestHistoryList}
           loading={ingestHistoryLoading}
           size="small"
+          scroll={{ x: 900 }}
           pagination={{
             current: ingestHistoryPagination.current,
             pageSize: ingestHistoryPagination.pageSize,
@@ -1161,29 +1161,33 @@ export default function ChannelDetail() {
             onChange: (page, pageSize) => void loadIngestHistory(page, pageSize),
           }}
           columns={[
-            { title: t('publish.ingestHistory.col.type'), dataIndex: 'entity_name', key: 'entity_name' },
+            { title: t('publish.ingestHistory.col.type'), dataIndex: 'entity_name', key: 'entity_name', width: 140, ellipsis: true },
             {
               title: t('publish.ingestHistory.col.createDate'),
               dataIndex: 'create_date',
               key: 'create_date',
+              width: 180,
               render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
             },
             {
               title: t('publish.ingestHistory.col.sendDate'),
               dataIndex: 'send_date',
               key: 'send_date',
+              width: 180,
               render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
             },
             {
               title: t('publish.ingestHistory.col.endDate'),
               dataIndex: 'end_date',
               key: 'end_date',
+              width: 180,
               render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
             },
             {
               title: t('publish.ingestHistory.col.status'),
               dataIndex: 'status',
               key: 'status',
+              width: 110,
               render: (v) => (
                 <Tag color={v === 'success' ? 'success' : v === 'failure' ? 'error' : 'default'}>
                   {v === 'success' ? t('publish.ingestHistory.status.success') : v === 'failure' ? t('publish.ingestHistory.status.failure') : v}
@@ -1194,6 +1198,7 @@ export default function ChannelDetail() {
               title: t('publish.ingestHistory.col.getXml'),
               key: 'getXml',
               align: 'center',
+              width: 120,
               render: (_, record: IngestHistoryItem) => {
                 const handleDownload = async (url: string, filename: string) => {
                   try {

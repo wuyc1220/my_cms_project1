@@ -28,7 +28,6 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Tag,
   Tooltip,
   message,
@@ -71,6 +70,7 @@ import { getTasks, assignTask } from '../../api/tasks'
 import { getUsers } from '../../api/users'
 import { getDictTree } from '../../api/dicts'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import TrimInput from '../../components/TrimInput'
 import type { SearchFieldConfig } from '../../types/searchForm'
 import type { ContentListItem, ContentCreatePayload, ContentSimpleItem, ContentLicenseRef, SeasonDetailRow } from '../../types/content'
@@ -661,7 +661,11 @@ export default function ContentManagement() {
       for (const license of pendingAddLicenses) {
         await addContentsToLicense(license.id, { content_ids: [licenseModalContent!.id] })
       }
-      void message.success(t('trade.content.msg.batchLinked', { count: pendingAddLicenses.length }), 3)
+      if (pendingAddLicenses.length > 0) {
+        void message.success(t('trade.content.msg.batchLinked', { count: pendingAddLicenses.length }), 3)
+      } else {
+        void message.success(t('common.msg.saveSuccess'), 3)
+      }
       closeLicenseModal()
       void loadList(pagination.current, pagination.pageSize, filters)
       void loadWithoutLicenseCount()
@@ -949,6 +953,7 @@ export default function ContentManagement() {
       title: t('content.col.providerName'),
       dataIndex: 'provider_name',
       key: 'provider_name',
+      width: 120,
       ellipsis: { showTitle: false },
       render: (val: string) => <Tooltip title={val}><span>{val}</span></Tooltip>,
     },
@@ -956,6 +961,7 @@ export default function ContentManagement() {
       title: t('content.col.contractName'),
       dataIndex: 'contract_name',
       key: 'contract_name',
+      width: 120,
       ellipsis: { showTitle: false },
       render: (val: string) => <Tooltip title={val}><span>{val}</span></Tooltip>,
     },
@@ -963,6 +969,7 @@ export default function ContentManagement() {
       title: t('content.col.licenseName'),
       dataIndex: 'name',
       key: 'name',
+      width: 140,
       ellipsis: { showTitle: false },
       render: (val: string) => <Tooltip title={val}><span>{val}</span></Tooltip>,
     },
@@ -994,6 +1001,7 @@ export default function ContentManagement() {
       title: t('content.col.action'),
       key: 'action',
       width: 60,
+      fixed: 'right',
       render: (_, record) => {
         const isLinked = linkedLicenses.some((l) => l.id === record.id)
         const isPending = pendingAddLicenses.some((l) => l.id === record.id)
@@ -1054,7 +1062,7 @@ export default function ContentManagement() {
       </div>
 
       {/* 列表 */}
-      <Table<ContentListItem>
+      <ResizableTable<ContentListItem>
         rowKey="id"
         loading={loading}
         columns={columns}
@@ -1457,13 +1465,13 @@ export default function ContentManagement() {
                 )}
               </Space>
             </Form>
-            <Table<LicenseListItem>
+            <ResizableTable<LicenseListItem>
               rowKey="id"
               size="small"
               loading={licensesLoading}
               columns={licenseColumns}
               dataSource={availableLicenses}
-              scroll={{ x: 600 }}
+              scroll={{ x: 730 }}
               pagination={{
                 current: licensePage,
                 pageSize: 10,

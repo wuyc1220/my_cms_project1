@@ -6,7 +6,6 @@ import {
   Modal,
   Popconfirm,
   Space,
-  Table,
   Tag,
   Tooltip,
   message,
@@ -17,6 +16,7 @@ import { createDictNode, getDictTree, toggleDictStatus, updateDictNode } from '.
 import type { DictNodeCreatePayload, DictNodeListItem, DictNodeUpdatePayload } from '../../types/dict'
 import { useI18n } from '../../i18n/useI18n'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import TrimInput from '../../components/TrimInput'
 import type { SearchFieldConfig } from '../../types/searchForm'
 import { useSearchForm } from '../../hooks/useSearchForm'
@@ -259,6 +259,7 @@ export default function DictManagement() {
       title: t('system.dict.colName'),
       key: 'name',
       dataIndex: 'name',
+      width: 200,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'name' ? sortOrder : null,
@@ -348,12 +349,12 @@ export default function DictManagement() {
           )}
         </div>
 
-        <Table<DictNodeListItem>
+        <ResizableTable<DictNodeListItem>
           rowKey="id"
           loading={loading}
           columns={columns}
           dataSource={tree}
-          scroll={{ x: 900 }}
+          scroll={{ x: 1200 }}
           onChange={handleTableChange}
           expandable={{
             expandedRowKeys: expandedKeys as number[],

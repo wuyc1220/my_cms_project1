@@ -11,7 +11,6 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Tabs,
   Tag,
   Tooltip,
@@ -36,6 +35,7 @@ import { getMultiLanguageOptions } from '../../api/i18n'
 import type { LanguageOption } from '../../types/i18n'
 import { getFieldOptionLabel, formatApiValue, getCustomFieldPlaceholder, validateCustomFields as validateCustomFieldsUtil, clearFieldError } from '../../utils/customField'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import TrimInput from '../../components/TrimInput'
 import CustomFieldControl from '../../components/CustomFieldControl'
 import type { DictNodeListItem } from '../../types/dict'
@@ -481,18 +481,18 @@ export default function PosterSizeManagement() {
   }
 
   const columns: ColumnsType<PosterSizeListItem> = [
-    { title: t('posterSize.col.name'), dataIndex: 'name', key: 'name', width: 180, sorter: true, sortOrder: sortField === 'name' ? sortOrder : null },
+    { title: t('posterSize.col.name'), dataIndex: 'name', key: 'name', width: 320, sorter: true, sortOrder: sortField === 'name' ? sortOrder : null },
     { title: t('posterSize.col.belonging'), dataIndex: 'belongings', key: 'belongings', width: 220, render: (values: string[]) => values.map((item) => <Tag key={item}>{t(BELONGING_KEYS[item] as any) || item}</Tag>) },
-    { title: t('posterSize.col.width'), dataIndex: 'width', key: 'width', width: 100, sorter: true, sortOrder: sortField === 'width' ? sortOrder : null },
-    { title: t('posterSize.col.height'), dataIndex: 'height', key: 'height', width: 100, sorter: true, sortOrder: sortField === 'height' ? sortOrder : null },
-    { title: t('posterSize.col.aspectRatio'), dataIndex: 'aspect_ratio', key: 'aspect_ratio', width: 100, render: (value: string | null | undefined) => value || '—' },
+    { title: t('posterSize.col.width'), dataIndex: 'width', key: 'width', width: 160, sorter: true, sortOrder: sortField === 'width' ? sortOrder : null },
+    { title: t('posterSize.col.height'), dataIndex: 'height', key: 'height', width: 160, sorter: true, sortOrder: sortField === 'height' ? sortOrder : null },
+    { title: t('posterSize.col.aspectRatio'), dataIndex: 'aspect_ratio', key: 'aspect_ratio', width: 160, render: (value: string | null | undefined) => value || '—' },
     { title: t('posterSize.col.maxFileSize'), dataIndex: 'max_file_size_kb', key: 'max_file_size_kb', width: 160, sorter: true, sortOrder: sortField === 'max_file_size_kb' ? sortOrder : null },
-    { title: t('posterSize.col.mandatory'), dataIndex: 'mandatory', key: 'mandatory', width: 100, sorter: true, sortOrder: sortField === 'mandatory' ? sortOrder : null, render: (value: boolean) => (value ? <Tag color="red">{t('common.yes')}</Tag> : <Tag>{t('common.no')}</Tag>) },
+    { title: t('posterSize.col.mandatory'), dataIndex: 'mandatory', key: 'mandatory', width: 160, sorter: true, sortOrder: sortField === 'mandatory' ? sortOrder : null, render: (value: boolean) => (value ? <Tag color="red">{t('common.yes')}</Tag> : <Tag>{t('common.no')}</Tag>) },
     {
       title: t('common.action'),
       key: 'action',
       fixed: 'right',
-      width: 100,
+      width: 140,
       render: (_, record) => (
         <Space size={0}>
           {canOperate && (
@@ -597,7 +597,7 @@ export default function PosterSizeManagement() {
         )}
       </div>
 
-      <Table<PosterSizeListItem>
+      <ResizableTable<PosterSizeListItem>
         rowKey="id"
         loading={loading}
         columns={columns}

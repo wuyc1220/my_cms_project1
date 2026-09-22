@@ -3,9 +3,10 @@
  */
 import { useState, useEffect, useMemo } from 'react'
 import {
-  Table, Button, Space, Switch, Modal, Form, Select,
+  Button, Space, Switch, Modal, Form, Select,
   InputNumber, message, Popconfirm, Tooltip, Tag, Row, Col,
 } from 'antd'
+import ResizableTable from '../../components/ResizableTable'
 import {
   PlusOutlined, DeleteOutlined, EditOutlined,
 } from '@ant-design/icons'
@@ -293,6 +294,7 @@ export default function MetadataSourceManagement() {
       title: t('metadataSource.col.name'),
       dataIndex: 'name',
       key: 'name',
+      width: 360,
       sorter: true,
       sortOrder: sortField === 'name' ? sortOrder : null,
     },
@@ -300,6 +302,7 @@ export default function MetadataSourceManagement() {
       title: t('metadataSource.col.contentType'),
       dataIndex: 'content_type',
       key: 'content_type',
+      width: 180,
       sorter: true,
       sortOrder: sortField === 'content_type' ? sortOrder : null,
       render: (v: string) => <Tag color="blue">{v}</Tag>,
@@ -308,6 +311,7 @@ export default function MetadataSourceManagement() {
       title: t('metadataSource.col.collectType'),
       dataIndex: 'collect_type',
       key: 'collect_type',
+      width: 180,
       sorter: true,
       sortOrder: sortField === 'collect_type' ? sortOrder : null,
       render: (v: string) => <Tag color={COLLECT_TYPE_TAG_COLORS[v] || 'default'}>{v}</Tag>,
@@ -316,6 +320,7 @@ export default function MetadataSourceManagement() {
       title: t('metadataSource.col.url'),
       dataIndex: 'url',
       key: 'url',
+      width: 260,
       sorter: true,
       sortOrder: sortField === 'url' ? sortOrder : null,
       ellipsis: true,
@@ -324,7 +329,7 @@ export default function MetadataSourceManagement() {
       title: t('metadataSource.col.status'),
       dataIndex: 'status',
       key: 'status',
-      width: 120,
+      width: 140,
       sorter: true,
       sortOrder: sortField === 'status' ? sortOrder : null,
       render: (status: string, record: MetadataSourceListItem) => (
@@ -340,6 +345,7 @@ export default function MetadataSourceManagement() {
       title: t('metadataSource.col.action'),
       key: 'action',
       width: 140,
+      fixed: 'right' as const,
       render: (_: unknown, record: MetadataSourceListItem) => (
         <Space size={0}>
           <Tooltip title={t('metadataSource.action.edit')}>
@@ -397,12 +403,13 @@ export default function MetadataSourceManagement() {
       </div>
 
       {/* 表格 */}
-      <Table
+      <ResizableTable
         rowKey="id"
         size="small"
         columns={columns}
         dataSource={data.items}
         loading={loading}
+        scroll={{ x: 940 }}
         rowSelection={{
           selectedRowKeys,
           onChange: (keys) => setSelectedRowKeys(keys as number[]),

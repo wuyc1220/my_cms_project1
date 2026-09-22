@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Button, Empty, Form, Row, Col, Spin, Table, Tag } from 'antd'
+import { Button, Empty, Form, Row, Col, Spin, Tag } from 'antd'
+import ResizableTable from '../../components/ResizableTable'
 import { DownloadOutlined, LeftOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
@@ -86,34 +87,34 @@ export default function MetadataQualityDetail() {
     {
       title: t('ops.metadataQuality.issue.contentId'),
       dataIndex: 'content_id',
-      width: 80,
+      width: 120,
     },
     {
       title: t('ops.metadataQuality.issue.contentName'),
       dataIndex: 'content_name',
-      width: 140,
+      width: 280,
     },
     {
       title: t('ops.metadataQuality.issue.contentType'),
       dataIndex: 'content_type',
-      width: 100,
+      width: 160,
     },
     {
       title: t('ops.metadataQuality.issue.issueType'),
       dataIndex: 'issue_type',
-      width: 100,
+      width: 160,
       render: (v: string) =>
         t(`ops.metadataQuality.issueType.${v}` as 'ops.metadataQuality.issueType.missing'),
     },
     {
       title: t('ops.metadataQuality.issue.fieldName'),
       dataIndex: 'field_name',
-      width: 100,
+      width: 160,
     },
     {
       title: t('ops.metadataQuality.issue.severity'),
       dataIndex: 'severity',
-      width: 90,
+      width: 120,
       render: (v: string) => (
         <Tag color={v === 'critical' ? 'red' : v === 'medium' ? 'orange' : 'blue'}>
           {t(`ops.metadataQuality.severity.${v}` as 'ops.metadataQuality.severity.critical')}
@@ -123,12 +124,12 @@ export default function MetadataQualityDetail() {
     {
       title: t('ops.metadataQuality.issue.expected'),
       dataIndex: 'expected_value',
-      width: 120,
+      width: 260,
     },
     {
       title: t('ops.metadataQuality.issue.actual'),
       dataIndex: 'actual_value',
-      width: 120,
+      width: 260,
     },
   ]
 
@@ -243,7 +244,7 @@ export default function MetadataQualityDetail() {
       <div>
         <SectionTitle title={t('ops.metadataQuality.issuesInfo')} />
         <div style={{ paddingLeft: 20 }}>
-          <Table
+          <ResizableTable
             rowKey="id"
             size="small"
             bordered
@@ -263,7 +264,7 @@ export default function MetadataQualityDetail() {
                 void loadIssues(page, pageSize, 'content_id', 'asc')
               },
             }}
-            scroll={{ x: 800 }}
+            scroll={{ x: 850 }}
             columns={issueColumns}
             locale={{ emptyText: t('common.noData') }}
           />

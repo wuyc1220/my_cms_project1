@@ -8,7 +8,6 @@ import {
   Popconfirm,
   Row,
   Spin,
-  Table,
   Tabs,
   Tag,
   Tooltip,
@@ -26,6 +25,7 @@ import { getDictTree } from '../../api/dicts'
 import { getMultiLanguageOptions } from '../../api/i18n'
 import { getFieldOptionLabel } from '../../utils/customField'
 import TrimInput from '../../components/TrimInput'
+import ResizableTable from '../../components/ResizableTable'
 import type { PackageListItem, ContentSimpleItem } from '../../types/package'
 import type { CustomFieldListItem, EntityFieldValueItem, EntityI18nItem } from '../../types/basic'
 import type { DictNodeListItem } from '../../types/dict'
@@ -183,6 +183,7 @@ export default function PackageDetail() {
       title: t('package.detail.contentName'),
       dataIndex: 'title',
       key: 'title',
+      width: 420,
       ellipsis: { showTitle: false },
       render: (val: string) => <Tooltip title={val}><span>{val}</span></Tooltip>,
     },
@@ -190,20 +191,20 @@ export default function PackageDetail() {
       title: t('package.detail.contentType'),
       dataIndex: 'content_type',
       key: 'content_type',
-      width: 140,
+      width: 200,
     },
     {
       title: t('package.detail.genre'),
       dataIndex: 'genre',
       key: 'genre',
-      width: 120,
+      width: 260,
       render: (val: string | null) => val || '—',
     },
     {
       title: t('package.detail.status'),
       dataIndex: 'status',
       key: 'status',
-      width: 120,
+      width: 160,
       render: (val: string) => {
         // 将首字母大写状态值（如 Published、InProgress）转为 content.status.* 的 camelCase key
         const statusI18nKey = val ? val.charAt(0).toLowerCase() + val.slice(1) : 'none'
@@ -228,7 +229,7 @@ export default function PackageDetail() {
     {
       title: t('package.detail.license'),
       key: 'license',
-      width: 90,
+      width: 320,
       render: (_, row) =>
         row.has_license ? (
           <Button type="link" size="small" icon={<CheckCircleOutlined style={{ color: '#52c41a' }} />} disabled={!canOperate} />
@@ -240,7 +241,7 @@ export default function PackageDetail() {
       title: t('common.action'),
       key: 'action',
       fixed: 'right',
-      width: 80,
+      width: 140,
       render: (_, row) =>
         canOperate ? (
           <Popconfirm
@@ -402,12 +403,12 @@ export default function PackageDetail() {
       <div>
         <SectionTitle title={t('package.detail.contents')} />
         <div style={{ paddingLeft: 20 }}>
-          <Table<ContentSimpleItem>
+          <ResizableTable<ContentSimpleItem>
             rowKey="id"
             columns={contentColumns}
             dataSource={contents}
             loading={contentsLoading}
-            scroll={{ x: 700 }}
+            scroll={{ x: 790 }}
             size="small"
             pagination={{
               current: contentPage,

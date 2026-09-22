@@ -28,7 +28,6 @@ import {
   Space,
   Spin,
   Switch,
-  Table,
   Tag,
   TimePicker,
   Tooltip,
@@ -52,6 +51,7 @@ import { getScheduleMetadata } from '../../api/metadata'
 import { updateScheduleMetadata } from '../../api/metadata'
 import { getDictTree } from '../../api/dicts'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import PublishPlanModal from '../../components/PublishPlanModal'
 import ScheduleCreateModal from '../../components/ScheduleCreateModal'
 import ScheduleImportModal from '../../components/ScheduleImportModal'
@@ -558,7 +558,7 @@ export default function ScheduleManagement() {
       title: t('common.col.channelName'),
       dataIndex: 'channel_name',
       key: 'channel_name',
-      width: 160,
+      width: 320,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'channel_name' ? sortOrder : null,
@@ -571,7 +571,7 @@ export default function ScheduleManagement() {
       title: t('common.col.contentName'),
       dataIndex: 'title',
       key: 'title',
-      width: 200,
+      width: 360,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'title' ? sortOrder : null,
@@ -596,7 +596,7 @@ export default function ScheduleManagement() {
       title: t('common.col.ingestStatus'),
       dataIndex: 'status',
       key: 'status',
-      width: 150,
+      width: 220,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'status' ? sortOrder : null,
@@ -658,8 +658,9 @@ export default function ScheduleManagement() {
         return (
           <Tooltip title={t('common.tooltip.notArchived')}>
             <ExclamationCircleOutlined
-              style={{ color: '#8c8c8c', fontSize: 16, cursor: 'pointer' }}
+              style={{ color: '#8c8c8c', fontSize: 16, cursor: canOperate ? 'pointer' : 'not-allowed' }}
               onClick={() => {
+                if (!canOperate) return
                 handleShowMetadata(record)
               }}
             />
@@ -670,7 +671,7 @@ export default function ScheduleManagement() {
     {
       title: t('common.action'),
       key: 'action',
-      width: 120,
+      width: 140,
       fixed: 'right',
       render: (_, record) => (
         <Space size={0}>
@@ -885,7 +886,7 @@ export default function ScheduleManagement() {
           </Col>
         </Row>
 
-        <Table<ScheduleListItem>
+        <ResizableTable<ScheduleListItem>
           rowKey="id"
           size="small"
           columns={columns}

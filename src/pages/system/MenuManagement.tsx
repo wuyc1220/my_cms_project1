@@ -14,7 +14,6 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Tag,
   Tooltip,
   message,
@@ -30,6 +29,7 @@ import type { MenuItem, MenuCreatePayload, MenuUpdatePayload } from '../../types
 import { getIcon, getAvailableIconNames } from '../../constants/iconMap'
 import { useI18n } from '../../i18n/useI18n'
 import TrimInput from '../../components/TrimInput'
+import ResizableTable from '../../components/ResizableTable'
 import { useFormRules } from '../../hooks/useFormRules'
 import { FORM_MAX_LENGTH } from '../../constants/form'
 
@@ -199,6 +199,7 @@ export default function MenuManagement() {
       title: t('menuManagement.colName'),
       dataIndex: 'name',
       key: 'name',
+      width: 280,
       render: (_text: string, record: MenuItem) => (
         <span>
           {getIcon(record.icon)}{' '}
@@ -210,19 +211,21 @@ export default function MenuManagement() {
       title: t('menuManagement.colI18nKey'),
       dataIndex: 'i18n_key',
       key: 'i18n_key',
+      width: 280,
       render: (text: string) => <Tag>{text}</Tag>,
     },
     {
       title: t('menuManagement.colPath'),
       dataIndex: 'path',
       key: 'path',
+      width: 220,
       render: (text: string | null) => text || '-',
     },
     {
       title: t('menuManagement.colIcon'),
       dataIndex: 'icon',
       key: 'icon',
-      width: 200,
+      width: 220,
       render: (text: string | null) => text ? <span>{getIcon(text)} {text}</span> : '-',
     },
     {
@@ -235,7 +238,7 @@ export default function MenuManagement() {
       title: t('menuManagement.colMenuType'),
       dataIndex: 'menu_type',
       key: 'menu_type',
-      width: 100,
+      width: 140,
       render: (text: string) => (
         <Tag color={text === 'permission' ? 'orange' : 'blue'}>
           {text === 'permission' ? t('menuManagement.typePermission') : t('menuManagement.typeMenu')}
@@ -259,6 +262,7 @@ export default function MenuManagement() {
       title: t('common.action'),
       key: 'action',
       width: 140,
+      fixed: 'right',
       render: (_: unknown, record: MenuItem) => (
         <Space size={0}>
           {record.menu_type !== 'permission' && (
@@ -302,11 +306,12 @@ export default function MenuManagement() {
         </Button>
       </div>
 
-      <Table<MenuItem>
+      <ResizableTable<MenuItem>
         columns={columns}
         dataSource={treeData}
         rowKey="id"
         loading={loading}
+        scroll={{ x: 1220 }}
         pagination={false}
         defaultExpandAllRows
         size="small"

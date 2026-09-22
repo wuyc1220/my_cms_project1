@@ -1,5 +1,5 @@
 import dayjs from 'dayjs'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Button,
   Descriptions,
@@ -8,7 +8,6 @@ import {
   Modal,
   Popconfirm,
   Space,
-  Table,
   Tag,
   Tooltip,
   message,
@@ -20,6 +19,7 @@ import type { ConfigCreatePayload, ConfigListItem, ConfigUpdatePayload } from '.
 import { useI18n } from '../../i18n/useI18n'
 import { useTablePagination } from '../../hooks/useTablePagination'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import TrimInput from '../../components/TrimInput'
 import type { SearchFieldConfig } from '../../types/searchForm'
 import { useSearchForm } from '../../hooks/useSearchForm'
@@ -58,11 +58,6 @@ export default function ConfigManagement() {
       void loadConfigs(page, pageSize, filters, sortField, sortOrder)
     },
   })
-
-  // 表格容器引用，用于检测是否需要固定列
-  const tableWrapperRef = useRef<HTMLDivElement>(null)
-  // 是否需要固定首列和操作列
-  const [needFixedColumns, setNeedFixedColumns] = useState(false)
 
   // 搜索字段配置
   const searchFields: SearchFieldConfig[] = useMemo(() => [
@@ -129,32 +124,6 @@ export default function ConfigManagement() {
       setLoading(false)
     }
   }
-
-  // 表格列宽总和（用于判断是否需要固定列）
-  const tableColumnsWidth = 200 + 220 + 150 + 200 + 200 // config_name + config_key + config_value + description + action
-
-  // 使用 ResizeObserver 监听容器宽度，判断是否需要固定列
-  useEffect(() => {
-    const wrapper = tableWrapperRef.current
-    if (!wrapper) return
-
-    const checkOverflow = () => {
-      const containerWidth = wrapper.clientWidth
-      const hasOverflow = tableColumnsWidth > containerWidth
-      setNeedFixedColumns(hasOverflow)
-    }
-
-    // 初次检测
-    checkOverflow()
-
-    // 监听容器尺寸变化
-    const resizeObserver = new ResizeObserver(checkOverflow)
-    resizeObserver.observe(wrapper)
-
-    return () => {
-      resizeObserver.disconnect()
-    }
-  }, [tableColumnsWidth])
 
   useEffect(() => {
     void loadConfigs(1, pagination.pageSize, {}, null, null)
@@ -223,15 +192,17 @@ export default function ConfigManagement() {
       title: t('system.config.colKey'),
       dataIndex: 'config_key',
       key: 'config_key',
+      width: 280,
       sorter: true,
       sortOrder: sortField === 'config_key' ? sortOrder : null,
-      fixed: needFixedColumns ? 'left' : undefined,
+      fixed: 'left',
       render: (value: string) => <Tag color="blue">{value}</Tag>,
     },
     {
       title: t('system.config.colName'),
       dataIndex: 'config_name',
       key: 'config_name',
+      width: 300,
       sorter: true,
       sortOrder: sortField === 'config_name' ? sortOrder : null,
     },
@@ -286,7 +257,7 @@ export default function ConfigManagement() {
     {
       title: t('common.action'),
       key: 'action',
-      fixed: needFixedColumns ? 'right' : undefined,
+      fixed: 'right',
       width: 160,
       render: (_, record) => (
         <Space size={0}>
@@ -354,13 +325,13 @@ export default function ConfigManagement() {
           )}
         </div>
 
-        <div ref={tableWrapperRef}>
-          <Table<ConfigListItem>
+        <div>
+          <ResizableTable<ConfigListItem>
             rowKey="id"
             loading={loading}
             columns={columns}
             dataSource={list}
-            scroll={{ x: tableColumnsWidth }}
+            scroll={{ x: 1210 }}
             onChange={handleTableChange}
           pagination={tablePaginationProps}
           size="small"

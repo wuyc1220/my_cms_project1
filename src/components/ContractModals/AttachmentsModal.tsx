@@ -8,7 +8,6 @@ import {
   Button,
   Popconfirm,
   Space,
-  Table,
   Tooltip,
   Upload,
   message,
@@ -19,6 +18,7 @@ import {
   InboxOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
+import ResizableTable from '../ResizableTable'
 import type { UploadRequestOption } from '@rc-component/upload/lib/interface'
 import {
   getContractAttachments,
@@ -154,6 +154,7 @@ export default function AttachmentsModal({
       title: t('content.col.fileName'),
       dataIndex: 'file_name',
       key: 'file_name',
+      width: 200,
       ellipsis: { showTitle: false },
       render: (val: string) => {
         const displayName = val.replace(/^.*[/\\]/, '')
@@ -230,7 +231,7 @@ export default function AttachmentsModal({
         <p className="ant-upload-hint">{t('contract.upload.subHint')}</p>
       </Upload.Dragger>
 
-      <Table<ContractAttachmentItem>
+      <ResizableTable<ContractAttachmentItem>
         rowKey="id"
         loading={loading}
         columns={columns}

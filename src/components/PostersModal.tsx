@@ -5,8 +5,9 @@
  * 上传使用通用附件 API（uploadAttachment）+ createPicture 两步调用。
  */
 import { useCallback, useEffect, useState } from 'react'
-import { Button, Modal, Popconfirm, Space, Table, Tooltip, Upload, message } from 'antd'
+import { Button, Modal, Popconfirm, Space, Tooltip, Upload, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
+import ResizableTable from './ResizableTable'
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
@@ -237,6 +238,7 @@ export default function PostersModal({ open, entityType, entityId, entityName, r
     {
       title: 'Name',
       key: 'name',
+      width: 200,
       render: (_, row) => (
         <Space size={6}>
           <StatusIcon status={getRowStatus(row)} />
@@ -326,13 +328,13 @@ export default function PostersModal({ open, entityType, entityId, entityName, r
         width="70%"
         destroyOnHidden
       >
-        <Table<PosterRow>
+        <ResizableTable<PosterRow>
           rowKey={(row) => row.posterSize.id}
           loading={loading}
           columns={columns}
           dataSource={rows}
           pagination={false}
-          scroll={{ x: 1100 }}
+          scroll={{ x: 1220 }}
           locale={{ emptyText: t('content.poster.noMatchingSpec', { belonging: entityType.charAt(0).toUpperCase() + entityType.slice(1) }) }}
         />
       </Modal>

@@ -8,7 +8,6 @@ import {
   Popconfirm,
   Row,
   Spin,
-  Table,
   Tabs,
   Tooltip,
   message,
@@ -16,6 +15,7 @@ import {
 import { DeleteOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import TrimInput from '../../components/TrimInput'
+import ResizableTable from '../../components/ResizableTable'
 import {
   getCategory,
   getCategoryContents,
@@ -204,11 +204,12 @@ export default function CategoryDetail() {
   }, [customFields, fieldValues, i18nValueMap, defaultLangCode])
 
   const contentColumns: ColumnsType<ContentRow> = [
-    { title: t('category.detail.contentSequence'), dataIndex: 'sequence', key: 'sequence', width: 90 },
+    { title: t('category.detail.contentSequence'), dataIndex: 'sequence', key: 'sequence', width: 140 },
     {
       title: t('category.detail.contentName'),
       dataIndex: 'content_name',
       key: 'content_name',
+      width: 420,
       render: (name: string, record) => {
         const getDetailPath = () => {
           if (record.content_type === 'CHANNEL') return `/live/channels/${record.id}`
@@ -222,13 +223,14 @@ export default function CategoryDetail() {
         )
       },
     },
-    { title: t('category.detail.contentType'), dataIndex: 'content_type', key: 'content_type', width: 140 },
-    { title: t('category.detail.genre'), dataIndex: 'genre', key: 'genre', width: 140 },
-    { title: t('category.detail.contentStatus'), dataIndex: 'status', key: 'status', width: 120 },
+    { title: t('category.detail.contentType'), dataIndex: 'content_type', key: 'content_type', width: 220 },
+    { title: t('category.detail.genre'), dataIndex: 'genre', key: 'genre', width: 280 },
+    { title: t('category.detail.contentStatus'), dataIndex: 'status', key: 'status', width: 200 },
     {
       title: t('common.action'),
       key: 'action',
-      width: 90,
+      width: 140,
+      fixed: 'right',
       render: (_, record) =>
         canOperate ? (
           <Popconfirm
@@ -440,11 +442,12 @@ export default function CategoryDetail() {
       <div>
         <SectionTitle title={t('category.detail.tabContents')} />
         <div style={{ paddingLeft: 20 }}>
-          <Table<ContentRow>
+          <ResizableTable<ContentRow>
             rowKey="key"
             columns={contentColumns}
             dataSource={contentRows}
             pagination={false}
+            scroll={{ x: 780 }}
             size="small"
             locale={{ emptyText: t('category.detail.noContents') }}
           />

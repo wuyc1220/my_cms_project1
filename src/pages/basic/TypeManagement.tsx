@@ -5,7 +5,6 @@ import {
   Modal,
   Popconfirm,
   Space,
-  Table,
   Tooltip,
   message,
 } from 'antd'
@@ -19,6 +18,7 @@ import {
   updateContentType,
 } from '../../api/contentTypes'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import TrimInput from '../../components/TrimInput'
 import type { ContentTypeListItem, ContentTypeCreatePayload, ContentTypeUpdatePayload } from '../../types/basic'
 import type { SearchFieldConfig } from '../../types/searchForm'
@@ -167,7 +167,7 @@ export default function TypeManagement() {
   }
 
   const columns: ColumnsType<ContentTypeListItem> = [
-    { title: t('type.col.name'), dataIndex: 'name', key: 'name', sorter: true, sortOrder: sortField === 'name' ? sortOrder : null },
+    { title: t('type.col.name'), dataIndex: 'name', key: 'name', width: 200, sorter: true, sortOrder: sortField === 'name' ? sortOrder : null },
     {
       title: t('common.action'),
       key: 'action',
@@ -225,7 +225,7 @@ export default function TypeManagement() {
           )}
         </div>
 
-        <Table<ContentTypeListItem>
+        <ResizableTable<ContentTypeListItem>
           rowKey="id"
           loading={loading}
           columns={columns}

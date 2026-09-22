@@ -24,7 +24,6 @@ import {
   Image,
   Modal,
   Row,
-  Select,
   Space,
   Tag,
   Tooltip,
@@ -182,37 +181,13 @@ export default function VodContents() {
       name: 'genre_ids',
       labelKey: 'common.col.genre',
       type: 'multiSelect',
-      render: () => (
-        <Select
-          mode="multiple"
-          placeholder={t('common.placeholder.select')}
-          options={genreOptions}
-          allowClear
-          showSearch
-          filterOption={(input, option) =>
-            (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-          }
-          style={{ width: '100%' }}
-        />
-      ),
+      options: genreOptions,
     },
     {
       name: 'custom_tag_ids',
       labelKey: 'common.col.customTags',
       type: 'multiSelect',
-      render: () => (
-        <Select
-          mode="multiple"
-          placeholder={t('common.placeholder.select')}
-          options={customTagOptions}
-          allowClear
-          showSearch
-          filterOption={(input, option) =>
-            (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-          }
-          style={{ width: '100%' }}
-        />
-      ),
+      options: customTagOptions,
     },
     {
       name: 'deleted',
@@ -227,19 +202,7 @@ export default function VodContents() {
       name: 'type_ids',
       labelKey: 'common.col.type',
       type: 'multiSelect',
-      render: () => (
-        <Select
-          mode="multiple"
-          placeholder={t('common.placeholder.select')}
-          options={typeOptions}
-          allowClear
-          showSearch
-          filterOption={(input, option) =>
-            (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-          }
-          style={{ width: '100%' }}
-        />
-      ),
+      options: typeOptions,
     },
     {
       name: 'category_name',
@@ -251,37 +214,13 @@ export default function VodContents() {
       name: 'package_ids',
       labelKey: 'common.col.package',
       type: 'multiSelect',
-      render: () => (
-        <Select
-          mode="multiple"
-          placeholder={t('common.placeholder.select')}
-          options={packageOptions}
-          allowClear
-          showSearch
-          filterOption={(input, option) =>
-            (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-          }
-          style={{ width: '100%' }}
-        />
-      ),
+      options: packageOptions,
     },
     {
       name: 'provider_ids',
       labelKey: 'common.col.provider',
       type: 'multiSelect',
-      render: () => (
-        <Select
-          mode="multiple"
-          placeholder={t('common.placeholder.select')}
-          options={providerOptions}
-          allowClear
-          showSearch
-          filterOption={(input, option) =>
-            (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-          }
-          style={{ width: '100%' }}
-        />
-      ),
+      options: providerOptions,
     },
     {
       name: 'license_start_range',

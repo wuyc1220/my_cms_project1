@@ -11,9 +11,10 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import { message, Table, Tag, Tooltip } from 'antd'
+import { message, Tag, Tooltip } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
+import ResizableTable from './ResizableTable'
 import { getProcessedHistory, getContentHistory } from '../api/operationLogs'
 import { getDictChildren, getDictTree } from '../api/dicts'
 import { isHandledError } from '../api'
@@ -254,7 +255,7 @@ const FIELD_LABEL_MAP: Record<string, Record<string, Record<string, string>>> = 
     category_names: { cn: '栏目', en: 'Categories' },
     custom_tag_names: { cn: '自定义标签', en: 'Custom Tags' },
     genre_name: { cn: '题材', en: 'Genre' },
-    genre_names: { cn: '题材', en: 'Genres' },
+    genre_names: { cn: '题材', en: 'Genre' },
     channel_name: { cn: '所属频道', en: 'Channel' },
     channel_id: { cn: '所属频道', en: 'Channel' },
     '标签': { cn: '标签', en: 'Tags' },
@@ -340,7 +341,7 @@ const FIELD_LABEL_MAP: Record<string, Record<string, Record<string, string>>> = 
     cutv_enable: { cn: 'CUTV启用', en: 'CUTV Enable' },
     is_archived: { cn: '已归档', en: 'Archived' },
     archive_scheduled_time: { cn: '归档计划时间', en: 'Archive Scheduled Time' },
-    genre_names: { cn: '题材', en: 'Genres' },
+    genre_names: { cn: '题材', en: 'Genre' },
     custom_tag_names: { cn: '自定义标签', en: 'Custom Tags' },
   },
   program_metadata: {
@@ -529,6 +530,10 @@ const ENRICHED_FIELD_PAIRS: Record<string, Record<string, string>> = {
   },
   content: {
     custom_tag_ids: 'custom_tag_names',
+    // 创建日志快照来自 ContentListItem DTO（含 genre_name 单数字符串），API 层又注入 genre_names 列表，
+    // 两者同时存在会重复展示"Genre/Genres"（bug 32653）；genre_names 存在时隐藏 genre_name，
+    // 仅有 genre_name 的老日志不受影响，仍正常显示
+    genre_name: 'genre_names',
   },
   program_metadata: {
     content_id: 'content_name',
@@ -1365,7 +1370,7 @@ export default function ProcessedHistoryTab({
       title: t('history.col.processedBy'),
       dataIndex: 'processed_by',
       key: 'processed_by',
-      width: 180,
+      width: 250,
       render: (_: unknown, record: ProcessedHistoryItem) => {
         const display = record.processed_by_display_name
         const username = record.processed_by
@@ -1377,7 +1382,7 @@ export default function ProcessedHistoryTab({
       title: t('history.col.processedType'),
       dataIndex: 'processed_type',
       key: 'processed_type',
-      width: 140,
+      width: 200,
       render: (v?: string, record?: ProcessedHistoryItem) => {
         if (!v) return '—'
         if (v === 'DATA_AUTH_AUTHORIZE') {
@@ -1406,7 +1411,7 @@ export default function ProcessedHistoryTab({
       title: t('history.col.previousValue'),
       dataIndex: 'previous_value',
       key: 'previous_value',
-      width: 280,
+      width: 380,
       render: (_: unknown, record: ProcessedHistoryItem) => {
         if (record.processed_type === 'CONTRACT_ATTACHMENT_DELETE') {
           const prevObj = tryParseJson(record.previous_value)
@@ -1446,7 +1451,7 @@ export default function ProcessedHistoryTab({
       title: t('history.col.updatedValue'),
       dataIndex: 'updated_value',
       key: 'updated_value',
-      width: 280,
+      width: 380,
       render: (_: unknown, record: ProcessedHistoryItem) => {
         if (record.processed_type === 'CONTRACT_ATTACHMENT_UPLOAD') {
           const updObj = tryParseJson(record.updated_value)
@@ -1516,7 +1521,7 @@ export default function ProcessedHistoryTab({
       title: t('history.col.details'),
       dataIndex: 'details',
       key: 'details',
-      width: 350,
+      width: 380,
       ellipsis: { showTitle: false },
       render: (v?: string) =>
         v ? (
@@ -1860,7 +1865,11 @@ export default function ProcessedHistoryTab({
       lines = buildFieldLines(record, obj)
     } else if (REVIEW_TYPES.has(type)) {
       if (type === 'CONTENT_REVIEW_INITIATE') {
-        return opDesc || '—'
+        return opDesc ? (
+          <Tooltip title={opDesc}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{opDesc}</span>
+          </Tooltip>
+        ) : '—'
       }
       const levelMap: Record<string, string> = language === 'en'
         ? { L1: 'Level 1 Review', L2: 'Level 2 Review', L3: 'Level 3 Review' }
@@ -1868,15 +1877,21 @@ export default function ProcessedHistoryTab({
       const reviewLevel = String(updObj?.review_level ?? '')
       const reviewType = updObj?.review_type as string | undefined
       const reason = updObj?.reason as string | undefined
+      const description = updObj?.description as string | undefined
       const levelStr = levelMap[reviewLevel] || reviewLevel
+      let text = opDesc || '—'
       if (reviewType === 'approve') {
-        return `${levelStr}:${language === 'en' ? 'Approved' : '通过'}`
-      }
-      if (reviewType === 'reject') {
+        text = description ? `${levelStr}:${language === 'en' ? 'Approved' : '通过'}-${description}` : `${levelStr}:${language === 'en' ? 'Approved' : '通过'}`
+      } else if (reviewType === 'reject') {
         const rejectStr = language === 'en' ? 'Rejected' : '拒绝'
-        return reason ? `${levelStr}:${rejectStr}-${reason}` : `${levelStr}:${rejectStr}`
+        text = reason ? `${levelStr}:${rejectStr}-${reason}` : `${levelStr}:${rejectStr}`
       }
-      return opDesc || '—'
+      if (text === '—') return text
+      return (
+        <Tooltip title={text}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{text}</span>
+        </Tooltip>
+      )
     } else if (PUBLISHED_TYPES.has(type) || UNPUBLISHED_TYPES.has(type)) {
       return opDesc || '—'
     } else if (PLAN_TYPES.has(type)) {
@@ -1981,12 +1996,13 @@ export default function ProcessedHistoryTab({
       : simpleColumns
 
   return (
-    <Table<ProcessedHistoryItem>
+    <ResizableTable<ProcessedHistoryItem>
       rowKey="id"
       size="small"
       loading={loading}
       columns={columns}
       dataSource={data}
+      scroll={{ x: 1060 }}
       pagination={{ pageSize: 10, showQuickJumper: true , placement: ['bottomCenter'] }}
       locale={{ emptyText: t('history.empty') }}
     />

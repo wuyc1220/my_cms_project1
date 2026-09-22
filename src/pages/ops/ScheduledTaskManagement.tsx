@@ -6,11 +6,11 @@ import {
   Input,
   Modal,
   Space,
-  Table,
   Tag,
   Tooltip,
   message,
 } from 'antd'
+import ResizableTable from '../../components/ResizableTable'
 import {
   EditOutlined,
   InfoCircleOutlined,
@@ -189,7 +189,7 @@ export default function ScheduledTaskManagement() {
       title: t('ops.scheduledTask.colTaskType'),
       dataIndex: 'task_type',
       key: 'task_type',
-      width: 300,
+      width: 320,
       sorter: true,
       sortOrder: sortField === 'task_type' ? sortOrder : null,
       render: (v: string) => getTaskTypeLabel(v),
@@ -198,13 +198,14 @@ export default function ScheduledTaskManagement() {
       title: t('ops.scheduledTask.colDescription'),
       dataIndex: 'description',
       key: 'description',
+      width: 300,
       ellipsis: true,
     },
     {
       title: t('ops.scheduledTask.colScheduleStatus'),
       dataIndex: 'schedule_status',
       key: 'schedule_status',
-      width: 120,
+      width: 160,
       sorter: true,
       sortOrder: sortField === 'schedule_status' ? sortOrder : null,
       render: (v: string) => (
@@ -217,7 +218,7 @@ export default function ScheduledTaskManagement() {
       title: t('ops.scheduledTask.colExecutionStatus'),
       dataIndex: 'execution_status',
       key: 'execution_status',
-      width: 120,
+      width: 160,
       sorter: true,
       sortOrder: sortField === 'execution_status' ? sortOrder : null,
       render: (v: string) => (
@@ -230,7 +231,7 @@ export default function ScheduledTaskManagement() {
       title: t('ops.scheduledTask.colLastExecution'),
       dataIndex: 'last_execution_time',
       key: 'last_execution_time',
-      width: 180,
+      width: 160,
       sorter: true,
       sortOrder: sortField === 'last_execution_time' ? sortOrder : null,
       render: (v: string | null) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-'),
@@ -239,7 +240,7 @@ export default function ScheduledTaskManagement() {
       title: t('ops.scheduledTask.colNextExecution'),
       dataIndex: 'next_execution_time',
       key: 'next_execution_time',
-      width: 180,
+      width: 160,
       sorter: true,
       sortOrder: sortField === 'next_execution_time' ? sortOrder : null,
       render: (v: string | null, record: ScheduledTask) =>
@@ -248,7 +249,7 @@ export default function ScheduledTaskManagement() {
     {
       title: t('common.action'),
       key: 'action',
-      width: 180,
+      width: 160,
       fixed: 'right',
       render: (_, record) => (
         <Space size={0}>
@@ -290,13 +291,13 @@ export default function ScheduledTaskManagement() {
         </div>
       )}
 
-      <Table<ScheduledTask>
+      <ResizableTable<ScheduledTask>
         rowKey="id"
         size="small"
         columns={columns}
         dataSource={list}
         loading={loading}
-        scroll={{ x: 900 }}
+        scroll={{ x: 1280 }}
         onChange={handleTableChange}
         pagination={tablePaginationProps}
         rowSelection={

@@ -1,4 +1,5 @@
-import { Card, Table, Button, message, Tooltip } from 'antd'
+import { Card, Button, message, Tooltip } from 'antd'
+import ResizableTable from '../../../components/ResizableTable'
 import type { TablePaginationConfig } from 'antd/es/table'
 import { InfoCircleOutlined } from '@ant-design/icons'
 import { useState, useEffect, useMemo, useCallback } from 'react'
@@ -66,6 +67,7 @@ const AssignedToMeTable: React.FC = () => {
       title: t('dashboard.column.contentName'),
       dataIndex: 'content_name',
       key: 'content_name',
+      width: 330,
       ellipsis: { showTitle: false },
       render: (text: string, record: TaskListItem) => (
         <Tooltip autoAdjustOverflow={false} placement="topLeft" title={text}>
@@ -84,32 +86,38 @@ const AssignedToMeTable: React.FC = () => {
       title: t('dashboard.column.contentType'),
       dataIndex: 'content_type',
       key: 'content_type',
+      width: 200,
     },
     {
       title: t('dashboard.column.ingestStatus'),
       dataIndex: 'ingest_status',
       key: 'ingest_status',
+      width: 220,
     },
     {
       title: t('dashboard.column.taskType'),
       dataIndex: 'task_type',
       key: 'task_type',
+      width: 200,
     },
     {
       title: t('dashboard.column.taskStatus'),
       dataIndex: 'task_status',
       key: 'task_status',
+      width: 200,
     },
     {
       title: t('dashboard.column.startTime'),
       dataIndex: 'start_time',
       key: 'start_time',
-      width: 160,
+      width: 180,
       render: (v?: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '—',
     },
     {
       title: t('dashboard.action'),
       key: 'action',
+      width: 150,
+      fixed: 'right' as const,
       render: (_: unknown, record: TaskListItem) => (
         <Tooltip title={t('common.detail')}>
           <Button
@@ -144,11 +152,12 @@ const AssignedToMeTable: React.FC = () => {
 
   return (
     <Card title={t('dashboard.assignedToMe')}>
-      <Table
+      <ResizableTable
         columns={columns}
         dataSource={data}
         rowKey="id"
         loading={loading}
+        scroll={{ x: 1010 }}
         pagination={paginationConfig}
         onChange={handleTableChange}
         size="small"

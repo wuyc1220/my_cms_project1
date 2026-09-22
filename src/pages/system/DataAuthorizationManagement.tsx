@@ -6,7 +6,6 @@ import {
   Popconfirm,
   Select,
   Space,
-  Table,
   Tag,
   Tooltip,
   message,
@@ -22,6 +21,7 @@ import {
 } from '../../api/dataAuth'
 import { getDictChildren } from '../../api/dicts'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import type { SearchFieldConfig } from '../../types/searchForm'
 import type {
   ContentAuthListItem,
@@ -331,7 +331,7 @@ export default function DataAuthorizationManagement() {
       title: t('system.dataAuth.col.contentName'),
       dataIndex: 'content_name',
       key: 'content_name',
-      width: 200,
+      width: 340,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'content_name' ? sortOrder : null,
@@ -353,7 +353,7 @@ export default function DataAuthorizationManagement() {
       title: t('system.dataAuth.col.ingestStatus'),
       dataIndex: 'ingest_status',
       key: 'ingest_status',
-      width: 220,
+      width: 200,
       sorter: true,
       sortOrder: sortField === 'ingest_status' ? sortOrder : null,
     },
@@ -361,7 +361,7 @@ export default function DataAuthorizationManagement() {
       title: t('system.dataAuth.col.authorizedRoles'),
       dataIndex: 'authorized_roles',
       key: 'authorized_roles',
-      width: 300,
+      width: 320,
       render: (roles: ContentAuthListItem['authorized_roles']) =>
         renderAuthNames(roles.map((role) => ({ key: role.id, text: role.name })), 'blue'),
     },
@@ -369,7 +369,7 @@ export default function DataAuthorizationManagement() {
       title: t('system.dataAuth.col.authorizedUsers'),
       dataIndex: 'authorized_users',
       key: 'authorized_users',
-      width: 300,
+      width: 320,
       render: (users: ContentAuthListItem['authorized_users']) =>
         renderAuthNames(
           users.map((user) => ({ key: user.id, text: `${user.display_name}(${user.username})` })),
@@ -440,7 +440,7 @@ export default function DataAuthorizationManagement() {
         )}
       </div>
 
-      <Table
+      <ResizableTable
         rowKey="id"
         columns={columns}
         dataSource={list}

@@ -19,7 +19,6 @@ import {
   Popconfirm,
   Row,
   Spin,
-  Table,
   Tooltip,
   message, Tag,
 } from 'antd'
@@ -31,6 +30,7 @@ import { removeContentFromLicense } from '../../api/licenses'
 import { checkContentAuthPermission } from '../../api/dataAuth'
 import { getDictTree } from '../../api/dicts'
 import TrimInput from '../../components/TrimInput'
+import ResizableTable from '../../components/ResizableTable'
 import type { ContentListItem, ContentLicenseRef } from '../../types/content'
 import type { DictNodeListItem } from '../../types/dict'
 import { useI18n } from '../../i18n/useI18n'
@@ -142,6 +142,7 @@ export default function ContentDetail() {
       title: t('content.col.providerName'),
       dataIndex: 'provider_name',
       key: 'provider_name',
+      width: 240,
       ellipsis: { showTitle: false },
       render: (val: string, record) => (
         <Tooltip title={val}>
@@ -158,6 +159,7 @@ export default function ContentDetail() {
       title: t('content.col.contractName'),
       dataIndex: 'contract_name',
       key: 'contract_name',
+      width: 240,
       ellipsis: { showTitle: false },
       render: (val: string) => (
         <Tooltip title={val}>
@@ -174,6 +176,7 @@ export default function ContentDetail() {
       title: t('content.col.licenseName'),
       dataIndex: 'name',
       key: 'name',
+      width: 320,
       ellipsis: { showTitle: false },
       render: (val: string, record) => (
         <Tooltip title={val}>
@@ -190,6 +193,7 @@ export default function ContentDetail() {
       title: t('content.col.serviceType'),
       dataIndex: 'service_type',
       key: 'service_type',
+      width: 200,
       render: (val: string) => {
         const label = serviceTypeOptions.find((o) => o.value === val)?.label ?? val
         return <Tag>{label}</Tag>
@@ -199,12 +203,14 @@ export default function ContentDetail() {
       title: t('content.col.startDate'),
       dataIndex: 'start_date',
       key: 'start_date',
+      width: 160,
       render: (val?: string) => val ?? '—',
     },
     {
       title: t('content.col.endDate'),
       dataIndex: 'end_date',
       key: 'end_date',
+      width: 160,
       render: (val?: string) => val ?? '—',
     },
     // 无操作权限（菜单权限）或无数据权限时，屏蔽整个 action 列
@@ -212,7 +218,8 @@ export default function ContentDetail() {
       ? [{
           title: t('common.action'),
           key: 'action',
-          width: 100,
+          width: 160,
+          fixed: 'right' as const,
           render: (_: unknown, record: ContentLicenseRef) => (
             <Popconfirm
               title={t('trade.content.detail.confirmRemoveTitle')}
@@ -357,7 +364,7 @@ export default function ContentDetail() {
       <div>
         <SectionTitle title={t('trade.content.detail.tabLicenses')} />
         <div style={{ paddingLeft: 20 }}>
-          <Table<ContentLicenseRef>
+          <ResizableTable<ContentLicenseRef>
             rowKey="id"
             loading={licensesLoading}
             columns={licenseColumns}

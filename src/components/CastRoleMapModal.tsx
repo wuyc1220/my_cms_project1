@@ -21,12 +21,12 @@ import {
   Popover,
   Row,
   Space,
-  Table,
   Tooltip,
   message,
 } from 'antd'
 import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
+import ResizableTable from './ResizableTable'
 import TrimInput from './TrimInput'
 import { getCasts } from '../api/casts'
 import {
@@ -524,12 +524,14 @@ export default function CastRoleMapModal({
       title: t('content.castRoleMap.castName'),
       dataIndex: 'name',
       key: 'name',
+      width: 160,
       ellipsis: true,
     },
     {
       title: t('content.col.description'),
       dataIndex: 'description',
       key: 'description',
+      width: 160,
       ellipsis: true,
       render: (v?: string) => v ?? '—',
     },
@@ -537,6 +539,7 @@ export default function CastRoleMapModal({
       title: t('content.col.action'),
       key: 'action',
       width: 120,
+      fixed: 'right',
       render: (_, record) => {
         const roleMenu = (
           <Space direction="vertical" size={4} style={{ padding: '4px 0' }}>
@@ -583,6 +586,7 @@ export default function CastRoleMapModal({
       title: t('content.castRoleMap.castName'),
       dataIndex: 'cast_name',
       key: 'cast_name',
+      width: 160,
       ellipsis: true,
       render: (v?: string) => v ?? `Cast#${'cast_id'}`,
     },
@@ -590,6 +594,7 @@ export default function CastRoleMapModal({
       title: t('content.castRoleMap.castRole'),
       dataIndex: 'role_name',
       key: 'role_name',
+      width: 160,
       ellipsis: true,
       render: (v: string | null) => v ?? '—',
     },
@@ -597,6 +602,7 @@ export default function CastRoleMapModal({
       title: t('content.col.action'),
       key: 'action',
       width: 100,
+      fixed: 'right',
       hidden: readOnly,
       render: (_, record) => {
         return (
@@ -677,12 +683,12 @@ export default function CastRoleMapModal({
               {t('cast.toolbar.newCast')}
             </Button>
           </div>
-          <Table<CastListItem>
+          <ResizableTable<CastListItem>
             rowKey="id"
             loading={castsLoading}
             columns={castColumns}
             dataSource={casts}
-            scroll={{ y: 400 }}
+            scroll={{ x: 500, y: 400 }}
             size="small"
             pagination={{ ...castPaginationProps, size: 'small' }}
             onChange={handleCastTableChange}
@@ -717,12 +723,12 @@ export default function CastRoleMapModal({
           <div style={{ fontWeight: 600, marginBottom: 8 }}>
             {t('content.castRoleMap.mappedList')} ({displayTotal})
           </div>
-          <Table<CastRoleMapItem>
+          <ResizableTable<CastRoleMapItem>
             rowKey="map_id"
             loading={mappingsLoading}
             columns={mappingColumns}
             dataSource={displayMappings}
-            scroll={{ y: 340 }}
+            scroll={{ x: 500, y: 340 }}
             size="small"
             pagination={false}
             locale={{ emptyText: t('content.castRoleMap.noMappings') }}

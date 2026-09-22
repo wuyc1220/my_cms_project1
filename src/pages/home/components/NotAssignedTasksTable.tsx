@@ -1,4 +1,5 @@
-import { Card, Table, Button, Modal, Form, Select, message, Tooltip } from 'antd'
+import { Card, Button, Modal, Form, Select, message, Tooltip } from 'antd'
+import ResizableTable from '../../../components/ResizableTable'
 import { UserAddOutlined } from '@ant-design/icons'
 import type { TablePaginationConfig } from 'antd/es/table'
 import { useState, useEffect, useCallback, useMemo } from 'react'
@@ -107,6 +108,7 @@ const NotAssignedTasksTable: React.FC<NotAssignedTasksTableProps> = ({ onDataCha
       title: t('dashboard.column.contentName'),
       dataIndex: 'content_name',
       key: 'content_name',
+      width: 330,
       ellipsis: { showTitle: false },
       render: (text: string, record: TaskListItem) => (
         <Tooltip autoAdjustOverflow={false} placement="topLeft" title={text}>
@@ -125,13 +127,13 @@ const NotAssignedTasksTable: React.FC<NotAssignedTasksTableProps> = ({ onDataCha
       title: t('dashboard.column.contentType'),
       dataIndex: 'content_type',
       key: 'content_type',
-      width: 160,
+      width: 180,
     },
     {
       title: t('dashboard.column.ingestStatus'),
       dataIndex: 'ingest_status',
       key: 'ingest_status',
-      width: 160,
+      width: 180,
     },
     {
       title: t('dashboard.column.taskType'),
@@ -156,6 +158,7 @@ const NotAssignedTasksTable: React.FC<NotAssignedTasksTableProps> = ({ onDataCha
       title: t('dashboard.action'),
       key: 'action',
       width: 100,
+      fixed: 'right' as const,
       render: (_: unknown, record: TaskListItem) => (
         <Tooltip title={t('dashboard.assign')}>
           <Button
@@ -213,11 +216,12 @@ const NotAssignedTasksTable: React.FC<NotAssignedTasksTableProps> = ({ onDataCha
 
   return (
     <Card title={t('dashboard.notAssignedTasks')}>
-      <Table
+      <ResizableTable
         columns={columns}
         dataSource={data}
         rowKey="id"
         loading={loading}
+        scroll={{ x: 1140 }}
         pagination={paginationConfig}
         onChange={handleTableChange}
         size="small"

@@ -39,7 +39,6 @@ import {
   Space,
   Spin,
   Switch,
-  Table,
   Tabs,
   Tag,
   Tooltip,
@@ -94,6 +93,7 @@ import type { MessageKey } from '../../i18n/messages'
 import type { WorkflowConfigDetail, WorkflowNodeConfigItem } from '../../types/workflow'
 import { isStartOrEndNode, normalizeNodeCode, findPrevPendingNodeName } from '../../utils/workflow'
 import ProcessesTab from '../../components/ProcessesTab'
+import ResizableTable from '../../components/ResizableTable'
 import LicenseTab from '../../components/LicenseTab'
 import StatusLogsTab from '../../components/StatusLogsTab'
 import ProcessedHistoryTab from '../../components/ProcessedHistoryTab'
@@ -1248,7 +1248,7 @@ export default function ContentDetailPage() {
                 publish_status: plan.publish_status,
                 publish_time: plan.publish_time,
                 unpublish_time: plan.unpublish_time,
-                task_type: plan.task_type,
+                task_type: plan.task_type as 'publish' | 'unpublish',
                 execution_mode: plan.execution_mode,
                 scheduled_time: plan.scheduled_time,
               })
@@ -1301,13 +1301,13 @@ export default function ContentDetailPage() {
 
   const handleMovieDownload = async (movie: MovieItem) => {
     try {
-      const downloadUrl = movie.relative_path
-        ? `/api/v1/attachments/download?path=${encodeURIComponent(movie.relative_path)}&inline=1`
-        : movie.file_path
-      if (!downloadUrl) {
+      // 本地上传走 relative_path；外部素材 relative_path 为空，传加密的 file_path，由后端解密后从外部服务器下载
+      const pathParam = movie.relative_path || movie.file_path
+      if (!pathParam) {
         message.error(t('common.downloadFailed'))
         return
       }
+      const downloadUrl = `/api/v1/attachments/download?path=${encodeURIComponent(pathParam)}&inline=1`
       const token = localStorage.getItem('token')
       const resp = await fetch(downloadUrl, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -1326,17 +1326,17 @@ export default function ContentDetailPage() {
   }
 
   const mediaFileColumns: ColumnsType<MovieItem> = [
-    { title: t('content.col.fileName'),        dataIndex: 'file_name',        key: 'file_name',        ellipsis: true, render: (v: string) => v?.split('/').pop() ?? v },
+    { title: t('content.col.fileName'),        dataIndex: 'file_name',        key: 'file_name',        width: 200, ellipsis: true, render: (v: string) => v?.split('/').pop() ?? v },
     { title: t('content.col.type'),            dataIndex: 'movie_type',       key: 'movie_type',       width: 100, render: (v: number) => getMovieTypeLabel(v), ellipsis: true },
     { title: t('content.col.fileSize'),        dataIndex: 'file_size',        key: 'file_size',        width: 100, render: (v: number) => formatFileSize(v) },
     { title: t('content.col.audioType'),       dataIndex: 'audio_type',       key: 'audio_type',       width: 110, render: (v?: string) => (v ? getDictName(dictOptions.AudioType ?? [], v) : '—'), ellipsis: true },
     { title: t('content.col.screenFormat'),    dataIndex: 'screen_format',    key: 'screen_format',    width: 120, render: (v?: string) => (v ? getDictName(dictOptions.ScreenFormat ?? [], v) : '—'), ellipsis: true },
-    { title: t('content.col.closedCaptioning'),dataIndex: 'closed_captioning',key: 'closed_captioning',width: 130, render: (v: boolean) => <Switch checked={v} disabled size="small" />, ellipsis: true },
+    { title: t('content.col.closedCaptioning'),dataIndex: 'closed_captioning',key: 'closed_captioning',width: 150, render: (v: boolean) => <Switch checked={v} disabled size="small" />, ellipsis: true },
     { title: t('content.col.duration'),        dataIndex: 'duration',         key: 'duration',         width: 90 },
     { title: t('content.col.definition'),      dataIndex: 'definition',       key: 'definition',       width: 100, render: (v?: string) => (v ? getDictName(dictOptions.Definition ?? [], v) : '—'), ellipsis: true },
-    { title: t('content.col.encryption'),      dataIndex: 'encryption',       key: 'encryption',       width: 100, render: (v: boolean) => <Switch checked={v} disabled size="small" />, ellipsis: true },
+    { title: t('content.col.encryption'),      dataIndex: 'encryption',       key: 'encryption',       width: 120, render: (v: boolean) => <Switch checked={v} disabled size="small" />, ellipsis: true },
     { title: t('content.col.publishFlag'),     dataIndex: 'publish_flag',     key: 'publish_flag',     width: 110, render: (v: boolean) => <Switch checked={v} disabled size="small" />, ellipsis: true },
-    { title: t('content.col.deeplink'),        dataIndex: 'deeplink',         key: 'deeplink',         ellipsis: true },
+    { title: t('content.col.deeplink'),        dataIndex: 'deeplink',         key: 'deeplink',         width: 200, ellipsis: true },
     { title: t('content.col.action'),          key: 'action',                                          width: 100, fixed: 'right' as const, render: (_: unknown, record: MovieItem) => (
       <Tooltip title={record.publish_flag ? t('common.download') : t('common.tooltip.downloadDisabledUnpublished')}>
         <Button
@@ -1353,12 +1353,12 @@ export default function ContentDetailPage() {
 
   const episodeColumns: ColumnsType<ContentListItem> = [
     { title: t('content.col.sequence'),    dataIndex: 'sequence',     key: 'sequence',     width: 120, align: 'center' as const, render: (v?: number) => v ?? '—' },
-    { title: t('content.col.contentName'), dataIndex: 'title',        key: 'title',        ellipsis: true },
-    { title: t('content.col.contentType'), dataIndex: 'content_type', key: 'content_type', width: 120, render: () => 'EPISODE' },
+    { title: t('content.col.contentName'), dataIndex: 'title',        key: 'title',        width: 320, ellipsis: true },
+    { title: t('content.col.contentType'), dataIndex: 'content_type', key: 'content_type', width: 180, render: () => 'EPISODE' },
     { title: t('content.col.startDateTime'),dataIndex: 'task_start_time', key: 'task_start_time', width: 160, render: (v?: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '—' },
     { title: t('content.col.endDateTime'), dataIndex: 'task_end_time',  key: 'task_end_time',   width: 160, render: (v?: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '—' },
-    { title: t('content.col.assigned'),    dataIndex: 'assignee_name', key: 'assignee_name', width: 120, render: (v?: string) => v ?? '—' },
-    { title: t('content.col.status'),      dataIndex: 'status',       key: 'status',       width: 120 },
+    { title: t('content.col.assigned'),    dataIndex: 'assignee_name', key: 'assignee_name', width: 320, render: (v?: string) => v ?? '—' },
+    { title: t('content.col.status'),      dataIndex: 'status',       key: 'status',       width: 160 },
     {
       title: t('content.col.action'),
       key: 'action',
@@ -1378,15 +1378,15 @@ export default function ContentDetailPage() {
   ]
 
   const seasonSeriesColumns: ColumnsType<ContentListItem> = [
-    { title: t('content.col.seriesOrdinal'),dataIndex: 'series_ordinal', key: 'series_ordinal', width: 120 },
-    { title: t('content.col.contentName'), dataIndex: 'title',           key: 'title',          ellipsis: true },
+    { title: t('content.col.seriesOrdinal'),dataIndex: 'series_ordinal', key: 'series_ordinal', width: 160 },
+    { title: t('content.col.contentName'), dataIndex: 'title',           key: 'title',          width: 300, ellipsis: true },
     // Content Type 显示行数据真实类型（SEASON 的子内容为单季 SEASON_SERIES），
     // 不能写死 'SERIES'，否则单季被误显示为 SERIES
-    { title: t('content.col.contentType'), dataIndex: 'content_type',    key: 'content_type',   width: 140, render: (v: string) => v },
+    { title: t('content.col.contentType'), dataIndex: 'content_type',    key: 'content_type',   width: 180, render: (v: string) => v },
     { title: t('content.col.startDateTime'),dataIndex: 'task_start_time', key: 'task_start_time', width: 160, render: (v?: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '—' },
     { title: t('content.col.endDateTime'), dataIndex: 'task_end_time',    key: 'task_end_time',   width: 160, render: (v?: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '—' },
-    { title: t('content.col.assigned'),    dataIndex: 'assignee_name',  key: 'assignee_name',  width: 120, render: (v?: string) => v ?? '—' },
-    { title: t('content.col.status'),      dataIndex: 'status',            key: 'status',          width: 120 },
+    { title: t('content.col.assigned'),    dataIndex: 'assignee_name',  key: 'assignee_name',  width: 280, render: (v?: string) => v ?? '—' },
+    { title: t('content.col.status'),      dataIndex: 'status',            key: 'status',          width: 180 },
     {
       title: t('content.col.action'),
       key: 'action',
@@ -1438,12 +1438,12 @@ export default function ContentDetailPage() {
         key: 'mediaFile',
         label: t('content.tab.mediaFile'),
         children: (
-          <Table<MovieItem>
+          <ResizableTable<MovieItem>
             rowKey="id"
             loading={moviesLoading}
             columns={mediaFileColumns}
             dataSource={movies}
-            scroll={{ x: 1200 }}
+            scroll={{ x: 1460 }}
             pagination={clientPagination}
             locale={{ emptyText: 'No media files' }}
           />
@@ -1454,12 +1454,12 @@ export default function ContentDetailPage() {
         key: 'episodes',
         label: t('content.tab.episodes'),
         children: (
-          <Table<ContentListItem>
+          <ResizableTable<ContentListItem>
             rowKey="id"
             loading={episodesLoading}
             columns={episodeColumns}
             dataSource={episodes}
-            scroll={{ x: 900 }}
+            scroll={{ x: 1080 }}
             pagination={clientPagination}
             locale={{ emptyText: t('content.episode.noData') }}
           />
@@ -1470,12 +1470,12 @@ export default function ContentDetailPage() {
         key: 'seasonSeries',
         label: t('content.tab.seasonSeries'),
         children: (
-          <Table<ContentListItem>
+          <ResizableTable<ContentListItem>
             rowKey="id"
             loading={seasonSeriesLoading}
             columns={seasonSeriesColumns}
             dataSource={seasonSeries}
-            scroll={{ x: 900 }}
+            scroll={{ x: 1100 }}
             pagination={clientPagination}
             locale={{ emptyText: t('content.seasonSeries.noData') }}
           />
@@ -2019,11 +2019,12 @@ export default function ContentDetailPage() {
           </div>
         }
       >
-        <Table
+        <ResizableTable<IngestHistoryItem>
           rowKey="id"
           dataSource={ingestHistoryList}
           loading={ingestHistoryLoading}
           size="small"
+          scroll={{ x: 910 }}
           pagination={{
             current: ingestHistoryPagination.current,
             pageSize: ingestHistoryPagination.pageSize,
@@ -2034,29 +2035,33 @@ export default function ContentDetailPage() {
             onChange: (page, pageSize) => void loadIngestHistory(page, pageSize),
           }}
           columns={[
-            { title: t('publish.ingestHistory.col.type'), dataIndex: 'entity_name', key: 'entity_name' },
+            { title: t('publish.ingestHistory.col.type'), dataIndex: 'entity_name', key: 'entity_name', width: 200 },
             {
               title: t('publish.ingestHistory.col.createDate'),
               dataIndex: 'create_date',
               key: 'create_date',
+              width: 160,
               render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
             },
             {
               title: t('publish.ingestHistory.col.sendDate'),
               dataIndex: 'send_date',
               key: 'send_date',
+              width: 160,
               render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
             },
             {
               title: t('publish.ingestHistory.col.endDate'),
               dataIndex: 'end_date',
               key: 'end_date',
+              width: 160,
               render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
             },
             {
               title: t('publish.ingestHistory.col.status'),
               dataIndex: 'status',
               key: 'status',
+              width: 110,
               render: (v) => (
                 <Tag color={v === 'success' ? 'success' : v === 'failure' ? 'error' : 'default'}>
                   {v === 'success' ? t('publish.ingestHistory.status.success') : v === 'failure' ? t('publish.ingestHistory.status.failure') : v}
@@ -2067,6 +2072,8 @@ export default function ContentDetailPage() {
               title: t('publish.ingestHistory.col.getXml'),
               key: 'getXml',
               align: 'center',
+              width: 120,
+              fixed: 'right',
               render: (_, record: IngestHistoryItem) => {
                 const handleDownload = async (url: string, filename: string) => {
                   try {

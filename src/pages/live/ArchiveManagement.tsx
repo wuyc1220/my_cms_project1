@@ -21,7 +21,6 @@ import {
   Col,
   Select,
   Space,
-  Table,
   Tag,
   Tooltip,
   message,
@@ -46,6 +45,7 @@ import { getDictTree } from '../../api/dicts'
 import ArchiveImportModal from '../../components/ArchiveImportModal'
 import { EditContentModal } from '../../components/ContentModals'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import { isHandledError } from '../../api'
 import type { ArchiveListItem, ArchiveQueryParams } from '../../types/live'
 import type { CategoryListItem, CustomTagListItem, GenreListItem } from '../../types/basic'
@@ -644,7 +644,7 @@ export default function ArchiveManagement() {
       </Row>
 
       {/* 列表区 */}
-      <Table<ArchiveListItem>
+      <ResizableTable<ArchiveListItem>
         rowKey="id"
         size="small"
         columns={columns}

@@ -193,7 +193,9 @@ export default function ProviderDetail() {
               )}
               <Col span={24}>
                 <Form.Item label={t('common.notes')}>
-                  <TrimInput value={provider.notes ?? '—'} disabled style={{ background: '#f5f5f5' }} />
+                  <Tooltip title={provider.notes || undefined}>
+                    <TrimInput value={provider.notes ?? '—'} disabled style={{ background: '#f5f5f5' }} />
+                  </Tooltip>
                 </Form.Item>
               </Col>
             </Row>

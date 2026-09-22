@@ -9,7 +9,6 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Tag,
   Tooltip,
   message,
@@ -26,6 +25,7 @@ import {
 } from '../../api/customFields'
 import { getMultiLanguageOptions } from '../../api/i18n'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import TrimInput from '../../components/TrimInput'
 import type { LanguageOption } from '../../types/i18n'
 import type {
@@ -400,13 +400,14 @@ export default function CustomFieldManagement() {
   }
 
   const columns: ColumnsType<CustomFieldListItem> = [
-    { title: t('customField.col.fieldName'), dataIndex: 'field_name', key: 'field_name', sorter: true, sortOrder: sortField === 'field_name' ? sortOrder : null },
-    { title: t('customField.col.fieldType'), dataIndex: 'field_type', key: 'field_type',sorter: true, sortOrder: sortField === 'field_type' ? sortOrder : null,
+    { title: t('customField.col.fieldName'), dataIndex: 'field_name', key: 'field_name', width: 480, sorter: true, sortOrder: sortField === 'field_name' ? sortOrder : null },
+    { title: t('customField.col.fieldType'), dataIndex: 'field_type', key: 'field_type', width: 160, sorter: true, sortOrder: sortField === 'field_type' ? sortOrder : null,
       render: (v: string) => <Tag color="blue">{t(fieldTypeI18nKey(v))}</Tag> },
     {
       title: t('customField.col.belonging'),
       dataIndex: 'belongings',
       key: 'belongings',
+      width: 360,
       render: (vals: string[]) => (
         <Space size={4} wrap>
           {vals.map(v => <Tag key={v}>{t(belongingI18nKey(v))}</Tag>)}
@@ -417,6 +418,7 @@ export default function CustomFieldManagement() {
       title: t('customField.col.mandatory'),
       dataIndex: 'mandatory',
       key: 'mandatory',
+      width: 160,
       sorter: true,
       sortOrder: sortField === 'mandatory' ? sortOrder : null,
       render: (v: boolean) => v ? <Tag color="green">{t('customField.form.yes')}</Tag> : <Tag>{t('customField.form.no')}</Tag>,
@@ -488,7 +490,7 @@ export default function CustomFieldManagement() {
           )}
         </div>
 
-        <Table<CustomFieldListItem>
+        <ResizableTable<CustomFieldListItem>
           rowKey="id"
           loading={loading}
           columns={columns}
@@ -583,7 +585,7 @@ export default function CustomFieldManagement() {
                       <span style={{ fontWeight: 500 }}>{t('customField.form.options')}</span>
                       <Button type="primary" ghost size="small" icon={<PlusOutlined />} onClick={() => add({ code: '', names: {} })}>{t('customField.form.addRow')}</Button>
                     </div>
-                    <Table<FormListFieldData>
+                    <ResizableTable<FormListFieldData>
                       rowKey="key"
                       size="small"
                       pagination={false}
@@ -645,7 +647,7 @@ export default function CustomFieldManagement() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                   <span style={{ fontWeight: 500 }}>{t('customField.form.options')}</span>
                 </div>
-                <Table
+                <ResizableTable
                   size="small"
                   pagination={false}
                   rowKey="code"
@@ -654,22 +656,24 @@ export default function CustomFieldManagement() {
                     detailRecord.multi_language && languageOptions.length > 0
                       ? [
                           { title: 'NO.', width: 60, render: (_: unknown, __: unknown, i: number) => i + 1 },
-                          { title: t('customField.form.code'), dataIndex: 'code' },
+                          { title: t('customField.form.code'), dataIndex: 'code', width: 260 },
                           ...languageOptions.map(lang => ({
                             title: `${t('customField.form.name')}_${lang.name}`,
+                            width: 260,
                             render: (_: unknown, record: CustomFieldOptionItem) => record.names?.[lang.code] ?? '-',
                           })),
                         ]
                       : [
                           { title: 'NO.', width: 60, render: (_: unknown, __: unknown, i: number) => i + 1 },
-                          { title: t('customField.form.code'), dataIndex: 'code' },
+                          { title: t('customField.form.code'), dataIndex: 'code', width: 260 },
                           {
                             title: t('customField.form.name'),
+                            width: 260,
                             render: (_: unknown, record: CustomFieldOptionItem) => record.names?.['default'] ?? '-',
                           },
                         ]
                   }
-                  scroll={{ x: 500 }}
+                  scroll={{ x: 580 }}
                 />
               </div>
             )}

@@ -15,12 +15,12 @@ import {
   Modal,
   Pagination,
   Space,
-  Table,
   Tooltip,
   message,
 } from 'antd'
-import { CheckCircleFilled, ExclamationCircleFilled, MinusCircleOutlined, PlusOutlined } from '@ant-design/icons'
+import { CheckCircleFilled, DeleteOutlined, ExclamationCircleFilled, PlusOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
+import ResizableTable from '../ResizableTable'
 import TrimInput from '../TrimInput'
 import {
   getLicenseContents,
@@ -280,6 +280,7 @@ export default function LicenseAddContentModal({
       title: t('content.col.contentName'),
       dataIndex: 'title',
       key: 'title',
+      width: 200,
       ellipsis: { showTitle: false },
       render: (v: string) => <Tooltip title={v}><span>{v}</span></Tooltip>,
     },
@@ -321,9 +322,10 @@ export default function LicenseAddContentModal({
         ),
     },
     {
-      title: '',
+      title: t('common.action'),
       key: 'add',
-      width: 40,
+      width: 80,
+      fixed: 'right',
       render: (_, row) => (
         <Button
           type="link"
@@ -394,13 +396,13 @@ export default function LicenseAddContentModal({
             </div>
 
             <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-              <Table<ContentForTradeItem>
+              <ResizableTable<ContentForTradeItem>
                 rowKey="id"
                 size="small"
                 loading={contentLoading}
                 columns={availableContentColumns}
                 dataSource={availableContents}
-                scroll={{ x: 500, y: 360 }}
+                scroll={{ x: 610, y: 360 }}
                 rootClassName="compact-table"
                 pagination={false}
               />
@@ -478,7 +480,7 @@ export default function LicenseAddContentModal({
                         type="link"
                         size="small"
                         danger
-                        icon={<MinusCircleOutlined />}
+                        icon={<DeleteOutlined />}
                         onClick={() => handleRemovePending(c.id)}
                       />
                     </div>
@@ -503,7 +505,7 @@ export default function LicenseAddContentModal({
                         type="link"
                         size="small"
                         danger
-                        icon={<MinusCircleOutlined />}
+                        icon={<DeleteOutlined />}
                         onClick={() => void handleRemoveLinked(c.id)}
                       />
                     </div>

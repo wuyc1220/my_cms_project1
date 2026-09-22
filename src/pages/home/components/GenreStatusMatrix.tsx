@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
-import { Card, Table, Tooltip, Empty } from 'antd'
+import { Card, Tooltip, Empty } from 'antd'
+import ResizableTable from '../../../components/ResizableTable'
 import { useNavigate } from 'react-router-dom'
 import type { GenreStatusMatrix as GenreStatusMatrixType } from '../../../types/dashboard'
 import { useI18n } from '../../../i18n/useI18n'
@@ -109,10 +110,10 @@ const GenreStatusMatrix: React.FC<GenreStatusMatrixProps> = ({
       {filteredGenres.length === 0 || filteredStatuses.length === 0 ? (
         <Empty description={t('dashboard.matrixEmptyHint')} />
       ) : (
-        <Table
+        <ResizableTable
           columns={columns}
           dataSource={tableData}
-          scroll={{ x: 700 }}
+          scroll={{ x: 150 + filteredStatuses.length * 160 }}
           pagination={false}
           size="small"
           bordered

@@ -13,7 +13,6 @@ import {
   Row,
   Space,
   Spin,
-  Table,
   Tag,
   Tooltip,
   message,
@@ -31,6 +30,7 @@ import { getContract, getContractAttachments } from '../../api/contracts'
 import { getLicenses, updateLicense } from '../../api/licenses'
 import { getDictTree } from '../../api/dicts'
 import TrimInput from '../../components/TrimInput'
+import ResizableTable from '../../components/ResizableTable'
 import type {
   ContractListItem,
   ContractAttachmentItem,
@@ -198,6 +198,7 @@ export default function ContractDetail() {
       title: t('content.col.licenseName'),
       dataIndex: 'name',
       key: 'name',
+      width: 300,
       ellipsis: { showTitle: false },
       render: (val: string, record) => (
         <Tooltip title={val}>
@@ -214,7 +215,7 @@ export default function ContractDetail() {
       title: t('content.col.serviceType'),
       dataIndex: 'service_type',
       key: 'service_type',
-      width: 130,
+      width: 180,
       ellipsis: { showTitle: false },
       render: (val: string) => {
         const label = serviceTypeOptions.find((o) => o.value === val)?.label ?? val
@@ -225,14 +226,14 @@ export default function ContractDetail() {
       title: t('content.col.startDate'),
       dataIndex: 'start_date',
       key: 'start_date',
-      width: 120,
+      width: 160,
       render: (val: string | undefined) => val ?? '—',
     },
     {
       title: t('content.col.endDate'),
       dataIndex: 'end_date',
       key: 'end_date',
-      width: 120,
+      width: 160,
       render: (val: string | undefined) => val ?? '—',
     },
     {
@@ -257,7 +258,7 @@ export default function ContractDetail() {
       title: t('common.status'),
       dataIndex: 'status',
       key: 'status',
-      width: 100,
+      width: 160,
       render: (val: string) => (
         <Tag color={licenseStatusColor(val)}>{val}</Tag>
       ),
@@ -266,7 +267,7 @@ export default function ContractDetail() {
       title: t('common.action'),
       key: 'action',
       fixed: 'right',
-      width: 120,
+      width: 140,
       render: (_, record) => (
         <Space size={0}>
           {canViewLicense && (
@@ -325,6 +326,7 @@ export default function ContractDetail() {
       title: t('content.col.fileName'),
       dataIndex: 'file_name',
       key: 'file_name',
+      width: 240,
       ellipsis: { showTitle: false },
       render: (val: string) => <Tooltip title={val}><span>{val}</span></Tooltip>,
     },
@@ -441,21 +443,26 @@ export default function ContractDetail() {
 
             <Col span={8}>
               <Form.Item label={t('provider.detail.platform')}>
-                <TrimInput
-                  value={(contract.platforms ?? []).length === 0
+                {(() => {
+                  const platformText = (contract.platforms ?? []).length === 0
                     ? '—'
                     : (contract.platforms as ContractPlatformItem[])
                       .map((p) => platformOptions.find(opt => opt.value === p.platform)?.label ?? p.platform)
-                      .join(', ')}
-                  disabled
-                  style={{ background: '#f5f5f5' }}
-                />
+                      .join(', ')
+                  return (
+                    <Tooltip title={platformText === '—' ? undefined : platformText}>
+                      <TrimInput value={platformText} disabled style={{ background: '#f5f5f5' }} />
+                    </Tooltip>
+                  )
+                })()}
               </Form.Item>
             </Col>
 
             <Col span={16}>
               <Form.Item label={t('common.notes')}>
-                <TrimInput value={contract.notes ?? '—'} disabled style={{ background: '#f5f5f5' }} />
+                <Tooltip title={contract.notes || undefined}>
+                  <TrimInput value={contract.notes ?? '—'} disabled style={{ background: '#f5f5f5' }} />
+                </Tooltip>
               </Form.Item>
             </Col>
           </Row>
@@ -467,13 +474,13 @@ export default function ContractDetail() {
       <div style={{ marginBottom: 32 }}>
         <SectionTitle title={t('contract.detail.tabLicenses')} />
         <div style={{ paddingLeft: 20 }}>
-        <Table<LicenseListItem>
+        <ResizableTable<LicenseListItem>
           rowKey="id"
           size="small"
           loading={licensesLoading}
           columns={licenseColumns}
           dataSource={licenses}
-          scroll={{ x: 960 }}
+          scroll={{ x: 1100 }}
           pagination={{
             current: licensePage,
             pageSize: 10,
@@ -507,12 +514,12 @@ export default function ContractDetail() {
               style={{ padding: '40px 0' }}
             />
           ) : (
-            <Table<ContractAttachmentItem>
+            <ResizableTable<ContractAttachmentItem>
               rowKey="id"
               size="small"
               columns={attachmentColumns}
               dataSource={attachments}
-              scroll={{ x: 600 }}
+              scroll={{ x: 640 }}
               pagination={false}
               locale={{ emptyText: t('contract.detail.emptyAttachments') }}
             />

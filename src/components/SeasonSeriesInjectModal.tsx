@@ -19,7 +19,6 @@ import {
   Space,
   Spin,
   Switch,
-  Table,
   Tabs,
   Tooltip,
   Upload,
@@ -44,6 +43,7 @@ import { createContent, deleteContent, getContentChildren, batchImportContents, 
 import { getAuthUsers } from '../api/dataAuth'
 import { getEpisodeHistory } from '../api/episodeHistory'
 import type { EpisodeHistoryItem } from '../api/episodeHistory'
+import ResizableTable from './ResizableTable'
 import TrimInput from './TrimInput'
 import type { ContentListItem } from '../types/content'
 import type { UserSimpleItem } from '../types/dataAuth'
@@ -343,6 +343,7 @@ export default function SeasonSeriesInjectModal({
       title: t('content.col.contentName'),
       dataIndex: 'content_name',
       key: 'content_name',
+      width: 200,
       ellipsis: true,
     },
     {
@@ -484,11 +485,11 @@ export default function SeasonSeriesInjectModal({
     >
       {readOnly ? (
         <Spin spinning={loading}>
-          <Table<ContentListItem>
+          <ResizableTable<ContentListItem>
             rowKey="id"
             columns={columns}
             dataSource={items}
-            scroll={{ x: 900 }}
+            scroll={{ x: 1110 }}
             pagination={{ pageSize: 10, showQuickJumper: true , placement: ['bottomCenter'] }}
             locale={{ emptyText: t('content.seasonSeries.noData') }}
             size="small"
@@ -655,11 +656,11 @@ export default function SeasonSeriesInjectModal({
             label: t('content.seasonSeries.tab.list'),
             children: (
               <Spin spinning={loading}>
-                <Table<ContentListItem>
+                <ResizableTable<ContentListItem>
                   rowKey="id"
                   columns={columns}
                   dataSource={items}
-                  scroll={{ x: 900 }}
+                  scroll={{ x: 1110 }}
                   pagination={{ pageSize: 10, showQuickJumper: true , placement: ['bottomCenter'] }}
                   locale={{ emptyText: t('content.seasonSeries.noData') }}
                   size="small"
@@ -731,11 +732,11 @@ export default function SeasonSeriesInjectModal({
                 </div>
 
                 {/* 查询结果 */}
-                <Table<EpisodeHistoryItem>
+                <ResizableTable<EpisodeHistoryItem>
                   rowKey="id"
                   columns={historyColumns}
                   dataSource={historyItems}
-                  scroll={{ x: 700 }}
+                  scroll={{ x: 900 }}
                   pagination={{ pageSize: 10, showQuickJumper: true , placement: ['bottomCenter'] }}
                   locale={{ emptyText: t('content.seasonSeries.noHistory') }}
                   size="small"

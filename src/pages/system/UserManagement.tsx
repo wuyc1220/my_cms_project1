@@ -10,7 +10,6 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Tag,
   Tooltip,
   message,
@@ -34,6 +33,7 @@ import type { RoleListItem, UserCreatePayload, UserListItem, UserUpdatePayload }
 import { useI18n } from '../../i18n/useI18n'
 import { useTablePagination } from '../../hooks/useTablePagination'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import TrimInput from '../../components/TrimInput'
 import type { SearchFieldConfig } from '../../types/searchForm'
 import { useSearchForm } from '../../hooks/useSearchForm'
@@ -373,6 +373,7 @@ export default function UserManagement() {
       title: t('system.user.colAccount'),
       dataIndex: 'username',
       key: 'username',
+      width: 260,
       sorter: true,
       sortOrder: sortField === 'username' ? sortOrder : null,
     },
@@ -380,6 +381,7 @@ export default function UserManagement() {
       title: t('system.user.colDisplayName'),
       dataIndex: 'display_name',
       key: 'display_name',
+      width: 320,
       sorter: true,
       sortOrder: sortField === 'display_name' ? sortOrder : null,
     },
@@ -387,6 +389,7 @@ export default function UserManagement() {
       title: t('system.user.colPhone'),
       dataIndex: 'phone_number',
       key: 'phone_number',
+      width: 160,
       sorter: true,
       sortOrder: sortField === 'phone_number' ? sortOrder : null,
     },
@@ -394,6 +397,7 @@ export default function UserManagement() {
       title: t('system.user.colEmail'),
       dataIndex: 'email',
       key: 'email',
+      width: 200,
       sorter: true,
       sortOrder: sortField === 'email' ? sortOrder : null,
     },
@@ -451,7 +455,7 @@ export default function UserManagement() {
       title: t('common.action'),
       key: 'action',
       fixed: 'right',
-      width: 160,
+      width: 140,
       render: (_, record) => (
         <Space size={0}>
           <Tooltip title={t('common.detail')}>
@@ -524,12 +528,12 @@ export default function UserManagement() {
           )}
         </div>
 
-        <Table<UserListItem>
+        <ResizableTable<UserListItem>
           rowKey="id"
           loading={loading}
           columns={columns}
           dataSource={list}
-          scroll={{ x: 1100 }}
+          scroll={{ x: 1240 }}
           onChange={handleTableChange}
           rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys }}
           pagination={tablePaginationProps}

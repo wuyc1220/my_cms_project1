@@ -22,12 +22,12 @@ import {
   Popconfirm,
   Select,
   Space,
-  Table,
   Tag,
   Timeline,
   Tooltip,
   Typography,
 } from 'antd'
+import ResizableTable from '../../components/ResizableTable'
 import TrimInput from '../../components/TrimInput'
 import {
   CopyOutlined,
@@ -419,6 +419,7 @@ export default function WorkflowConfigList() {
       title: t('workflow.processCode'),
       dataIndex: 'process_code',
       key: 'process_code',
+      width: 240,
       sorter: true,
       sortOrder: sortField === 'process_code' ? sortOrder : null,
       ellipsis: { showTitle: false },
@@ -428,6 +429,7 @@ export default function WorkflowConfigList() {
       title: t('workflow.processName'),
       dataIndex: 'process_name',
       key: 'process_name',
+      width: 300,
       sorter: true,
       sortOrder: sortField === 'process_name' ? sortOrder : null,
       ellipsis: { showTitle: false },
@@ -481,7 +483,7 @@ export default function WorkflowConfigList() {
       title: t('workflow.publishedVersion'),
       dataIndex: 'published_version',
       key: 'published_version',
-      width: 120,
+      width: 160,
       sorter: true,
       sortOrder: sortField === 'published_version' ? sortOrder : null,
       render: (val: number | null) => (val ? `v${val}` : '-'),
@@ -603,13 +605,13 @@ export default function WorkflowConfigList() {
           </Button>
       </div>
 
-      <Table
+      <ResizableTable
         columns={columns}
         dataSource={data}
         rowKey="id"
         size="small"
         loading={loading}
-        scroll={{ x: 1200 }}
+        scroll={{ x: 1260 }}
         rowSelection={{
           selectedRowKeys,
           onChange: (keys) => setSelectedRowKeys(keys as number[]),

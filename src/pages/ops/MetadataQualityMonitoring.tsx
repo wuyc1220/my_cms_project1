@@ -4,11 +4,11 @@ import {
   Button,
   Modal,
   Space,
-  Table,
   Tag,
   Tooltip,
   message,
 } from 'antd'
+import ResizableTable from '../../components/ResizableTable'
 import {
   DeleteOutlined,
   DownloadOutlined,
@@ -258,6 +258,7 @@ export default function MetadataQualityMonitoring() {
       title: t('ops.metadataQuality.colCheckTime'),
       dataIndex: 'check_time',
       key: 'check_time',
+      width: 180,
       sorter: true,
       sortOrder: sortField === 'check_time' ? sortOrder : null,
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-'),
@@ -266,6 +267,7 @@ export default function MetadataQualityMonitoring() {
       title: t('ops.metadataQuality.colStatus'),
       dataIndex: 'status',
       key: 'status',
+      width: 180,
       sorter: true,
       sortOrder: sortField === 'status' ? sortOrder : null,
       render: (v: string) => (
@@ -278,6 +280,7 @@ export default function MetadataQualityMonitoring() {
       title: t('ops.metadataQuality.colTotal'),
       dataIndex: 'total_contents',
       key: 'total_contents',
+      width: 180,
       sorter: true,
       sortOrder: sortField === 'total_contents' ? sortOrder : null,
       render: (v: number) => v ?? '-',
@@ -286,6 +289,7 @@ export default function MetadataQualityMonitoring() {
       title: t('ops.metadataQuality.colPassed'),
       dataIndex: 'passed_count',
       key: 'passed_count',
+      width: 180,
       sorter: true,
       sortOrder: sortField === 'passed_count' ? sortOrder : null,
       render: (v: number) => v ?? '-',
@@ -294,6 +298,7 @@ export default function MetadataQualityMonitoring() {
       title: t('ops.metadataQuality.colFailed'),
       dataIndex: 'failed_count',
       key: 'failed_count',
+      width: 180,
       sorter: true,
       sortOrder: sortField === 'failed_count' ? sortOrder : null,
       render: (v: number) => v ?? '-',
@@ -302,6 +307,7 @@ export default function MetadataQualityMonitoring() {
       title: t('ops.metadataQuality.colDuration'),
       dataIndex: 'duration',
       key: 'duration',
+      width: 180,
       sorter: true,
       sortOrder: sortField === 'duration' ? sortOrder : null,
       render: (v: number | null, record: MetadataQualityCheck) =>
@@ -377,7 +383,7 @@ export default function MetadataQualityMonitoring() {
         )}
       </div>
 
-      <Table<MetadataQualityCheck>
+      <ResizableTable<MetadataQualityCheck>
         rowKey="id"
         size="small"
         columns={columns}

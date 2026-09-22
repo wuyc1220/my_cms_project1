@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Button, Empty, Form, Row, Col, Spin, Table, Tag } from 'antd'
+import { Button, Empty, Form, Row, Col, Spin, Tag } from 'antd'
+import ResizableTable from '../../components/ResizableTable'
 import { LeftOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
@@ -98,6 +99,7 @@ export default function ScheduledTaskDetail() {
     {
       title: t('ops.scheduledTask.logColResult'),
       dataIndex: 'result',
+      width: 200,
       ellipsis: true,
     },
   ]
@@ -252,7 +254,7 @@ export default function ScheduledTaskDetail() {
       <div>
         <SectionTitle title={t('ops.scheduledTask.executionLog')} />
         <div style={{ paddingLeft: 20 }}>
-          <Table
+          <ResizableTable
             rowKey="id"
             size="small"
             bordered

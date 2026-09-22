@@ -6,7 +6,6 @@ import {
   Popconfirm,
   Select,
   Space,
-  Table,
   Tag,
   Tooltip,
   message,
@@ -16,6 +15,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { batchDeleteGenres, createGenre, deleteGenre, getGenres, updateGenre } from '../../api/genres'
 import { getMultiLanguageOptions } from '../../api/i18n'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import TrimInput from '../../components/TrimInput'
 import type { LanguageOption } from '../../types/i18n'
 import type { GenreCreatePayload, GenreListItem, GenreUpdatePayload } from '../../types/basic'
@@ -178,8 +178,8 @@ export default function GenreManagement() {
   }
 
   const columns: ColumnsType<GenreListItem> = [
-    { title: t('genre.col.name'), dataIndex: 'name', key: 'name', sorter: true, sortOrder: sortField === 'name' ? sortOrder : null },
-    { title: t('genre.col.language'), dataIndex: 'language', key: 'language', sorter: true, sortOrder: sortField === 'language' ? sortOrder : null, render: (value: string) => <Tag color="blue">{languageOptions.find((o) => o.code === value)?.name ?? value}</Tag> },
+    { title: t('genre.col.name'), dataIndex: 'name', key: 'name', width: 680, sorter: true, sortOrder: sortField === 'name' ? sortOrder : null },
+    { title: t('genre.col.language'), dataIndex: 'language', key: 'language', width: 180, sorter: true, sortOrder: sortField === 'language' ? sortOrder : null, render: (value: string) => <Tag color="blue">{languageOptions.find((o) => o.code === value)?.name ?? value}</Tag> },
     {
       title: t('common.action'),
       key: 'action',
@@ -229,7 +229,7 @@ export default function GenreManagement() {
           )}
         </div>
 
-        <Table<GenreListItem>
+        <ResizableTable<GenreListItem>
           rowKey="id"
           loading={loading}
           columns={columns}

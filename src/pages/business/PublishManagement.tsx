@@ -7,7 +7,6 @@ import {
   Modal,
   Space,
   Switch,
-  Table,
   Tag,
   TimePicker,
   Tooltip,
@@ -39,6 +38,7 @@ import {
 } from '../../api/publishes'
 import { getDictTree } from '../../api/dicts'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import type {
   PublishListItem,
   PublishPlanCreate,
@@ -317,6 +317,7 @@ export default function PublishManagement() {
       title: t('publish.col.contentName'),
       dataIndex: 'entity_name',
       key: 'entity_name',
+      width: 320,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'entity_name' ? sortOrder : null,
@@ -328,6 +329,11 @@ export default function PublishManagement() {
             // 根据 content_type 判断具体跳转路径
             if (content_type === 'SCHEDULE') {
               return `/live/schedules/${entity_id}?mode=edit`
+            }
+            // 频道必须跳频道专属详情（含 Physical Channel / Schedule 页签），
+            // 通用内容详情页缺少这两个页签（缺陷 32576）
+            if (content_type === 'CHANNEL') {
+              return `/live/channels/${entity_id}?mode=edit`
             }
             // 其他类型默认跳转到 VOD 详情页
             return `/contents/${entity_id}?mode=edit`
@@ -364,6 +370,7 @@ export default function PublishManagement() {
       title: t('publish.col.contentType'),
       dataIndex: 'content_type',
       key: 'content_type',
+      width: 200,
       sorter: true,
       sortOrder: sortField === 'content_type' ? sortOrder : null,
       render: (type) => getContentTypeLabel(type, t),
@@ -372,6 +379,7 @@ export default function PublishManagement() {
       title: t('publish.col.ingestStatus'),
       dataIndex: 'ingest_status',
       key: 'ingest_status',
+      width: 200,
       sorter: true,
       sortOrder: sortField === 'ingest_status' ? sortOrder : null,
       render: (status) => getIngestStatusTag(status, t),
@@ -393,6 +401,7 @@ export default function PublishManagement() {
       title: t('publish.col.publishTime'),
       dataIndex: 'publish_time',
       key: 'publish_time',
+      width: 160,
       sorter: true,
       sortOrder: sortField === 'publish_time' ? sortOrder : null,
       render: (time) => time ? dayjs(time).format('YYYY-MM-DD HH:mm') : '-',
@@ -401,6 +410,7 @@ export default function PublishManagement() {
       title: t('publish.col.unpublishTime'),
       dataIndex: 'unpublish_time',
       key: 'unpublish_time',
+      width: 160,
       sorter: true,
       sortOrder: sortField === 'unpublish_time' ? sortOrder : null,
       render: (time) => time ? dayjs(time).format('YYYY-MM-DD HH:mm') : '-',
@@ -720,7 +730,7 @@ export default function PublishManagement() {
       </div>
 
       {/* 数据表格 */}
-      <Table
+      <ResizableTable
         rowKey="id"
         columns={columns}
         dataSource={list}
@@ -728,7 +738,7 @@ export default function PublishManagement() {
         pagination={tablePaginationProps}
         onChange={handleTableChange}
         rowSelection={{ selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys as number[]) }}
-        scroll={{ x: 1200 }}
+        scroll={{ x: 1240 }}
         size="small"
       />
 
@@ -794,7 +804,9 @@ export default function PublishManagement() {
                           const now = dayjs()
                           return {
                             disabledHours: () => [...Array(now.hour()).keys()],
-                            disabledMinutes: (hour) => hour === now.hour() ? [...Array(now.minute()).keys()] : [],
+                            // 当前分钟也禁用（与 PublishPlanModal 一致）：提交时秒截为 00，
+                            // 若允许选当前分钟，scheduled_time 必然早于服务器此刻而触发后端校验报错
+                            disabledMinutes: (hour) => hour === now.hour() ? [...Array(now.minute() + 1).keys()] : [],
                           }
                         }
                         return {}
@@ -829,11 +841,12 @@ export default function PublishManagement() {
           </div>
         }
       >
-        <Table
+        <ResizableTable
           rowKey="id"
           dataSource={historyList}
           loading={historyLoading}
           size="small"
+          scroll={{ x: 850 }}
           pagination={{
             current: historyPagination.current,
             pageSize: historyPagination.pageSize,
@@ -848,29 +861,33 @@ export default function PublishManagement() {
             },
           }}
           columns={[
-            { title: t('publish.ingestHistory.col.type'), dataIndex: 'entity_name', key: 'entity_name' },
+            { title: t('publish.ingestHistory.col.type'), dataIndex: 'entity_name', key: 'entity_name', width: 150 },
             {
               title: t('publish.ingestHistory.col.createDate'),
               dataIndex: 'create_date',
               key: 'create_date',
+              width: 170,
               render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
             },
             {
               title: t('publish.ingestHistory.col.sendDate'),
               dataIndex: 'send_date',
               key: 'send_date',
+              width: 170,
               render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
             },
             {
               title: t('publish.ingestHistory.col.endDate'),
               dataIndex: 'end_date',
               key: 'end_date',
+              width: 170,
               render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
             },
             {
               title: t('publish.ingestHistory.col.status'),
               dataIndex: 'status',
               key: 'status',
+              width: 100,
               render: (v) => (
                 <Tag color={v === 'success' ? 'success' : v === 'failure' ? 'error' : 'default'}>
                   {v === 'success' ? t('publish.ingestHistory.status.success') : v === 'failure' ? t('publish.ingestHistory.status.failure') : v}
@@ -880,6 +897,7 @@ export default function PublishManagement() {
             {
               title: t('publish.ingestHistory.col.getXml'),
               key: 'getXml',
+              width: 90,
               align: 'center',
               render: (_, record: IngestHistoryItem) => {
                 const handleDownload = async (url: string, filename: string) => {

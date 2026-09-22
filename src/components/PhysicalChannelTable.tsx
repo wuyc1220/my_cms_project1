@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Switch, Table, Tooltip } from 'antd'
+import { Button, Switch, Tooltip } from 'antd'
 import { DeleteOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
+import ResizableTable from './ResizableTable'
 import { getDictTree } from '../api/dicts'
 import { getCustomFields } from '../api/customFields'
 import { getMultiLanguageOptions } from '../api/i18n'
@@ -239,13 +240,14 @@ export default function PhysicalChannelTable({
   }, [t, mediaserviceNameMap, definitionNameMap, videoencodeNameMap, customFields, languageOptions, showDelete, onDelete])
 
   return (
-    <Table<PhysicalChannelListItem>
+    <ResizableTable<PhysicalChannelListItem>
       rowKey="id"
       size="small"
       loading={loading}
       columns={columns}
       dataSource={dataSource}
-      scroll={{ x: 1200 }}
+      /* 1240 为 11 个固定列宽合计，动态自定义字段每个 120，操作列 80 */
+      scroll={{ x: 1240 + customFields.length * 120 + (showDelete && onDelete ? 80 : 0) }}
       pagination={paginationProps}
       onChange={onTableChange as never}
       locale={locale}

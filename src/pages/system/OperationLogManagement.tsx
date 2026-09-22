@@ -5,7 +5,6 @@ import {
   Form,
   Modal,
   Space,
-  Table,
   Tag,
   Typography,
   message, Tooltip,
@@ -25,6 +24,7 @@ import { useI18n } from '../../i18n/useI18n'
 import type { MessageKey } from '../../i18n/messages'
 import { useTablePagination } from '../../hooks/useTablePagination'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import type { SearchFieldConfig } from '../../types/searchForm'
 import { useSearchForm } from '../../hooks/useSearchForm'
 import { usePermission } from '../../hooks/usePermission'
@@ -535,12 +535,12 @@ export default function OperationLogManagement() {
         </Space>
       </div>
 
-      <Table<OperationLogItem>
+      <ResizableTable<OperationLogItem>
         rowKey="id"
         columns={columns}
         dataSource={list}
         loading={loading}
-        scroll={{ x: 1100 }}
+        scroll={{ x: 1290 }}
         onChange={handleTableChange}
         pagination={tablePaginationProps}
         rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys }}

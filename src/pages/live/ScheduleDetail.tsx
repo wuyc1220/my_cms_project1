@@ -21,7 +21,6 @@ import {
   Row,
   Space,
   Spin,
-  Table,
   Tabs,
   Tag,
   Tooltip,
@@ -32,9 +31,7 @@ import {
   CheckCircleFilled,
   CloseCircleFilled,
   DeleteOutlined,
-  EditOutlined,
   ExclamationCircleFilled,
-  InfoCircleOutlined,
   LeftOutlined,
   MinusCircleOutlined,
   PictureOutlined,
@@ -60,6 +57,7 @@ import { useTaskAssigneePermission } from '../../hooks/useTaskAssigneePermission
 import { useNodeEditPermission } from '../../hooks/useNodeEditPermission'
 import { useAuthStore } from '../../stores/authStore'
 import ProcessesTab from '../../components/ProcessesTab'
+import ResizableTable from '../../components/ResizableTable'
 import LicenseTab from '../../components/LicenseTab'
 import StatusLogsTab from '../../components/StatusLogsTab'
 import ProcessedHistoryTab from '../../components/ProcessedHistoryTab'
@@ -685,7 +683,7 @@ export default function ScheduleDetail() {
                 publish_status: plan.publish_status,
                 publish_time: plan.publish_time,
                 unpublish_time: plan.unpublish_time,
-                task_type: plan.task_type,
+                task_type: plan.task_type as 'publish' | 'unpublish',
                 execution_mode: plan.execution_mode,
                 scheduled_time: plan.scheduled_time,
               })
@@ -748,15 +746,16 @@ export default function ScheduleDetail() {
       key: 'channel',
       label: t('content.tab.channel'),
       children: (
-        <Table<Record<string, React.ReactNode>>
+        <ResizableTable<Record<string, React.ReactNode>>
           rowKey="key"
           loading={channelInfoLoading}
+          scroll={{ x: 1220 }}
           columns={[
             {
               title: t('common.col.channelName'),
               dataIndex: 'channelName',
               key: 'channelName',
-              width: 200,
+              width: 350,
               ellipsis: { showTitle: false },
               render: (v: React.ReactNode) => <Tooltip title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>,
             },
@@ -764,7 +763,7 @@ export default function ScheduleDetail() {
               title: t('common.col.genre'),
               dataIndex: 'genre',
               key: 'genre',
-              width: 180,
+              width: 200,
               ellipsis: { showTitle: false },
               render: (v: React.ReactNode) => <Tooltip title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>,
             },
@@ -772,7 +771,7 @@ export default function ScheduleDetail() {
               title: t('common.col.customTags'),
               dataIndex: 'customTags',
               key: 'customTags',
-              width: 180,
+              width: 200,
               ellipsis: { showTitle: false },
               render: (v: React.ReactNode) => (
                 <Tooltip autoAdjustOverflow={false} placement="topLeft" title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>
@@ -782,7 +781,7 @@ export default function ScheduleDetail() {
               title: t('common.col.category'),
               dataIndex: 'category',
               key: 'category',
-              width: 180,
+              width: 200,
               ellipsis: { showTitle: false },
               render: (v: React.ReactNode) => (
                 <Tooltip autoAdjustOverflow={false} placement="topLeft" title={v ?? '—'}><span>{v ?? '—'}</span></Tooltip>
@@ -800,14 +799,14 @@ export default function ScheduleDetail() {
               title: t('common.col.licenseStart'),
               dataIndex: 'licenseStart',
               key: 'licenseStart',
-              width: 140,
+              width: 160,
               render: (v: React.ReactNode) => v ?? '—',
             },
             {
               title: t('common.col.licenseEnd'),
               dataIndex: 'licenseEnd',
               key: 'licenseEnd',
-              width: 140,
+              width: 160,
               render: (v: React.ReactNode) => v ?? '—',
             },
           ]}
@@ -861,9 +860,19 @@ export default function ScheduleDetail() {
             key: 'title',
             width: 200,
             ellipsis: { showTitle: false },
-            render: (v: string) => (
-              <Tooltip title={v}><span>{v}</span></Tooltip>
-            ),
+            render: (v: string, record: ArchiveListItem) => {
+              const path =
+                record.content_type === 'CHANNEL'
+                  ? '/live/channels'
+                  : record.content_type === 'SCHEDULE'
+                  ? '/live/schedules'
+                  : '/contents'
+              return (
+                <Tooltip title={v}>
+                  <a onClick={() => navigate(`${path}/${record.id}?mode=edit`)}>{v}</a>
+                </Tooltip>
+              )
+            },
           },
           {
             title: t('common.col.contentType'),
@@ -926,38 +935,6 @@ export default function ScheduleDetail() {
             fixed: 'right',
             render: (_, record) => (
               <Space size={0}>
-                <Tooltip title={t('common.detail')}>
-                  <Button
-                    type="link"
-                    size="small"
-                    icon={<InfoCircleOutlined />}
-                    onClick={() => {
-                      const path =
-                        record.content_type === 'CHANNEL'
-                          ? '/live/channels'
-                          : record.content_type === 'SCHEDULE'
-                          ? '/live/schedules'
-                          : '/contents'
-                      navigate(`${path}/${record.id}`)
-                    }}
-                  />
-                </Tooltip>
-                <Tooltip title={t('common.edit')}>
-                  <Button
-                    type="link"
-                    size="small"
-                    icon={<EditOutlined />}
-                    onClick={() => {
-                      const path =
-                        record.content_type === 'CHANNEL'
-                          ? '/live/channels'
-                          : record.content_type === 'SCHEDULE'
-                          ? '/live/schedules'
-                          : '/contents'
-                      navigate(`${path}/${record.id}?mode=edit`)
-                    }}
-                  />
-                </Tooltip>
                 <Popconfirm
                   title={t('common.confirmDelete', { name: record.title })}
                   onConfirm={async () => {
@@ -986,7 +963,7 @@ export default function ScheduleDetail() {
         ]
 
         return (
-          <Table<ArchiveListItem>
+          <ResizableTable<ArchiveListItem>
             rowKey="id"
             loading={archivedLoading}
             columns={archivedColumns}
@@ -1338,11 +1315,12 @@ export default function ScheduleDetail() {
           </div>
         }
       >
-        <Table
+        <ResizableTable
           rowKey="id"
           dataSource={ingestHistoryList}
           loading={ingestHistoryLoading}
           size="small"
+          scroll={{ x: 900 }}
           pagination={{
             current: ingestHistoryPagination.current,
             pageSize: ingestHistoryPagination.pageSize,
@@ -1353,29 +1331,33 @@ export default function ScheduleDetail() {
             onChange: (page, pageSize) => void loadIngestHistory(page, pageSize),
           }}
           columns={[
-            { title: t('publish.ingestHistory.col.type'), dataIndex: 'entity_name', key: 'entity_name' },
+            { title: t('publish.ingestHistory.col.type'), dataIndex: 'entity_name', key: 'entity_name', width: 140, ellipsis: true },
             {
               title: t('publish.ingestHistory.col.createDate'),
               dataIndex: 'create_date',
               key: 'create_date',
+              width: 180,
               render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
             },
             {
               title: t('publish.ingestHistory.col.sendDate'),
               dataIndex: 'send_date',
               key: 'send_date',
+              width: 180,
               render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
             },
             {
               title: t('publish.ingestHistory.col.endDate'),
               dataIndex: 'end_date',
               key: 'end_date',
+              width: 180,
               render: (v) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-',
             },
             {
               title: t('publish.ingestHistory.col.status'),
               dataIndex: 'status',
               key: 'status',
+              width: 110,
               render: (v) => (
                 <Tag color={v === 'success' ? 'success' : v === 'failure' ? 'error' : 'default'}>
                   {v === 'success' ? t('publish.ingestHistory.status.success') : v === 'failure' ? t('publish.ingestHistory.status.failure') : v}
@@ -1386,6 +1368,7 @@ export default function ScheduleDetail() {
               title: t('publish.ingestHistory.col.getXml'),
               key: 'getXml',
               align: 'center',
+              width: 120,
               render: (_, record: IngestHistoryItem) => {
                 const handleDownload = async (url: string, filename: string) => {
                   try {

@@ -6,7 +6,6 @@ import {
   Popconfirm,
   Select,
   Space,
-  Table,
   Tag,
   Tooltip,
   message,
@@ -16,6 +15,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { batchDeleteTags, createTag, deleteTag, getTags, updateTag } from '../../api/tags'
 import { getMultiLanguageOptions } from '../../api/i18n'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import TrimInput from '../../components/TrimInput'
 import type { LanguageOption } from '../../types/i18n'
 import type { TagCreatePayload, TagListItem, TagUpdatePayload } from '../../types/basic'
@@ -184,8 +184,8 @@ export default function TagManagement() {
   }, [languageOptions])
 
   const columns: ColumnsType<TagListItem> = [
-    { title: t('tag.col.name'), dataIndex: 'name', key: 'name', sorter: true, sortOrder: sortField === 'name' ? sortOrder : null },
-    { title: t('tag.col.language'), dataIndex: 'language', key: 'language', sorter: true, sortOrder: sortField === 'language' ? sortOrder : null, render: (value: string) => <Tag color="blue">{languageMap.get(value) ?? value}</Tag> },
+    { title: t('tag.col.name'), dataIndex: 'name', key: 'name', width: 680, sorter: true, sortOrder: sortField === 'name' ? sortOrder : null },
+    { title: t('tag.col.language'), dataIndex: 'language', key: 'language', width: 200, sorter: true, sortOrder: sortField === 'language' ? sortOrder : null, render: (value: string) => <Tag color="blue">{languageMap.get(value) ?? value}</Tag> },
     {
       title: t('common.action'),
       key: 'action',
@@ -235,7 +235,7 @@ export default function TagManagement() {
           )}
         </div>
 
-        <Table<TagListItem>
+        <ResizableTable<TagListItem>
           rowKey="id"
           loading={loading}
           columns={columns}

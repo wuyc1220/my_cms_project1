@@ -9,7 +9,6 @@ import {
   Popconfirm,
   Select,
   Space,
-  Table,
   Tag,
   Tooltip,
   message,
@@ -48,6 +47,7 @@ import PackageCreateModal from '../../components/PackageCreateModal'
 import PackageImportModal from '../../components/PackageImportModal'
 import ObjectIngestHistoryModal from '../../components/ObjectIngestHistoryModal'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import TrimInput from '../../components/TrimInput'
 import type {
   ContentSimpleItem,
@@ -489,6 +489,7 @@ export default function PackageManagement() {
       title: t('package.col.name'),
       dataIndex: 'name',
       key: 'name',
+      width: 360,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'name' ? sortOrder : null,
@@ -498,6 +499,7 @@ export default function PackageManagement() {
       title: t('package.col.type'),
       dataIndex: 'package_type',
       key: 'package_type',
+      width: 180,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'package_type' ? sortOrder : null,
@@ -527,6 +529,7 @@ export default function PackageManagement() {
       title: t('package.col.description'),
       dataIndex: 'description',
       key: 'description',
+      width: 260,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'description' ? sortOrder : null,
@@ -542,7 +545,7 @@ export default function PackageManagement() {
       sorter: true,
       sortOrder: sortField === 'ingest_status' ? sortOrder : null,
       render: (val: string | null, record: PackageListItem) => {
-        const displayVal = val ?? 'None'
+        const displayVal = val ?? 'none'
         return (
           <Button
             type="link"
@@ -621,6 +624,7 @@ export default function PackageManagement() {
       title: t('package.addContent.contentName'),
       dataIndex: 'title',
       key: 'title',
+      width: 200,
       ellipsis: { showTitle: false },
       render: (val: string, row: ContentSimpleItem) => (
         <Tooltip title={val}>
@@ -781,12 +785,12 @@ export default function PackageManagement() {
           )}
         </div>
 
-        <Table<PackageListItem>
+        <ResizableTable<PackageListItem>
           rowKey="id"
           loading={loading}
           columns={columns}
           dataSource={list}
-          scroll={{ x: 900 }}
+          scroll={{ x: 1260 }}
           onChange={handleTableChange}
           rowSelection={{ selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys as number[]) }}
           pagination={tablePaginationProps}
@@ -894,13 +898,13 @@ export default function PackageManagement() {
               <Button onClick={handleAddContentSearch}>{t('common.search')}</Button>
             </Space>
             <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-              <Table<ContentSimpleItem>
+              <ResizableTable<ContentSimpleItem>
                 rowKey="id"
                 size="small"
                 loading={availableLoading}
                 columns={availableColumns}
                 dataSource={availableContents.items}
-                scroll={{ x: 440 }}
+                scroll={{ x: 970 }}
                 pagination={false}
               />
             </div>

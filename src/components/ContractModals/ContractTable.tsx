@@ -13,7 +13,6 @@ import {
   Modal,
   Popconfirm,
   Space,
-  Table,
   Tag,
   Tooltip,
   message,
@@ -26,6 +25,7 @@ import {
   PlusOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType, TableRowSelection } from 'antd/es/table/interface'
+import ResizableTable from '../ResizableTable'
 import { deleteContract } from '../../api/contracts'
 import type { ContractListItem, ContractPlatformItem } from '../../types/trade'
 import { useI18n } from '../../i18n/useI18n'
@@ -71,7 +71,7 @@ export default function ContractTable({
   onDataChange,
   onSelectionChange,
   pagination = { pageSize: 10, placement: ['bottomCenter'] as const },
-  scroll = { x: 1000 },
+  scroll = { x: 1160 },
   rowSelection,
   onTableChange,
   sortField,
@@ -131,7 +131,7 @@ export default function ContractTable({
       title: t('provider.detail.contractName'),
       dataIndex: 'name',
       key: 'name',
-      width: 200,
+      width: 330,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'name' ? sortOrder : null,
@@ -150,7 +150,7 @@ export default function ContractTable({
       title: t('provider.detail.startDate'),
       dataIndex: 'start_date',
       key: 'start_date',
-      width: 130,
+      width: 160,
       sorter: true,
       sortOrder: sortField === 'start_date' ? sortOrder : null,
       render: (val: string | undefined) => val ?? '—',
@@ -159,7 +159,7 @@ export default function ContractTable({
       title: t('provider.detail.endDate'),
       dataIndex: 'end_date',
       key: 'end_date',
-      width: 130,
+      width: 160,
       sorter: true,
       sortOrder: sortField === 'end_date' ? sortOrder : null,
       render: (val: string | undefined) => val ?? '—',
@@ -284,7 +284,7 @@ export default function ContractTable({
 
   return (
     <>
-      <Table<ContractListItem>
+      <ResizableTable<ContractListItem>
         rowKey="id"
         size="small"
         loading={loading}

@@ -6,8 +6,9 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { Button, Dropdown, Modal, Pagination, Space, Spin, Table, Tag, message } from 'antd'
+import { Button, Dropdown, Modal, Pagination, Space, Spin, Tag, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
+import ResizableTable from './ResizableTable'
 import { ReloadOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { getIngestHistoryDetails } from '../api/ingestHistory'
@@ -107,6 +108,7 @@ export default function CategoryIngestHistoryModal({
       render: (status: string | null) => {
         if (status === 'success') return <Tag color="success">{t(`common.ingestStatus.${status}` as any)}</Tag>
         if (status === 'failure') return <Tag color="error">{t(`common.ingestStatus.${status}` as any)}</Tag>
+        if (status && status.toLowerCase() === 'none') return <Tag>{t('common.ingestStatus.none')}</Tag>
         return <Tag>{status || '—'}</Tag>
       },
     },
@@ -114,6 +116,7 @@ export default function CategoryIngestHistoryModal({
       title: t('ingestHistory.col.getXml'),
       width: 120,
       align: 'center',
+      fixed: 'right',
       render: (_, record) => {
         const handleDownload = async (url: string, filename: string) => {
           try {
@@ -203,13 +206,13 @@ export default function CategoryIngestHistoryModal({
         </div>
       ) : (
         <>
-          <Table<IngestHistoryDetailItem>
+          <ResizableTable<IngestHistoryDetailItem>
             dataSource={items}
             columns={columns}
             pagination={false}
             rowKey="id"
             size="small"
-            scroll={{ y: 360 }}
+            scroll={{ x: 840, y: 360 }}
             locale={{ emptyText: t('ingestHistory.empty') }}
           />
           <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>

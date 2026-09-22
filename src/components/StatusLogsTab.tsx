@@ -11,9 +11,10 @@
  */
 
 import { useEffect, useState } from 'react'
-import { message, Table } from 'antd'
+import { message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
+import ResizableTable from './ResizableTable'
 import { getStatusLogs } from '../api/live'
 import { useI18n } from '../i18n/useI18n'
 import { getClientPaginationProps } from '../constants/pagination'
@@ -50,14 +51,14 @@ export default function StatusLogsTab({ contentId, refreshVersion }: StatusLogsT
       title: t('content.col.processedAt'),
       dataIndex: 'processed_at',
       key: 'processed_at',
-      width: 160,
+      width: 220,
       render: (v?: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '—',
     },
     {
       title: t('content.col.processedBy'),
       dataIndex: 'processed_by',
       key: 'processed_by',
-      width: 180,
+      width: 380,
       render: (_: unknown, record: StatusLogListItem) => {
         const display = record.processed_by_display_name
         const username = record.processed_by
@@ -69,25 +70,26 @@ export default function StatusLogsTab({ contentId, refreshVersion }: StatusLogsT
       title: t('content.col.beforeStatus'),
       dataIndex: 'before_status',
       key: 'before_status',
-      width: 180,
+      width: 220,
       render: (v?: string) => v ?? '—',
     },
     {
       title: t('content.col.afterStatus'),
       dataIndex: 'after_status',
       key: 'after_status',
-      width: 180,
+      width: 220,
       render: (v?: string) => v ?? '—',
     },
   ]
 
   return (
-    <Table<StatusLogListItem>
+    <ResizableTable<StatusLogListItem>
       rowKey="id"
       size="small"
       loading={loading}
       columns={columns}
       dataSource={data}
+      scroll={{ x: 700 }}
       pagination={getClientPaginationProps((n) => t('pagination.total', { n }))}
       locale={{ emptyText: t('live.channel.emptyStatusLogs') }}
     />

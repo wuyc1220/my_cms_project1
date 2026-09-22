@@ -182,21 +182,20 @@ export default function ContractManagement() {
   useEffect(() => {
     void (async () => {
       try {
-        const [providers, dicts, countData] = await Promise.all([
+        const [providers, dicts] = await Promise.all([
           getProvidersSimple(),
           getDictTree(),
-          getWithoutLicenseCount(),
         ])
         setProviderOptions(providers.map((p) => ({ label: p.name, value: p.id })))
         const platformRoot = dicts.find((d: DictNodeListItem) => d.code === 'Platform')
         setPlatformOptions(
           (platformRoot?.children ?? []).map((c: DictNodeListItem) => ({ label: c.name, value: c.code })),
         )
-        setWithoutLicenseCount(countData.count)
       } catch (err) {
         // 错误已由拦截器处理
       }
     })()
+    void loadWithoutLicenseCount()
     void loadList(1, pagination.pageSize, {})
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -261,6 +260,16 @@ export default function ContractManagement() {
     // 从表单获取当前值，确保使用最新的搜索条件
     const currentValues = searchForm.getFieldsValue() as SearchValues
     void loadList(1, pagination.pageSize, currentValues, active, null, null)
+    void loadWithoutLicenseCount()
+  }
+
+  const loadWithoutLicenseCount = async () => {
+    try {
+      const countData = await getWithoutLicenseCount()
+      setWithoutLicenseCount(countData.count)
+    } catch (err) {
+      // 错误已由拦截器处理
+    }
   }
 
   // ─── 新增合同 ────────────────────────────────────────────────────────────────
@@ -285,6 +294,7 @@ export default function ContractManagement() {
       await batchDeleteContracts({ ids: selectedIds })
       void message.success(t('common.msg.deleteSuccess'), 3)
       void loadList(1, pagination.pageSize, filters)
+      void loadWithoutLicenseCount()
     } catch (err) {
       // 错误已由拦截器处理
     }
@@ -298,6 +308,7 @@ export default function ContractManagement() {
 
   const handleContractsChange = () => {
     void loadList(pagination.current, pagination.pageSize, filters, withoutLicenseActive, sortField, sortOrder)
+    void loadWithoutLicenseCount()
   }
 
   // ─── JSX ─────────────────────────────────────────────────────────────────────
@@ -373,6 +384,7 @@ export default function ContractManagement() {
         onSuccess={() => {
           closeModal()
           void loadList(1, pagination.pageSize, filters)
+          void loadWithoutLicenseCount()
         }}
       />
     </div>

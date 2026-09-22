@@ -9,8 +9,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Col, Form, Modal, Row, Select, Space, Spin, Table, Tag, Tooltip, message } from 'antd'
+import { Button, Col, Form, Modal, Row, Select, Space, Spin, Tag, Tooltip, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
+import ResizableTable from './ResizableTable'
 import { CaretDownOutlined, CaretRightOutlined, CheckCircleFilled, MinusCircleOutlined, PlusCircleOutlined } from '@ant-design/icons'
 import TrimInput from './TrimInput'
 import {
@@ -335,6 +336,7 @@ export default function CategoryLinkModal({
     {
       title: t('category.allocate.categoryName'),
       dataIndex: 'name',
+      width: 200,
       render: (name: string, record) => {
         if (record.rowType === 'platform') return null
         const isLinked = pendingLinkedIds.has(record.id)
@@ -397,6 +399,7 @@ export default function CategoryLinkModal({
       title: t('category.allocate.action'),
       width: 80,
       align: 'center',
+      fixed: 'right',
       render: (_: unknown, record) => {
         if (record.rowType === 'platform') return null
         if (readOnly) {
@@ -546,14 +549,14 @@ export default function CategoryLinkModal({
           <Spin />
         </div>
       ) : (
-        <Table<TreeRow>
+        <ResizableTable<TreeRow>
           dataSource={tableData}
           columns={columns}
           pagination={false}
           rowKey="key"
           childrenColumnName="children"
           size="small"
-          scroll={{ y: 420 }}
+          scroll={{ x: 1040, y: 420 }}
           locale={{ emptyText: t('live.channel.emptyCategories') }}
           expandable={{
             expandedRowKeys: expandedKeys,

@@ -5,7 +5,6 @@ import {
   Image,
   Popconfirm,
   Space,
-  Table,
   Tag,
   Tooltip,
   message,
@@ -16,6 +15,7 @@ import { batchDeleteCasts, deleteCast, getCasts } from '../../api/casts'
 import PostersModal from '../../components/PostersModal'
 import ObjectIngestHistoryModal from '../../components/ObjectIngestHistoryModal'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import CastFormModal from '../../components/CastFormModal'
 import { useI18n } from '../../i18n/useI18n'
 import type { CastListItem } from '../../types/basic'
@@ -208,7 +208,7 @@ export default function CastManagement() {
   }
 
   const columns: ColumnsType<CastListItem> = [
-    { title: t('cast.col.castId'), dataIndex: 'id', key: 'id', width: 90, sorter: true, sortOrder: sortField === 'id' ? sortOrder : null },
+    { title: t('cast.col.castId'), dataIndex: 'id', key: 'id', width: 120, sorter: true, sortOrder: sortField === 'id' ? sortOrder : null },
     {
       title: t('cast.col.poster'),
       key: 'poster',
@@ -237,17 +237,19 @@ export default function CastManagement() {
         )
       },
     },
-    { title: t('cast.col.castName'), dataIndex: 'name', key: 'name', sorter: true, sortOrder: sortField === 'name' ? sortOrder : null },
+    { title: t('cast.col.castName'), dataIndex: 'name', key: 'name', width: 380, sorter: true, sortOrder: sortField === 'name' ? sortOrder : null },
     {
       title: t('cast.col.description'),
       dataIndex: 'description',
       key: 'description',
+      width: 300,
       render: (val: string | null) => val ?? '—',
     },
     {
       title: t('cast.col.ingestStatus'),
       dataIndex: 'ingest_status',
       key: 'ingest_status',
+      width: 200,
       sorter: true,
       sortOrder: sortField === 'ingest_status' ? sortOrder : null,
       render: (val: string | null, record: CastListItem) => {
@@ -355,12 +357,12 @@ export default function CastManagement() {
         )}
       </div>
 
-      <Table<CastListItem>
+      <ResizableTable<CastListItem>
         rowKey="id"
         loading={loading}
         columns={columns}
         dataSource={list}
-        scroll={{ x: 800 }}
+        scroll={{ x: 1000 }}
         onChange={handleTableChange}
         rowSelection={{ selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys as number[]) }}
         pagination={tablePaginationProps}
@@ -383,7 +385,11 @@ export default function CastManagement() {
         entityId={postersModal.record?.id ?? 0}
         entityName={postersModal.record?.name}
         readOnly={!canOperate}
-        onClose={() => setPostersModal({ open: false, record: null })}
+        onClose={() => {
+          setPostersModal({ open: false, record: null })
+          // 海报可能有增删，刷新列表以更新海报缩略图
+          void loadList()
+        }}
       />
 
       <ObjectIngestHistoryModal

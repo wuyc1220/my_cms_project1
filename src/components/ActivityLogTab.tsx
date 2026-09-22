@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { message, Table, Tag } from 'antd'
+import { message, Tag } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
+import ResizableTable from './ResizableTable'
 import { getActivityLogs } from '../api/live'
 import { isHandledError } from '../api'
 import { useI18n } from '../i18n/useI18n'
@@ -193,6 +194,7 @@ export default function ActivityLogTab({ contentId, refreshVersion, mode = 'simp
       title: t('content.col.details'),
       dataIndex: 'details',
       key: 'details',
+      width: 240,
       ellipsis: true,
       render: (v?: string) => v ?? '—',
     },
@@ -232,6 +234,7 @@ export default function ActivityLogTab({ contentId, refreshVersion, mode = 'simp
       title: t('content.col.details'),
       dataIndex: 'details',
       key: 'details',
+      width: 240,
       render: (_: unknown, record: ActivityLogListItem) => {
         const summary = summaryCache.get(record.id)
         return summary || record.details || '—'
@@ -242,12 +245,13 @@ export default function ActivityLogTab({ contentId, refreshVersion, mode = 'simp
   const columns = mode === 'enriched' ? enrichedColumns : simpleColumns
 
   return (
-    <Table<ActivityLogListItem>
+    <ResizableTable<ActivityLogListItem>
       rowKey="id"
       size="small"
       loading={loading}
       columns={columns}
       dataSource={data}
+      scroll={{ x: 720 }}
       pagination={{ pageSize: 10, showQuickJumper: true , placement: ['bottomCenter'] }}
       locale={{ emptyText: t('live.channel.emptyActivityLogs') }}
     />

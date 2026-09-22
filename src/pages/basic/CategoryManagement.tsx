@@ -11,7 +11,6 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Tabs,
   Tag,
   Tooltip,
@@ -41,6 +40,7 @@ import CustomFieldControl from '../../components/CustomFieldControl'
 import CategoryIngestHistoryModal from '../../components/CategoryIngestHistoryModal'
 import PostersModal from '../../components/PostersModal'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import TrimInput from '../../components/TrimInput'
 import type {
   CategoryCreatePayload,
@@ -684,7 +684,7 @@ export default function CategoryManagement() {
       title: t('category.col.platform'),
       dataIndex: 'platform',
       key: 'platform',
-      width: 200,
+      width: 220,
       render: (_, record) => {
         if (record.rowType === 'platform') {
           return <span style={{ fontWeight: 600 }}>{record.platformLabel}</span>
@@ -701,6 +701,7 @@ export default function CategoryManagement() {
     {
       title: t('category.col.categoryName'),
       key: 'name',
+      width: 280,
       render: (_, record) => {
         if (record.rowType === 'platform') return null
         return <span>{record.name}</span>
@@ -710,7 +711,7 @@ export default function CategoryManagement() {
       title: t('category.col.categoryType'),
       dataIndex: 'category_type',
       key: 'category_type',
-      width: 200,
+      width: 220,
       render: (_, record) => {
         if (record.rowType === 'platform') return null
         if (!record.category_type) return null
@@ -818,12 +819,12 @@ export default function CategoryManagement() {
           )}
         </div>
 
-        <Table<TreeRow>
+        <ResizableTable<TreeRow>
           rowKey="key"
           loading={loading}
           columns={columns}
           dataSource={platformTree}
-          scroll={{ x: 1100 }}
+          scroll={{ x: 1280 }}
           pagination={false}
           expandable={{
             expandedRowKeys: expandedKeys,
@@ -1032,12 +1033,12 @@ export default function CategoryManagement() {
         width={800}
         destroyOnHidden
       >
-        <Table<CategoryContentRow>
+        <ResizableTable<CategoryContentRow>
           rowKey="id"
           loading={contentOrderLoading}
           dataSource={contentOrderRows}
           pagination={false}
-          scroll={{ y: 400 }}
+          scroll={{ x: 720, y: 400 }}
           locale={{ emptyText: t('category.contentOrder.emptyContents') }}
           onRow={(_, index) => ({
             draggable: true,

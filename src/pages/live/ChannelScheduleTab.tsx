@@ -20,10 +20,8 @@ import {
   Space,
   Spin,
   Switch,
-  Table,
   Tag,
   Tooltip,
-  Upload,
   message,
 } from 'antd'
 import {
@@ -43,7 +41,6 @@ import {
   getSchedules,
   deleteSchedule,
   exportSchedulesExcel,
-  importSchedulesExcel,
   archiveSchedule,
 } from '../../api/live'
 import { getDictTree } from '../../api/dicts'
@@ -51,8 +48,10 @@ import { getContents } from '../../api/contents'
 import { getScheduleMetadata } from '../../api/metadata'
 import SearchForm from '../../components/SearchForm'
 import ScheduleCreateModal from '../../components/ScheduleCreateModal'
+import ScheduleImportModal from '../../components/ScheduleImportModal'
 import { useI18n } from '../../i18n/useI18n'
 import { useTablePagination } from '../../hooks/useTablePagination'
+import ResizableTable from '../../components/ResizableTable'
 import { useSearchForm } from '../../hooks/useSearchForm'
 import { usePermission } from '../../hooks/usePermission'
 import type { ScheduleListItem, ScheduleQueryParams } from '../../types/live'
@@ -77,10 +76,9 @@ interface SearchValues extends ScheduleQueryParams {
 interface ChannelScheduleTabProps {
   channelId: number
   channelName: string
-  mode: 'view' | 'edit'
 }
 
-export default function ChannelScheduleTab({ channelId, channelName, mode }: ChannelScheduleTabProps) {
+export default function ChannelScheduleTab({ channelId, channelName }: ChannelScheduleTabProps) {
   const { t } = useI18n()
   const navigate = useNavigate()
   const { hasPermission } = usePermission()
@@ -114,8 +112,8 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
   const [seriesSearchOptions, setSeriesSearchOptions] = useState<{ value: string; label: string; id: number; series_ordinal?: number }[]>([])
   const [showSearchOptions, setShowSearchOptions] = useState<{ value: string; label: string; id: number }[]>([])
 
-  // Excel 导入状态
-  const [importing, setImporting] = useState(false)
+  // 导入弹框
+  const [importModalOpen, setImportModalOpen] = useState(false)
 
   // ── 加载函数（定义在 useTablePagination 之前，返回数据供 onChange 更新分页）──
   const loadList = async (
@@ -459,8 +457,16 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
       await deleteSchedule(id)
       void message.success(t('live.schedule.msg.deleted'), 3)
       setSelectedRowKeys(prev => prev.filter(key => key !== id))
-      const res = await loadList(pagination.current, pagination.pageSize, { ...filters, channel_id: channelId }, null, null)
-      if (res) updatePagination(res)
+      let page = pagination.current
+      const res = await loadList(page, pagination.pageSize, { ...filters, channel_id: channelId }, null, null)
+      // 当前页数据被删光后自动回退到上一页（或第一页）
+      if (res && res.items.length === 0 && page > 1) {
+        page = Math.min(page - 1, Math.ceil((res.total || 0) / pagination.pageSize) || 1)
+        const prevRes = await loadList(page, pagination.pageSize, { ...filters, channel_id: channelId }, null, null)
+        if (prevRes) updatePagination(prevRes)
+      } else if (res) {
+        updatePagination(res)
+      }
     } catch (err: unknown) {
       if (isHandledError(err)) return
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -476,7 +482,7 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
       title: t('common.col.channelName'),
       dataIndex: 'channel_name',
       key: 'channel_name',
-      width: 160,
+      width: 320,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'channel_name' ? sortOrder : null,
@@ -490,7 +496,7 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
       title: t('common.col.programName'),
       dataIndex: 'title',
       key: 'title',
-      width: 200,
+      width: 280,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'title' ? sortOrder : null,
@@ -538,7 +544,7 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
       title: t('common.col.ingestStatus'),
       dataIndex: 'status',
       key: 'status',
-      width: 150,
+      width: 200,
       ellipsis: { showTitle: false },
       sorter: true,
       sortOrder: sortField === 'status' ? sortOrder : null,
@@ -551,7 +557,7 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
     {
       title: t('common.col.archived'),
       key: 'archived',
-      width: 90,
+      width: 220,
       render: (_: unknown, record: ScheduleListItem) => {
         if (record.is_archived && record.archive_content_id) {
           const isPublished = record.archive_published
@@ -673,14 +679,16 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
           <Space>
             <Button
               icon={<DownloadOutlined />}
+              disabled={selectedRowKeys.length === 0}
               onClick={async () => {
                 try {
-                  const ids = selectedRowKeys.length > 0 ? selectedRowKeys : schedules.map((s) => s.id)
-                  const blob = await exportSchedulesExcel(ids)
+                  const blob = await exportSchedulesExcel(selectedRowKeys)
                   const url = window.URL.createObjectURL(blob)
                   const a = document.createElement('a')
                   a.href = url
-                  a.download = 'schedules.xlsx'
+                  // 带时间戳的默认文件名（与节目单管理页一致）
+                  const timestamp = dayjs().format('YYYYMMDDHHmmss')
+                  a.download = `schedules_${timestamp}.xlsx`
                   document.body.appendChild(a)
                   a.click()
                   document.body.removeChild(a)
@@ -696,33 +704,10 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
             </Button>
 
             {canScheduleOperate && (
-            <Upload
-              accept=".xlsx,.xls"
-              showUploadList={false}
-              beforeUpload={() => false}
-              onChange={({ file }) => {
-                const f = file.originFileObj as File
-                if (!f) return
-                setImporting(true)
-                importSchedulesExcel(f)
-                  .then((result) => {
-                    void message.success(
-                      `${t('live.schedule.msg.importSuccess')} (total: ${result.total}, created: ${result.created}, updated: ${result.updated})`
-                    )
-                    void (async () => {
-                      const res = await loadList(1, pagination.pageSize, filters, null, null)
-                      if (res) updatePagination(res)
-                    })()
-                  })
-                  .catch(() => void message.error(t('live.schedule.msg.importFailed')))
-                  .finally(() => setImporting(false))
-              }}
-            >
-              <Button icon={<UploadOutlined />} loading={importing}>
+              <Button icon={<UploadOutlined />} onClick={() => setImportModalOpen(true)}>
                 {t('common.btn.excelImport')}
               </Button>
-            </Upload>
-          )}
+            )}
 
           {canScheduleOperate && (
             <Button
@@ -737,23 +722,19 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
         </Col>
       </Row>
 
-      <Table<ScheduleListItem>
+      <ResizableTable<ScheduleListItem>
         rowKey="id"
         size="small"
         columns={columns}
         dataSource={schedules}
         loading={loading}
         scroll={{ x: 1200 }}
-        rowSelection={
-          mode === 'edit'
-            ? {
-                type: 'checkbox',
-                fixed: true,
-                selectedRowKeys,
-                onChange: (keys) => setSelectedRowKeys(keys as number[]),
-              }
-            : undefined
-        }
+        rowSelection={{
+          type: 'checkbox',
+          fixed: true,
+          selectedRowKeys,
+          onChange: (keys) => setSelectedRowKeys(keys as number[]),
+        }}
         pagination={tablePaginationProps}
         onChange={handleTableChange}
       />
@@ -771,6 +752,19 @@ export default function ChannelScheduleTab({ channelId, channelName, mode }: Cha
             const res = await loadList(1, pagination.pageSize, { ...filters, channel_id: channelId }, null, null)
             if (res) updatePagination(res)
           })()
+        }}
+      />
+
+      {/* 导入弹框（与节目单管理页共用：模板下载 + 冲突确认 + 校验错误展示） */}
+      <ScheduleImportModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onSuccess={() => {
+          void (async () => {
+            const res = await loadList(1, pagination.pageSize, filters, null, null)
+            if (res) updatePagination(res)
+          })()
+          void loadToBeArchivedCount()
         }}
       />
 

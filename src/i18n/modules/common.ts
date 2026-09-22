@@ -439,7 +439,7 @@ export const cnCommon = {
   'workflow.editor.usageHint': '使用说明',
   'workflow.editor.usageText': '1. 拖拽流程节点到并行框区域内，表示这些节点并行执行\n2. 全部完成：所有子节点完成后才能继续\n3. 任一完成：任意一个子节点完成后即可继续',
   // ── Ingest 状态 ──────────────────────────────────────────
-  'common.ingestStatus.none': 'none',
+  'common.ingestStatus.none': 'None',
   'common.ingestStatus.processing': 'processing',
   'common.ingestStatus.success': 'success',
   'common.ingestStatus.failure': 'failure',
@@ -889,7 +889,7 @@ export const enCommon = {
   'workflow.editor.usageHint': 'Usage Guide',
   'workflow.editor.usageText': '1. Drag process nodes into the parallel box area to execute them in parallel\n2. All Completed: continue only after all sub-nodes complete\n3. Any Completed: continue after any one sub-node completes',
   // ── Ingest status ────────────────────────────────────────
-  'common.ingestStatus.none': 'none',
+  'common.ingestStatus.none': 'None',
   'common.ingestStatus.processing': 'processing',
   'common.ingestStatus.success': 'success',
   'common.ingestStatus.failure': 'failure',

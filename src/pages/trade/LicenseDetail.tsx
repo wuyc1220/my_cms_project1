@@ -13,7 +13,6 @@ import {
   Row,
   Space,
   Spin,
-  Table,
   Tag,
   Tooltip,
   message,
@@ -27,11 +26,11 @@ import type { ColumnsType } from 'antd/es/table'
 import { getLicense, getLicenseContents, removeContentFromLicense } from '../../api/licenses'
 import { getDictTree } from '../../api/dicts'
 import TrimInput from '../../components/TrimInput'
+import ResizableTable from '../../components/ResizableTable'
 import type { LicenseListItem, LicensePlatformItem, ContentForTradeItem } from '../../types/trade'
 import type { DictNodeListItem } from '../../types/dict'
 import { useI18n } from '../../i18n/useI18n'
 import { usePermission } from '../../hooks/usePermission'
-import { useContentAuthPermission } from '../../hooks/useContentAuthPermission'
 import SectionTitle from '../../components/SectionTitle'
 import { EditContentModal } from '../../components/ContentModals'
 import ProcessedHistoryTab from '../../components/ProcessedHistoryTab'
@@ -56,9 +55,6 @@ export default function LicenseDetail() {
   const { hasPermission } = usePermission()
   const canViewContent = hasPermission('menu.trade.contents.view') || hasPermission('menu.trade.contents.operate')
   const canOperateContent = hasPermission('menu.trade.contents.operate')
-
-  // 数据权限校验
-  const { checkAndNavigate: checkAndNavigateToContent } = useContentAuthPermission()
 
   const [loading, setLoading] = useState(true)
   const [license, setLicense] = useState<LicenseListItem | null>(null)
@@ -146,6 +142,7 @@ export default function LicenseDetail() {
       title: t('content.col.contentName'),
       dataIndex: 'title',
       key: 'title',
+      width: 420,
       ellipsis: { showTitle: false },
       render: (val: string) => <Tooltip title={val}><span>{val}</span></Tooltip>,
     },
@@ -153,13 +150,13 @@ export default function LicenseDetail() {
       title: t('content.col.contentType'),
       dataIndex: 'content_type',
       key: 'content_type',
-      width: 120,
+      width: 220,
     },
     {
       title: t('license.addContent.ingestStatus'),
       dataIndex: 'status',
       key: 'status',
-      width: 160,
+      width: 220,
       render: (val: string) => (
         <Tag color={ingestStatusColor(val)}>{val || '—'}</Tag>
       ),
@@ -168,7 +165,7 @@ export default function LicenseDetail() {
       title: t('trade.col.genre'),
       dataIndex: 'genre',
       key: 'genre',
-      width: 120,
+      width: 280,
       ellipsis: { showTitle: false },
       render: (val: string | null | undefined) =>
         val ? <Tooltip title={val}><span>{val}</span></Tooltip> : '—',
@@ -177,7 +174,7 @@ export default function LicenseDetail() {
       title: t('common.action'),
       key: 'action',
       fixed: 'right',
-      width: 140,
+      width: 180,
       render: (_, record) => (
         <Space size={0}>
           {canViewContent && (
@@ -186,7 +183,7 @@ export default function LicenseDetail() {
                 type="link"
                 size="small"
                 icon={<InfoCircleOutlined />}
-                onClick={() => void checkAndNavigateToContent(record.id, `/trade/contents/${record.id}`)}
+                onClick={() => navigate(`/trade/contents/${record.id}`)}
               />
             </Tooltip>
           )}
@@ -299,15 +296,18 @@ export default function LicenseDetail() {
               </Col>
               <Col span={8}>
                 <Form.Item label={t('provider.detail.platform')}>
-                  <TrimInput
-                    value={(license.platforms ?? []).length === 0
+                  {(() => {
+                    const platformText = (license.platforms ?? []).length === 0
                       ? '—'
                       : (license.platforms as LicensePlatformItem[])
                         .map((p) => platformOptions.find(opt => opt.code === p.platform)?.name ?? p.platform)
-                        .join(', ')}
-                    disabled
-                    style={{ background: '#f5f5f5' }}
-                  />
+                        .join(', ')
+                    return (
+                      <Tooltip title={platformText === '—' ? undefined : platformText}>
+                        <TrimInput value={platformText} disabled style={{ background: '#f5f5f5' }} />
+                      </Tooltip>
+                    )
+                  })()}
                 </Form.Item>
               </Col>
               <Col span={16}>
@@ -328,7 +328,9 @@ export default function LicenseDetail() {
 
               <Col span={24}>
                 <Form.Item label={t('common.notes')}>
-                  <TrimInput value={license.notes ?? '—'} disabled style={{ background: '#f5f5f5' }} />
+                  <Tooltip title={license.notes || undefined}>
+                    <TrimInput value={license.notes ?? '—'} disabled style={{ background: '#f5f5f5' }} />
+                  </Tooltip>
                 </Form.Item>
               </Col>
             </Row>
@@ -341,11 +343,11 @@ export default function LicenseDetail() {
         <SectionTitle title={t('license.detail.tabContents')} />
         <div style={{ paddingLeft: 20 }}>
           <Spin spinning={contentsLoading}>
-            <Table<ContentForTradeItem>
+            <ResizableTable<ContentForTradeItem>
               rowKey="id"
               columns={contentColumns}
               dataSource={contents}
-              scroll={{ x: 700 }}
+              scroll={{ x: 780 }}
               pagination={false}
               locale={{ emptyText: t('license.detail.emptyContents') }}
             />

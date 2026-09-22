@@ -20,7 +20,6 @@ import {
   Row,
   Select,
   Switch,
-  Table,
   Tabs,
   Tooltip,
   Upload,
@@ -28,12 +27,14 @@ import {
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import type { UploadFile } from 'antd/es/upload'
+import ResizableTable from './ResizableTable'
 import TrimInput from './TrimInput'
 import CustomFieldControl from './CustomFieldControl'
 import { formatApiValue, getCustomFieldRules, getCustomFieldPlaceholder, getOptionLabel } from '../utils/customField'
 import { DeleteOutlined, UploadOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { FORM_MAX_LENGTH } from '../constants/form'
+import { PAGINATION_CONFIG } from '../constants/pagination'
 import { useFormRules } from '../hooks/useFormRules'
 
 import { uploadAttachment } from '../api/attachments'
@@ -369,6 +370,7 @@ export default function MaterialsModal({
       title: t('content.materials.fileName'),
       dataIndex: 'file_name',
       key: 'file_name',
+      width: 200,
       ellipsis: true,
       render: (v: string) => v?.split('/').pop() ?? v,
     },
@@ -445,6 +447,7 @@ export default function MaterialsModal({
       title: t('content.col.deeplink'),
       dataIndex: 'deeplink',
       key: 'deeplink',
+      width: 200,
       ellipsis: true,
       render: (v?: string) => v ?? '—',
     },
@@ -483,6 +486,7 @@ export default function MaterialsModal({
       title: t('content.materials.fileName'),
       dataIndex: 'file_name',
       key: 'file_name',
+      width: 200,
       ellipsis: true,
       render: (v: string) => v?.split('/').pop() ?? v,
     },
@@ -773,7 +777,7 @@ export default function MaterialsModal({
                   <Form.Item
                     name="file_path"
                     label={t('content.materials.downloadLink')}
-                    rules={[{ required: true, message: t('common.required') }]}
+                    rules={[{ required: true, message: t('common.required') }, formRules.maxLength(FORM_MAX_LENGTH.DOWNLOAD_LINK)]}
                   >
                     <TrimInput placeholder="sftp://user:password@host:port/path/to/file" />
                   </Form.Item>
@@ -782,10 +786,10 @@ export default function MaterialsModal({
 
               {fileSource === 'temp' && (
                 <Form.Item
-                  name="file_path"
-                  label={t('content.materials.downloadLink')}
-                  rules={[{ required: true, message: t('common.required') }, formRules.maxLength(FORM_MAX_LENGTH.INPUT)]}
-                >
+                    name="file_path"
+                    label={t('content.materials.downloadLink')}
+                    rules={[{ required: true, message: t('common.required') }, formRules.maxLength(FORM_MAX_LENGTH.DOWNLOAD_LINK)]}
+                  >
                   <TrimInput placeholder={t('content.materials.tempFilePathPlaceholder')} />
                 </Form.Item>
               )}
@@ -808,14 +812,20 @@ export default function MaterialsModal({
       key: 'files',
       label: t('content.materials.tab.files'),
       children: (
-        <Table<MovieItem>
+        <ResizableTable<MovieItem>
           rowKey="id"
           loading={moviesLoading}
           columns={fileColumns}
           dataSource={movies}
           size="small"
-          scroll={{ x: 1300 }}
-          pagination={{ pageSize: 10, placement: ['bottomCenter'] }}
+          scroll={{ x: 1450 }}
+          pagination={{
+            defaultPageSize: 10,
+            placement: ['bottomCenter'],
+            showTotal: (n) => t('pagination.total', { n }),
+            showSizeChanger: true,
+            pageSizeOptions: PAGINATION_CONFIG.pageSizeOptions.map(String),
+          }}
           locale={{ emptyText: t('content.materials.noFiles') }}
         />
       ),
@@ -824,14 +834,20 @@ export default function MaterialsModal({
       key: 'history',
       label: t('content.materials.tab.history'),
       children: (
-        <Table<MovieHistoryItem>
+        <ResizableTable<MovieHistoryItem>
           rowKey="id"
           loading={historyLoading}
           columns={historyColumns}
           dataSource={histories}
           size="small"
           scroll={{ x: 1000 }}
-          pagination={{ pageSize: 10, placement: ['bottomCenter'] }}
+          pagination={{
+            defaultPageSize: 10,
+            placement: ['bottomCenter'],
+            showTotal: (n) => t('pagination.total', { n }),
+            showSizeChanger: true,
+            pageSizeOptions: PAGINATION_CONFIG.pageSizeOptions.map(String),
+          }}
           locale={{ emptyText: t('content.materials.noHistory') }}
         />
       ),

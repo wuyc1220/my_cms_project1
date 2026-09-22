@@ -7,7 +7,6 @@ import {
   Popconfirm,
   Space,
   Switch,
-  Table,
   Tag,
   Tooltip,
   Tree,
@@ -36,6 +35,7 @@ import type { MenuItem } from '../../types/menu'
 import { useI18n } from '../../i18n/useI18n'
 import { useTablePagination } from '../../hooks/useTablePagination'
 import SearchForm from '../../components/SearchForm'
+import ResizableTable from '../../components/ResizableTable'
 import TrimInput from '../../components/TrimInput'
 import type { SearchFieldConfig } from '../../types/searchForm'
 import { useSearchForm } from '../../hooks/useSearchForm'
@@ -310,6 +310,7 @@ export default function RoleManagement() {
       title: t('system.role.colCode'),
       dataIndex: 'code',
       key: 'code',
+      width: 180,
       sorter: true,
       sortOrder: sortField === 'code' ? sortOrder : null,
       render: (value: string) => <Tag color="blue">{value}</Tag>,
@@ -318,6 +319,7 @@ export default function RoleManagement() {
       title: t('system.role.colName'),
       dataIndex: 'name',
       key: 'name',
+      width: 380,
       sorter: true,
       sortOrder: sortField === 'name' ? sortOrder : null,
     },
@@ -355,6 +357,7 @@ export default function RoleManagement() {
       title: t('common.notes'),
       dataIndex: 'description',
       key: 'description',
+      width: 320,
       sorter: true,
       sortOrder: sortField === 'description' ? sortOrder : null,
     },
@@ -442,7 +445,7 @@ export default function RoleManagement() {
         )}
       </div>
 
-      <Table<RoleListItem>
+      <ResizableTable<RoleListItem>
         rowKey="id"
         loading={loading}
         columns={columns}

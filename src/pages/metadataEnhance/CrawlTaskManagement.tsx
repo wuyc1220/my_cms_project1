@@ -5,8 +5,9 @@ import dayjs from 'dayjs'
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Table, Button, Space, Tag, Popconfirm, message, Modal, Tooltip,
+  Button, Space, Tag, Popconfirm, message, Modal, Tooltip,
 } from 'antd'
+import ResizableTable from '../../components/ResizableTable'
 import {
   DeleteOutlined, RedoOutlined, InfoCircleOutlined,
 } from '@ant-design/icons'
@@ -187,7 +188,7 @@ export default function CrawlTaskManagement() {
       title: t('crawlTask.col.taskId'),
       dataIndex: 'id',
       key: 'id',
-      width: 100,
+      width: 140,
       sorter: true,
       sortOrder: sortField === 'id' ? sortOrder : null,
     },
@@ -195,6 +196,7 @@ export default function CrawlTaskManagement() {
       title: t('crawlTask.col.objectName'),
       dataIndex: 'object_name',
       key: 'object_name',
+      width: 220,
       sorter: true,
       sortOrder: sortField === 'object_name' ? sortOrder : null,
       ellipsis: true,
@@ -203,6 +205,7 @@ export default function CrawlTaskManagement() {
       title: t('crawlTask.col.objectType'),
       dataIndex: 'object_type',
       key: 'object_type',
+      width: 180,
       sorter: true,
       sortOrder: sortField === 'object_type' ? sortOrder : null,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -212,6 +215,7 @@ export default function CrawlTaskManagement() {
       title: t('crawlTask.col.sourceName'),
       dataIndex: 'source_name',
       key: 'source_name',
+      width: 180,
       sorter: true,
       sortOrder: sortField === 'source_name' ? sortOrder : null,
       ellipsis: true,
@@ -220,6 +224,7 @@ export default function CrawlTaskManagement() {
       title: t('crawlTask.col.crawlStatus'),
       dataIndex: 'crawl_status',
       key: 'crawl_status',
+      width: 160,
       sorter: true,
       sortOrder: sortField === 'crawl_status' ? sortOrder : null,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -246,7 +251,8 @@ export default function CrawlTaskManagement() {
     {
       title: t('crawlTask.col.action'),
       key: 'action',
-      width: 140,
+      width: 160,
+      fixed: 'right' as const,
       render: (_: unknown, record: CrawlTaskListItem) => (
         <Space size={0}>
           <Tooltip title={t('crawlTask.action.detail')}>
@@ -306,12 +312,13 @@ export default function CrawlTaskManagement() {
       </div>
 
       {/* 表格 */}
-      <Table
+      <ResizableTable
         rowKey="id"
         size="small"
         columns={columns}
         dataSource={data.items}
         loading={loading}
+        scroll={{ x: 1200 }}
         rowSelection={{
           selectedRowKeys,
           onChange: (keys) => setSelectedRowKeys(keys as number[]),

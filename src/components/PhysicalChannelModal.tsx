@@ -16,7 +16,6 @@ import {
   Modal,
   Select,
   Switch,
-  Table,
   Tabs,
   message,
   Row,
@@ -36,6 +35,7 @@ import { getDictTree } from '../api/dicts'
 import { getCustomFields } from '../api/customFields'
 import { getConfigs } from '../api/configs'
 import { getMultiLanguageOptions } from '../api/i18n'
+import ResizableTable from './ResizableTable'
 import TrimInput from './TrimInput'
 import CustomFieldControl from './CustomFieldControl'
 import PhysicalChannelTable from './PhysicalChannelTable'
@@ -757,12 +757,12 @@ export default function PhysicalChannelModal({
                     </Row>
                   </Form>
                 </div>
-                <Table<PhysicalChannelHistoryItem>
+                <ResizableTable<PhysicalChannelHistoryItem>
                   rowKey="id"
                   loading={historyLoading}
                   columns={historyColumns}
                   dataSource={historyData}
-                  scroll={{ x: 900 }}
+                  scroll={{ x: 940 }}
                   pagination={historyPaginationProps}
                   onChange={handleHistoryTableChange}
                   locale={{ emptyText: t('common.noData') }}
